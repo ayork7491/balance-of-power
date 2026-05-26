@@ -6,14 +6,14 @@ import { Link } from 'react-router-dom';
 import { Plus, LogIn, Shield, Bell, Swords, Loader2, Settings } from 'lucide-react';
 import AppShell from '@/components/layout/AppShell';
 import EmptyState from '@/components/ui/EmptyState';
-import CampaignCard from '@/components/campaigns/CampaignCard';
+import CampaignCard from '@/components/campaigns/CampaignCard.jsx';
 import { useUserProfile } from '@/features/auth/useUserProfile';
 import { useMyCampaigns, useMyInvites } from '@/features/campaigns';
 
 export default function Home() {
   const { user } = useUserProfile();
   const name = user?.display_name || user?.full_name || 'Commander';
-  const { campaigns, players, loading: loadingCampaigns } = useMyCampaigns();
+  const { campaigns, players, loading: loadingCampaigns, reload: load } = useMyCampaigns();
   const { invites, loading: loadingInvites } = useMyInvites();
 
   // Build a quick lookup: campaign_id → my CampaignPlayer record
@@ -118,6 +118,7 @@ export default function Home() {
                   key={campaign.id}
                   campaign={campaign}
                   myPlayer={myPlayerByCampaign[campaign.id]}
+                  onRemoved={load}
                 />
               ))}
             </div>

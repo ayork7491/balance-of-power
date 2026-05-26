@@ -17,6 +17,7 @@ export {
   updatePlayerSetup,
   startCampaign,
   kickPlayer,
+  cleanupCampaign,
 } from './useCampaigns';
 
 export {
