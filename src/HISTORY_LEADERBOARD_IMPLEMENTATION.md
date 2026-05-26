@@ -2,7 +2,189 @@
 
 ## Overview
 
-This document describes the history and leaderboard systems for Balance of Power, including visibility rules, filtering capabilities, and mobile-responsive UI components.
+This document describes the history and leaderboard systems for Balance of Power, including:
+
+- **Membership validation** — All history/leaderboard endpoints require campaign membership
+- **Safe history fetching** — Backend functions enforce visibility rules server-side
+- **Snapshot visibility rules** — PhaseSnapshots contain only public revealed state
+- **Leaderboard calculation rules** — Territory count, troop total, deploy income
+- **Known Base44 limitations** — Service role requirements, visibility filtering
+
+---
+
+## Security & Access Control
+
+### Membership Validation
+
+All history and leaderboard backend functions enforce campaign membership:
+
+```javascript
+// Membership validation pattern (used in all functions)
+const campaign = await base44.asServiceRole.entities.Campaign.get(campaign_id);
+const players = await base44.asServiceRole.entities.CampaignPlayer.filter({ campaign_id });
+const isMember = players.some(p => p.user_id === user.id);
+const isAdmin = campaign.admin_user_id === user.id;
+
+if (!isMember && !isAdmin) {
+  return Response.json({ error: 'Access denied: Campaign membership required' }, { status: 403 });
+}
+```
+
+**Applies to:**
+- `getLeaderboard`
+- `getHistoryLogs`
+- `getPhaseSnapshots`
+- `getBattleHistory`
+- `getTerritoryHistory`
+
+**Access Rules:**
+- Campaign players (user_id in CampaignPlayer) → Full access
+- Campaign admin (admin_user_id matches) → Full access
+- Non-members → 403 Forbidden
+
+### Safe History Fetching
+
+History panels use backend functions instead of direct entity queries:
+
+```javascript
+// ✅ SAFE: Backend function enforces membership + visibility
+const { logs } = await base44.functions.invoke('getHistoryLogs', { campaign_id, phase, event_type });
+
+// ❌ UNSAFE: Direct query bypasses visibility rules
+const logs = await base44.asServiceRole.entities.SetupLog.filter({ campaign_id });
+```
+
+**Benefits:**
+- Server-side visibility filtering (is_public, visibility_revealed_at)
+- Membership validation before data access
+- Consistent privacy enforcement across all clients
+
+### Snapshot Visibility Rules
+
+PhaseSnapshot entities contain ONLY public revealed state:
+
+**Included (Safe):**
+- `territory_states` — Territory ownership and troop counts
+- `player_standings` — Player metrics (territory count, troop total, deploy income)
+- `deploy_incomes` — Public income summaries
+
+**Excluded (Private):**
+- PhaseDecision data (staged deployments, attacks, fortifications)
+- Unrevealed private decisions
+- Construction project details (until completed and revealed)
+
+**Implementation:**
+```javascript
+// PhaseSnapshot creation happens at phase boundaries
+// Only public state is captured:
+snapshot.territory_states = [...];  // Public ownership
+snapshot.player_standings = [...];  // Public metrics
+snapshot.deploy_incomes = {...};    // Public income
+// NO PhaseDecision data included
+```
+
+---
+
+## Leaderboard Calculation Rules
+
+### Metrics Included
+
+```javascript
+{
+  player_id: string,
+  display_name: string,
+  color: string,
+  faction_name: string,
+  territory_count: number,      // Primary ranking metric
+  troop_total: number,          // Secondary ranking metric (tiebreaker)
+  deploy_income: number,        // Current round income
+  resources_generated: object,  // Resource production this round
+  is_eliminated: boolean,
+  rank: number                  // Calculated ranking (1-based)
+}
+```
+
+### Ranking Algorithm
+
+```javascript
+// Sort by territory_count (descending), then troop_total (descending)
+leaderboard.sort((a, b) => {
+  if (b.territory_count !== a.territory_count) {
+    return b.territory_count - a.territory_count;
+  }
+  return b.troop_total - a.troop_total;
+});
+
+// Add rank
+leaderboard.forEach((player, idx) => {
+  player.rank = idx + 1;
+});
+```
+
+### Known Limitations
+
+**V1 Limitations:**
+- `region_count` and `continent_count` NOT included (requires map definition data)
+- Future enhancement: Load MapDefinition to calculate controlled regions/continents
+- V1 uses territory_count as primary metric (accurate and reliable)
+
+**Why region_count is not faked:**
+- Counting territories ≠ controlling regions
+- Region control requires checking if player owns ALL territories in a region
+- This logic requires map definition data (regions, territories per region)
+- V1 leaderboard uses verified metrics only
+
+---
+
+## Base44 Platform Limitations
+
+### Service Role Requirements
+
+**Issue:** Backend functions use `asServiceRole` to fetch campaign data for membership validation.
+
+**Reason:**
+- User-scoped SDK (`base44.entities`) only returns records where `created_by_id` matches user
+- CampaignPlayer records are created by admin, not individual players
+- Requires service role to fetch all players for membership check
+
+**Pattern:**
+```javascript
+// ✅ Correct: Service role for membership validation
+const players = await base44.asServiceRole.entities.CampaignPlayer.filter({ campaign_id });
+const isMember = players.some(p => p.user_id === user.id);
+
+// ❌ Incorrect: User-scoped query returns empty for non-admins
+const players = await base44.entities.CampaignPlayer.filter({ campaign_id });
+```
+
+### Visibility Filtering
+
+**Issue:** SetupLog visibility rules must be enforced server-side.
+
+**Implementation:**
+```javascript
+const now = new Date().toISOString();
+const visibleLogs = allLogs.filter(log => {
+  if (log.is_public) return true;
+  if (log.visibility_revealed_at && log.visibility_revealed_at <= now) return true;
+  return false;
+});
+```
+
+**Limitation:**
+- Base44 entity filter doesn't support OR conditions or date comparisons
+- Must fetch all logs and filter in function memory
+- Acceptable for typical campaign sizes (< 1000 logs)
+
+### Real-time Subscriptions
+
+**Issue:** Client-side subscriptions to SetupLog may expose private data.
+
+**Solution:**
+- Subscribe to backend function results instead of direct entity subscriptions
+- Future enhancement: Create subscription endpoint with built-in visibility filtering
+
+---
 
 ---
 

@@ -15,6 +15,24 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'campaign_id required' }, { status: 400 });
     }
 
+    if (!territory_id) {
+      return Response.json({ error: 'territory_id required' }, { status: 400 });
+    }
+
+    // Membership validation: verify user is a campaign player or admin
+    const campaign = await base44.asServiceRole.entities.Campaign.get(campaign_id);
+    if (!campaign) {
+      return Response.json({ error: 'Campaign not found' }, { status: 404 });
+    }
+
+    const players = await base44.asServiceRole.entities.CampaignPlayer.filter({ campaign_id });
+    const isMember = players.some(p => p.user_id === user.id);
+    const isAdmin = campaign.admin_user_id === user.id;
+
+    if (!isMember && !isAdmin) {
+      return Response.json({ error: 'Access denied: Campaign membership required' }, { status: 403 });
+    }
+
     // Fetch territory states across all rounds (snapshots contain historical data)
     const snapshots = await base44.asServiceRole.entities.PhaseSnapshot.filter({ campaign_id });
     

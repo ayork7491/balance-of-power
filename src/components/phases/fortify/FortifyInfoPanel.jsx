@@ -37,13 +37,14 @@ export default function FortifyInfoPanel({ campaign, players }) {
     async function loadProjects() {
       setIsLoading(true);
       try {
-        const allProjects = await base44.asServiceRole.entities.ConstructionProject.filter({
-          campaign_id: campaign.id,
-          status: 'in_progress',
-        });
-        setProjects(allProjects);
+        // Use backend function for safe access (membership validation + privacy)
+        // For V1, construction projects are not yet exposed via backend function
+        // TODO: Create getConstructionProjects backend function with membership validation
+        // For now, show empty state with explanation
+        setProjects([]);
       } catch (err) {
         console.error('[FortifyInfoPanel] error loading projects:', err);
+        setProjects([]);
       } finally {
         setIsLoading(false);
       }

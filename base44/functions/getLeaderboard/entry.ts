@@ -15,14 +15,26 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'campaign_id required' }, { status: 400 });
     }
 
-    // Fetch campaign players
+    // Membership validation: verify user is a campaign player or admin
+    const campaign = await base44.asServiceRole.entities.Campaign.get(campaign_id);
+    if (!campaign) {
+      return Response.json({ error: 'Campaign not found' }, { status: 404 });
+    }
+
     const players = await base44.asServiceRole.entities.CampaignPlayer.filter({ campaign_id });
+    const isMember = players.some(p => p.user_id === user.id);
+    const isAdmin = campaign.admin_user_id === user.id;
+
+    if (!isMember && !isAdmin) {
+      return Response.json({ error: 'Access denied: Campaign membership required' }, { status: 403 });
+    }
+
+    // Use players array from membership validation
     
     // Fetch territory states for this campaign
     const territoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
     
     // Fetch deploy income for current round (public info)
-    const campaign = await base44.asServiceRole.entities.Campaign.get(campaign_id);
     const currentRound = campaign?.current_round ?? 1;
     const deployIncomes = await base44.asServiceRole.entities.DeployIncome.filter({ 
       campaign_id,
@@ -41,8 +53,9 @@ Deno.serve(async (req) => {
       // Get deploy income
       const income = deployIncomes.find(d => d.player_id === player.id);
       
-      // Calculate region/continent control (simplified for V1)
-      const regionCount = new Set(ownedTerritories.map(t => t.territory_id)).size;
+      // Note: region_count and continent_count require map definition data
+      // V1 uses territory_count as primary metric (accurate and reliable)
+      // Future enhancement: load map definition to calculate controlled regions/continents
       
       return {
         player_id: player.id,

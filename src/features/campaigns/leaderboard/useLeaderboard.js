@@ -8,8 +8,11 @@ export function useLeaderboard(campaignId, enabled = true) {
 
   useEffect(() => {
     if (!campaignId || !enabled) {
-      fetchLeaderboard();
+      setLeaderboard([]);
+      setIsLoading(false);
+      return;
     }
+    fetchLeaderboard();
   }, [campaignId, enabled]);
 
   const fetchLeaderboard = async () => {
