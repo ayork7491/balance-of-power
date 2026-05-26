@@ -63,6 +63,12 @@ export default function InitialDeployPanel({
   const lockedCount = lockStatus.filter(s => s.is_locked).length;
   const totalCount  = activePlayers.length;
   const allLocked   = lockedCount >= totalCount && totalCount > 0;
+  
+  // Calculate total placed troops
+  const totalPlaced = useMemo(
+    () => Object.values(placements).reduce((s, n) => s + (parseInt(n) || 0), 0),
+    [placements],
+  );
 
   const handleLockAndRefresh = async () => {
     await handleLock(onPhaseChanged, actingAsCampaignPlayerId || null);
@@ -179,10 +185,10 @@ export default function InitialDeployPanel({
             </button>
           </div>
           
-          {/* Acting-As Debug Panel */}
-          <div className="pt-2 border-t border-border">
+          {/* Initial Fortification Debug Panel */}
+          <div className="pt-3 border-t border-border">
             <p className="text-[10px] font-display tracking-widest uppercase text-muted-foreground mb-2">
-              Acting-As Debug
+              Fortification Debug
             </p>
             <div className="space-y-1.5 text-[10px]">
               <div className="flex items-center gap-2">
@@ -196,20 +202,55 @@ export default function InitialDeployPanel({
                 <span className="text-foreground">{actingAsPlayer ? `${actingAsPlayer.display_name}${actingAsPlayer.is_test_player ? ' (Test)' : ''}` : '(self)'}</span>
               </div>
               <div className="flex items-center gap-2">
-                <Eye className="w-3 h-3 text-muted-foreground" />
-                <span className="text-muted-foreground">Viewing-As:</span>
-                <span className="text-foreground">{viewingAsPlayer ? `${viewingAsPlayer.display_name}${viewingAsPlayer.is_test_player ? ' (Test)' : ''}` : 'Admin / My View'}</span>
-              </div>
-              <div className="flex items-center gap-2">
                 <span className="text-muted-foreground">Submit For:</span>
                 <span className="text-foreground font-medium">{actionPlayer?.display_name ?? 'Unknown'}</span>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-muted-foreground">Delegation Allowed:</span>
-                <span className={canDelegateActions ? 'text-status-locked font-semibold' : 'text-muted-foreground'}>
-                  {canDelegateActions ? '✓ Yes' : '✗ No'}
-                </span>
+              <div className="pt-1.5 border-t border-border/50">
+                <p className="text-[10px] font-display tracking-widest uppercase text-status-pending mb-1.5">
+                  Allocation Details
+                </p>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground">Total Submitted:</span>
+                    <span className="text-foreground font-mono">{totalPlaced}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground">Required:</span>
+                    <span className="text-foreground font-mono">{startingTroops}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground">Status:</span>
+                    <span className={isLocked ? 'text-status-locked font-semibold' : 'text-status-pending'}>
+                      {isLocked ? '✓ Locked' : 'Not locked'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground">Submission Type:</span>
+                    <span className={decision?.is_auto_submitted ? 'text-status-danger' : 'text-status-locked'}>
+                      {decision?.is_auto_submitted ? 'Auto-randomized' : 'Manual'}
+                    </span>
+                  </div>
+                </div>
               </div>
+              {myTerritories.length > 0 && (
+                <div className="pt-1.5 border-t border-border/50">
+                  <p className="text-[10px] font-display tracking-widest uppercase text-muted-foreground mb-1">
+                    Submitted Allocation
+                  </p>
+                  <div className="space-y-0.5 max-h-32 overflow-y-auto">
+                    {myTerritories.map(ts => {
+                      const def = mapDef?.territories.find(t => t.territory_id === ts.territory_id);
+                      const count = placements[ts.territory_id] ?? 0;
+                      return (
+                        <div key={ts.territory_id} className="flex items-center justify-between text-[9px]">
+                          <span className="text-muted-foreground truncate max-w-[120px]">{def?.name ?? ts.territory_id}</span>
+                          <span className="text-foreground font-mono">{count}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

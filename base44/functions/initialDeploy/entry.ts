@@ -175,40 +175,53 @@ Deno.serve(async (req) => {
 
     const startingTroops = campaign.settings?.starting_troops ?? 30;
     const currentPlacements = decision.data?.placements ?? {};
-    let totalPlaced = Object.values(currentPlacements).reduce((s, n) => s + n, 0);
+    let totalPlaced = Object.values(currentPlacements).reduce((s, n) => s + (parseInt(n) || 0), 0);
 
-    // If troops remain unplaced, auto-distribute to owned territories
-    let finalPlacements = { ...currentPlacements };
-    let remaining = startingTroops - totalPlaced;
-
-    if (remaining > 0) {
-      const ownedTerritories = await base44.asServiceRole.entities.TerritoryState.filter({
-        campaign_id,
-        owner_player_id: actingPlayer.id,
-      });
-      const rng = seededRandom(`${campaign_id}_${actingPlayer.id}_auto`);
-      let i = 0;
-      while (remaining > 0) {
-        const t = ownedTerritories[Math.floor(rng() * ownedTerritories.length)];
-        if (t) {
-          finalPlacements[t.territory_id] = (finalPlacements[t.territory_id] || 0) + 1;
-          remaining--;
-        }
-        if (++i > 10000) break; // safety
+    // Validate placements before locking
+    const ownedTerritories = await base44.asServiceRole.entities.TerritoryState.filter({
+      campaign_id,
+      owner_player_id: actingPlayer.id,
+    });
+    const ownedIds = new Set(ownedTerritories.map(t => t.territory_id));
+    
+    // Check all placements are for owned territories
+    for (const tid of Object.keys(currentPlacements)) {
+      if (!ownedIds.has(tid)) {
+        return Response.json({ error: `Territory ${tid} is not owned by you` }, { status: 400 });
       }
     }
+    
+    // Check total equals starting troops
+    if (totalPlaced !== startingTroops) {
+      return Response.json({ 
+        error: `Must place exactly ${startingTroops} troops. You placed ${totalPlaced}.`,
+        totalPlaced,
+        startingTroops,
+      }, { status: 400 });
+    }
 
+    // Player manually submitted exact allocation - use it as-is (NO auto-distribution)
     await base44.entities.PhaseDecision.update(decision.id, {
       is_locked: true,
       locked_at: new Date().toISOString(),
-      data: { placements: finalPlacements, troops_remaining: 0 },
+      is_auto_submitted: false, // Manual submission
+      data: { 
+        placements: currentPlacements, // Use EXACT submitted values
+        troops_remaining: 0,
+      },
     });
 
     await log(base44, campaign_id, 'player_locked', actingPlayer.id, {
       display_name: actingPlayer.display_name,
+      total_placed: totalPlaced,
+      is_manual: true,
     }, true);
 
-    return Response.json({ success: true });
+    return Response.json({ 
+      success: true,
+      is_manual: true,
+      totalPlaced,
+    });
   }
 
   // ── processPhaseEnd ──────────────────────────────────────────────────────────
@@ -231,9 +244,10 @@ Deno.serve(async (req) => {
 
     const startingTroops = campaign.settings?.starting_troops ?? 30;
 
-    // Auto-submit any unlocked players
+    // Auto-submit any unlocked/missing players (ONLY for non-submitters)
     for (const p of activePlayers) {
       const dec = allDecisions.find(d => d.player_id === p.id);
+      // Only auto-submit if player has NO locked decision
       if (!dec || !dec.is_locked) {
         const ownedTerritories = await base44.asServiceRole.entities.TerritoryState.filter({
           campaign_id,
@@ -263,6 +277,7 @@ Deno.serve(async (req) => {
         await log(base44, campaign_id, 'auto_submitted', p.id, {
           display_name: p.display_name,
           placements,
+          reason: 'Player did not lock before phase end',
         }, false);
       }
     }
@@ -276,20 +291,27 @@ Deno.serve(async (req) => {
     // Apply all troop placements to TerritoryState
     for (const dec of finalDecisions) {
       const placements = dec.data?.placements ?? {};
+      const isAuto = dec.is_auto_submitted ?? false;
+      
       for (const [tid, count] of Object.entries(placements)) {
+        const countNum = parseInt(count) || 0;
         const existing = await base44.asServiceRole.entities.TerritoryState.filter({
           campaign_id,
           territory_id: tid,
         });
         if (existing[0]) {
           await base44.asServiceRole.entities.TerritoryState.update(existing[0].id, {
-            troop_count: (existing[0].troop_count || 0) + count,
+            troop_count: (existing[0].troop_count || 0) + countNum,
           });
         }
       }
 
-      // Mark decision as public/revealed
-      await base44.asServiceRole.entities.PhaseDecision.update(dec.id, { is_auto_submitted: dec.is_auto_submitted });
+      // Log applied placements
+      await log(base44, campaign_id, 'initial_deploy', 'placements_applied', dec.player_id, {
+        placements,
+        is_auto_submitted: isAuto,
+        total_troops: Object.values(placements).reduce((s, n) => s + (parseInt(n) || 0), 0),
+      }, false);
     }
 
     // Advance campaign to Round 1 deploy phase

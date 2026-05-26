@@ -41,26 +41,62 @@ export default function RightDockRouter({
           </div>
         )}
 
-        {/* Phase-specific or tab-based content */}
+        {/* Tab-based content - tabs ALWAYS control what's shown */}
         <div className="flex-1 min-h-0 overflow-y-auto">
-          {isSetupPhase ? (
-            <SetupInfoPanel campaign={campaign} players={players} />
-          ) : GAMEPLAY_PHASES.has(phase) ? (
-            phase === 'deploy' ? (
-              <DeployInfoPanel campaign={campaign} players={players} />
-            ) : phase === 'attack' ? (
-              <AttackInfoPanel campaign={campaign} players={players} mapDef={mapDef} />
-            ) : phase === 'battle' ? (
-              <BattleInfoPanel campaign={campaign} players={players} />
-            ) : phase === 'fortify' ? (
-              <FortifyInfoPanel campaign={campaign} players={players} />
-            ) : null
-          ) : activeTab === 'leaderboard' ? (
+          {activeTab === 'leaderboard' ? (
             <LeaderboardPanel campaign={campaign} players={players} />
           ) : activeTab === 'history' ? (
             <HistoryLogPanel campaign={campaign} players={players} />
+          ) : activeTab === 'territories' ? (
+            <InfoPanelPlaceholder 
+              title="Territories"
+              description="Territory overview coming soon"
+              icon="Grid3x3"
+            />
+          ) : activeTab === 'battles' ? (
+            <InfoPanelPlaceholder 
+              title="Battles"
+              description="Battle history coming soon"
+              icon="Swords"
+            />
+          ) : activeTab === 'phase' ? (
+            // Phase info based on current phase
+            isSetupPhase ? (
+              <SetupInfoPanel campaign={campaign} players={players} />
+            ) : GAMEPLAY_PHASES.has(phase) ? (
+              phase === 'deploy' ? (
+                <DeployInfoPanel campaign={campaign} players={players} />
+              ) : phase === 'attack' ? (
+                <AttackInfoPanel campaign={campaign} players={players} mapDef={mapDef} />
+              ) : phase === 'battle' ? (
+                <BattleInfoPanel campaign={campaign} players={players} />
+              ) : phase === 'fortify' ? (
+                <FortifyInfoPanel campaign={campaign} players={players} />
+              ) : (
+                <InfoPanelPlaceholder activeTab="phase" />
+              )
+            ) : (
+              <InfoPanelPlaceholder activeTab="phase" />
+            )
           ) : (
-            <InfoPanelPlaceholder activeTab={activeTab} />
+            // Default to phase info or placeholder
+            isSetupPhase ? (
+              <SetupInfoPanel campaign={campaign} players={players} />
+            ) : GAMEPLAY_PHASES.has(phase) ? (
+              phase === 'deploy' ? (
+                <DeployInfoPanel campaign={campaign} players={players} />
+              ) : phase === 'attack' ? (
+                <AttackInfoPanel campaign={campaign} players={players} mapDef={mapDef} />
+              ) : phase === 'battle' ? (
+                <BattleInfoPanel campaign={campaign} players={players} />
+              ) : phase === 'fortify' ? (
+                <FortifyInfoPanel campaign={campaign} players={players} />
+              ) : (
+                <InfoPanelPlaceholder activeTab={activeTab} />
+              )
+            ) : (
+              <InfoPanelPlaceholder activeTab={activeTab} />
+            )
           )}
         </div>
       </div>

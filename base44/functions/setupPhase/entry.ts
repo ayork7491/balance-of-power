@@ -97,21 +97,38 @@ function seededShuffle(arr, seed) {
 // ─── Calculate draft targets ──────────────────────────────────────────────────
 
 function calcDraftTargets(totalTerritories, playerCount, draftPct = 0.6) {
-  // Total territories to be claimed = floor(total * pct)
-  // Equal per player = floor(total / playerCount)
-  const totalClaim = Math.floor(totalTerritories * draftPct);
-  const perPlayer  = Math.floor(totalClaim / playerCount);
-  return { totalClaim: perPlayer * playerCount, perPlayer };
+  // Calculate total territories to draft (approximately 60%)
+  // MUST be divisible by player count for equal distribution
+  const roughTotal = Math.floor(totalTerritories * draftPct);
+  // Round down to nearest multiple of playerCount
+  const perPlayer = Math.floor(roughTotal / playerCount);
+  const totalClaim = perPlayer * playerCount;
+  
+  return { 
+    totalClaim,     // Total picks across all players (divisible by playerCount)
+    perPlayer,      // Picks per individual player
+    totalTerritories,
+    draftPct,
+  };
 }
 
 // ─── Snake draft next index ───────────────────────────────────────────────────
 
 function nextSnakeIndex(current, playerCount, direction) {
+  // Simple snake draft: 0→1→2→3→3→2→1→0→0→1...
   if (direction === 'forward') {
-    if (current + 1 >= playerCount) return { index: current - 1 >= 0 ? current - 1 : 0, direction: 'backward' };
+    // Moving forward (0 to playerCount-1)
+    if (current >= playerCount - 1) {
+      // Hit the end, reverse direction
+      return { index: current - 1, direction: 'backward' };
+    }
     return { index: current + 1, direction: 'forward' };
   } else {
-    if (current - 1 < 0) return { index: current + 1 <= playerCount - 1 ? current + 1 : 0, direction: 'forward' };
+    // Moving backward (playerCount-1 to 0)
+    if (current <= 0) {
+      // Hit the start, reverse direction
+      return { index: current + 1, direction: 'forward' };
+    }
     return { index: current - 1, direction: 'backward' };
   }
 }

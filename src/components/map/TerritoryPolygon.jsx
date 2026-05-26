@@ -55,10 +55,8 @@ export default function TerritoryPolygon({
   return (
     <motion.g
       onClick={onClick}
-      onPointerDown={(e) => {
-        // Prevent drag from starting on territory clicks
-        e.stopPropagation();
-      }}
+      // Allow pointer events to pass through to map container for drag handling
+      // Territory selection happens via onClick, not onPointerDown
       className="cursor-pointer touch-manipulation"
       role="button"
       aria-label={name}
