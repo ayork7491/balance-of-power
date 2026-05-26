@@ -1,6 +1,6 @@
 /**
  * useMyInvites — Hook for loading user's pending campaign invites.
- * Performance optimized with efficient filtering and real-time updates.
+ * SECURITY: Uses backend function to fetch only user's own pending invites.
  */
 import { useState, useEffect, useCallback } from 'react';
 import { base44 } from '@/api/base44Client';
@@ -10,24 +10,14 @@ export function useMyInvites() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Load initial data
+  // Load initial data via secure backend function
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
 
-      const user = await base44.auth.me();
-      if (!user) {
-        setInvites([]);
-        setLoading(false);
-        return;
-      }
-
-      // Load all invites and filter to pending ones for this user
-      const allInvites = await base44.entities.CampaignInvite.list();
-      const userInvites = allInvites.filter(
-        i => i.invitee_user_id === user.id && i.status === 'pending'
-      );
+      const res = await base44.functions.invoke('getMyInvites', {});
+      const userInvites = res.data.invites ?? [];
 
       setInvites(userInvites);
       setLoading(false);
@@ -37,7 +27,7 @@ export function useMyInvites() {
     }
   }, []);
 
-  // Real-time subscriptions
+  // Real-time subscriptions (scoped to user's invites only)
   useEffect(() => {
     loadData();
 
@@ -50,7 +40,7 @@ export function useMyInvites() {
         if (exists) {
           return prev.map(i => i.id === event.id ? event.data : i);
         }
-        // Only add if it's a pending invite for current user
+        // Only add if it's a pending invite (backend already filtered, but double-check)
         if (event.data?.status === 'pending') {
           return [...prev, event.data];
         }

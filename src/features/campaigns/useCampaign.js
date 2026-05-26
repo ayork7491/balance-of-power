@@ -1,6 +1,6 @@
 /**
  * useCampaign — Real-time campaign data hook.
- * Subscribes to campaign + players + invites with automatic cleanup.
+ * SECURITY: Uses backend function to validate membership before loading data.
  */
 import { useState, useEffect, useCallback } from 'react';
 import { base44 } from '@/api/base44Client';
@@ -10,11 +10,10 @@ export function useCampaign(campaignId) {
   const [players, setPlayers] = useState([]);
   const [invites, setInvites] = useState([]);
   const [myPlayer, setMyPlayer] = useState(null);
-  const [userId, setUserId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Load initial data
+  // Load initial data via secure backend function
   const loadData = useCallback(async () => {
     if (!campaignId) return;
     
@@ -22,14 +21,8 @@ export function useCampaign(campaignId) {
       setLoading(true);
       setError(null);
 
-      // Get current user
-      const user = await base44.auth.me();
-      setUserId(user?.id);
-
-      // Load campaign
-      const campaigns = await base44.entities.Campaign.filter({ id: campaignId });
-      const campaignData = campaigns[0] ?? null;
-      setCampaign(campaignData);
+      const res = await base44.functions.invoke('getCampaignOverview', { campaign_id: campaignId });
+      const { campaign: campaignData, players: playersData, invites: invitesData, myPlayer: myPlayerData } = res.data;
 
       if (!campaignData) {
         setError('Campaign not found');
@@ -37,18 +30,10 @@ export function useCampaign(campaignId) {
         return;
       }
 
-      // Load players
-      const playersData = await base44.entities.CampaignPlayer.filter({ campaign_id: campaignId });
-      setPlayers(playersData);
-
-      // Find my player record
-      const myPlayerData = playersData.find(p => p.user_id === user?.id) ?? null;
-      setMyPlayer(myPlayerData);
-
-      // Load invites
-      const invitesData = await base44.entities.CampaignInvite.filter({ campaign_id: campaignId });
-      setInvites(invitesData);
-
+      setCampaign(campaignData);
+      setPlayers(playersData ?? []);
+      setInvites(invitesData ?? []);
+      setMyPlayer(myPlayerData ?? null);
       setLoading(false);
     } catch (err) {
       setError(err.message || 'Failed to load campaign');
@@ -56,20 +41,20 @@ export function useCampaign(campaignId) {
     }
   }, [campaignId]);
 
-  // Real-time subscriptions
+  // Real-time subscriptions (scoped to this campaign only)
   useEffect(() => {
     if (!campaignId) return;
 
     loadData();
 
-    // Subscribe to campaign updates
+    // Subscribe to campaign updates - only for this campaign
     const unsubCampaign = base44.entities.Campaign.subscribe((event) => {
       if (event.id === campaignId) {
         setCampaign(event.data);
       }
     });
 
-    // Subscribe to player changes
+    // Subscribe to player changes - only for this campaign
     const unsubPlayers = base44.entities.CampaignPlayer.subscribe((event) => {
       if (event.data?.campaign_id === campaignId) {
         setPlayers(prev => {
@@ -85,7 +70,7 @@ export function useCampaign(campaignId) {
       }
     });
 
-    // Subscribe to invite changes
+    // Subscribe to invite changes - only for this campaign
     const unsubInvites = base44.entities.CampaignInvite.subscribe((event) => {
       if (event.data?.campaign_id === campaignId) {
         setInvites(prev => {
@@ -108,22 +93,11 @@ export function useCampaign(campaignId) {
     };
   }, [campaignId, loadData]);
 
-  // Update myPlayer when userId or players change
-  useEffect(() => {
-    if (!userId || players.length === 0) {
-      setMyPlayer(null);
-      return;
-    }
-    const my = players.find(p => p.user_id === userId) ?? null;
-    setMyPlayer(my);
-  }, [userId, players]);
-
   return {
     campaign,
     players,
     invites,
     myPlayer,
-    userId,
     loading,
     error,
     reload: loadData,

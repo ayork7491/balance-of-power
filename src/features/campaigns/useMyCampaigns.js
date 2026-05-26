@@ -1,6 +1,6 @@
 /**
  * useMyCampaigns — Hook for loading user's campaigns with real-time updates.
- * Performance optimized with memoization and efficient subscriptions.
+ * SECURITY: Uses backend function to fetch only campaigns user belongs to.
  */
 import { useState, useEffect, useCallback } from 'react';
 import { base44 } from '@/api/base44Client';
@@ -11,30 +11,17 @@ export function useMyCampaigns() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Load initial data
+  // Load initial data via secure backend function
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
 
-      const user = await base44.auth.me();
-      if (!user) {
-        setCampaigns([]);
-        setPlayers([]);
-        setLoading(false);
-        return;
-      }
+      const res = await base44.functions.invoke('getMyCampaigns', {});
+      const { campaigns: userCampaigns, players: playerRecords } = res.data;
 
-      // Load all campaigns user is part of
-      const allCampaigns = await base44.entities.Campaign.list();
-      const playerRecords = await base44.entities.CampaignPlayer.filter({ user_id: user.id });
-      
-      // Filter to only campaigns user is in
-      const campaignIds = new Set(playerRecords.map(p => p.campaign_id));
-      const userCampaigns = allCampaigns.filter(c => campaignIds.has(c.id));
-
-      setCampaigns(userCampaigns);
-      setPlayers(playerRecords);
+      setCampaigns(userCampaigns ?? []);
+      setPlayers(playerRecords ?? []);
       setLoading(false);
     } catch (err) {
       setError(err.message || 'Failed to load campaigns');
@@ -42,26 +29,29 @@ export function useMyCampaigns() {
     }
   }, []);
 
-  // Real-time subscriptions
+  // Real-time subscriptions (scoped to user's campaigns only)
   useEffect(() => {
     loadData();
 
-    // Subscribe to campaign changes
+    // Subscribe to campaign changes - filter client-side to user's campaigns
     const unsubCampaigns = base44.entities.Campaign.subscribe((event) => {
       setCampaigns(prev => {
-        const exists = prev.find(c => c.id === event.id);
+        const isUserCampaign = prev.some(c => c.id === event.id);
+        if (!isUserCampaign && event.type !== 'delete') {
+          return prev; // Ignore campaigns user doesn't belong to
+        }
         if (event.type === 'delete') {
           return prev.filter(c => c.id !== event.id);
         }
+        const exists = prev.find(c => c.id === event.id);
         if (exists) {
           return prev.map(c => c.id === event.id ? event.data : c);
         }
-        // Only add if user is part of this campaign (check players)
         return prev;
       });
     });
 
-    // Subscribe to player changes
+    // Subscribe to player changes - filter to user's campaigns
     const unsubPlayers = base44.entities.CampaignPlayer.subscribe((event) => {
       setPlayers(prev => {
         if (event.type === 'delete') {
@@ -71,7 +61,12 @@ export function useMyCampaigns() {
         if (exists) {
           return prev.map(p => p.id === event.id ? event.data : p);
         }
-        return [...prev, event.data];
+        // Only add if it's for a campaign user is in
+        const isRelevant = prev.some(p => p.campaign_id === event.data?.campaign_id);
+        if (isRelevant) {
+          return [...prev, event.data];
+        }
+        return prev;
       });
     });
 
