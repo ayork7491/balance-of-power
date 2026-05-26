@@ -101,6 +101,10 @@ module.exports = {
         'pulse-glow': {
           '0%, 100%': { boxShadow: '0 0 8px hsl(38 92% 58% / 0.3)' },
           '50%': { boxShadow: '0 0 20px hsl(38 92% 58% / 0.7)' }
+        },
+        'spin-slow': {
+          from: { transform: 'rotate(0deg)' },
+          to: { transform: 'rotate(360deg)' }
         }
       },
       animation: {
@@ -110,6 +114,7 @@ module.exports = {
         'slide-in-left': 'slide-in-left 0.2s ease-out',
         'slide-in-right': 'slide-in-right 0.2s ease-out',
         'pulse-glow': 'pulse-glow 2s ease-in-out infinite',
+        'spin-slow': 'spin-slow 3s linear infinite',
       }
     }
   },

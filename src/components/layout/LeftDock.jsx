@@ -4,33 +4,51 @@
  * Collapsible on small landscape screens.
  */
 import { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 export default function LeftDock({ children, defaultCollapsed = false }) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
 
   return (
-    <div className={`relative flex flex-col shrink-0 transition-all duration-200 ${
-      collapsed ? 'w-8' : 'w-64'
-    } bg-panel-bg border-r border-panel-border overflow-hidden`}>
-
-      {/* Collapse toggle */}
+    <motion.div 
+      className="relative flex flex-col shrink-0 bg-panel-bg border-r border-panel-border overflow-hidden"
+      animate={{ width: collapsed ? 32 : 256 }}
+      transition={{ duration: 0.2, ease: "easeInOut" }}
+      style={{ touchAction: 'none' }}
+    >
+      {/* Collapse toggle - larger touch target */}
       <button
         onClick={() => setCollapsed(!collapsed)}
-        className="absolute top-2 -right-3 z-10 w-6 h-6 rounded-full bg-panel-header border border-panel-border flex items-center justify-center hover:border-primary/50 transition-colors"
+        className="absolute top-2 -right-3 z-10 w-7 h-7 rounded-full bg-panel-header border border-panel-border flex items-center justify-center hover:border-primary/50 hover:bg-primary/10 transition-all active:scale-95 touch-manipulation"
+        aria-label={collapsed ? 'Expand panel' : 'Collapse panel'}
       >
         {collapsed
-          ? <ChevronRight className="w-3 h-3 text-muted-foreground" />
-          : <ChevronLeft className="w-3 h-3 text-muted-foreground" />
+          ? <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
+          : <ChevronLeft className="w-3.5 h-3.5 text-muted-foreground" />
         }
       </button>
 
-      {/* Content */}
-      <div className={`flex-1 overflow-y-auto dock-scroll transition-opacity duration-150 ${
-        collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'
-      }`}>
-        {children}
-      </div>
-    </div>
+      {/* Content with smooth opacity transition */}
+      <AnimatePresence>
+        {!collapsed && (
+          <motion.div
+            className="flex-1 overflow-y-auto dock-scroll"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            style={{ 
+              overscrollBehavior: 'contain',
+              WebkitOverflowScrolling: 'touch'
+            }}
+          >
+            <div className="p-3">
+              {children}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
   );
 }

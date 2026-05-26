@@ -13,6 +13,7 @@
  * Zoom/pan via pointer events + wheel. No external library needed.
  */
 import { useRef, useState, useCallback, useEffect } from 'react';
+import { motion } from 'framer-motion';
 import { PLAYER_COLORS } from '@/config/theme';
 import TerritoryPolygon from './TerritoryPolygon';
 import AdjacencyLines from './AdjacencyLines';
@@ -139,7 +140,13 @@ export default function MapRenderer({
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerLeave={onPointerUp}
-      style={{ cursor: drag.current ? 'grabbing' : 'grab', touchAction: 'none' }}
+      style={{ 
+        cursor: drag.current ? 'grabbing' : 'grab', 
+        touchAction: 'none',
+        WebkitTouchCallout: 'none',
+        WebkitUserSelect: 'none',
+        userSelect: 'none'
+      }}
     >
       <svg
         width="100%"
@@ -176,21 +183,28 @@ export default function MapRenderer({
 
           {/* Territory name labels (shown at comfortable zoom levels) */}
           {transform.scale >= 0.7 && mapDef.territories.map(territory => (
-            <text
+            <motion.text
               key={`label-${territory.territory_id}`}
               x={territory.cx}
               y={territory.cy + 22}
               textAnchor="middle"
-              fontSize={Math.max(6, 9 / transform.scale * 0.85)}
+              fontSize={Math.max(7, 10 / transform.scale * 0.85)}
               fontFamily="'Rajdhani', sans-serif"
               fontWeight="600"
-              fill="rgba(255,255,255,0.75)"
-              stroke="rgba(0,0,0,0.5)"
-              strokeWidth={0.5}
-              style={{ pointerEvents: 'none', userSelect: 'none' }}
+              fill="rgba(255,255,255,0.85)"
+              stroke="rgba(0,0,0,0.7)"
+              strokeWidth={0.7}
+              style={{ 
+                pointerEvents: 'none', 
+                userSelect: 'none',
+                textShadow: '0 1px 3px rgba(0,0,0,0.8)'
+              }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: transform.scale >= 0.7 ? 0.85 : 0 }}
+              transition={{ duration: 0.2 }}
             >
               {territory.name}
-            </text>
+            </motion.text>
           ))}
         </g>
       </svg>
@@ -199,18 +213,27 @@ export default function MapRenderer({
       {arrowLayer}
 
       {/* Zoom controls */}
-      <div className="absolute bottom-4 right-4 flex flex-col gap-1 z-10">
-        <button
+      <motion.div 
+        className="absolute bottom-4 right-4 flex flex-col gap-1.5 z-10"
+        initial={{ y: 20, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ duration: 0.3, delay: 0.3 }}
+      >
+        <motion.button
           onClick={() => setTransform(t => ({ ...t, scale: Math.min(MAX_ZOOM, t.scale * 1.25) }))}
-          className="w-7 h-7 rounded bg-panel-header border border-panel-border text-foreground text-sm flex items-center justify-center hover:bg-secondary transition-colors"
+          className="w-9 h-9 rounded-lg bg-panel-header border border-panel-border text-foreground text-lg font-light flex items-center justify-center hover:bg-secondary hover:border-primary/50 active:scale-95 transition-all shadow-lg touch-manipulation"
           aria-label="Zoom in"
-        >+</button>
-        <button
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+        >+</motion.button>
+        <motion.button
           onClick={() => setTransform(t => ({ ...t, scale: Math.max(MIN_ZOOM, t.scale / 1.25) }))}
-          className="w-7 h-7 rounded bg-panel-header border border-panel-border text-foreground text-sm flex items-center justify-center hover:bg-secondary transition-colors"
+          className="w-9 h-9 rounded-lg bg-panel-header border border-panel-border text-foreground text-lg font-light flex items-center justify-center hover:bg-secondary hover:border-primary/50 active:scale-95 transition-all shadow-lg touch-manipulation"
           aria-label="Zoom out"
-        >−</button>
-        <button
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+        >−</motion.button>
+        <motion.button
           onClick={() => {
             const el = containerRef.current;
             if (!el || !mapDef) return;
@@ -218,11 +241,13 @@ export default function MapRenderer({
             const scale = Math.min(cw / mapDef.width, ch / mapDef.height) * 0.95;
             setTransform({ x: (cw - mapDef.width * scale) / 2, y: (ch - mapDef.height * scale) / 2, scale });
           }}
-          className="w-7 h-7 rounded bg-panel-header border border-panel-border text-foreground text-xs flex items-center justify-center hover:bg-secondary transition-colors"
+          className="w-9 h-9 rounded-lg bg-panel-header border border-panel-border text-foreground text-sm flex items-center justify-center hover:bg-secondary hover:border-primary/50 active:scale-95 transition-all shadow-lg touch-manipulation"
           aria-label="Reset zoom"
           title="Reset view"
-        >⊡</button>
-      </div>
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+        >⊡</motion.button>
+      </motion.div>
     </div>
   );
 }

@@ -10,6 +10,7 @@
  * Map is always visible. Left dock changes based on current phase.
  */
 import { useState, useMemo, useEffect, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useParams } from 'react-router-dom';
 import CampaignLayout from '@/components/layout/CampaignLayout';
 import MapRenderer from '@/components/map/MapRenderer';
@@ -396,14 +397,31 @@ export default function ActiveCampaign() {
       )}
 
       {/* Loading overlay */}
-      {(loadingCampaign || loadingState) && (
-        <div className="absolute inset-0 flex items-center justify-center bg-background/60 backdrop-blur-sm z-30">
-          <div className="flex items-center gap-2 text-muted-foreground text-xs">
-            <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-            Loading campaign…
-          </div>
-        </div>
-      )}
+      <AnimatePresence>
+        {(loadingCampaign || loadingState) && (
+          <motion.div
+            className="absolute inset-0 flex items-center justify-center bg-background/80 backdrop-blur-sm z-30"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+          >
+            <motion.div 
+              className="flex items-center gap-3 text-muted-foreground text-sm"
+              initial={{ scale: 0.9, y: 10 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 10 }}
+            >
+              <motion.div
+                className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full"
+                animate={{ rotate: 360 }}
+                transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+              />
+              <span className="font-display text-xs tracking-widest uppercase">Loading campaign…</span>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </CampaignLayout>
   );
 }

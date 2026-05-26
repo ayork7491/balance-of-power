@@ -3,6 +3,7 @@
  * All visual state (color, opacity, highlight) is derived from props.
  * No business logic lives here.
  */
+import { motion } from 'framer-motion';
 import { PLAYER_COLORS } from '@/config/theme';
 
 const TERRAIN_PATTERNS = {
@@ -52,13 +53,18 @@ export default function TerritoryPolygon({
   }
 
   return (
-    <g
+    <motion.g
       onClick={onClick}
-      className="cursor-pointer"
+      className="cursor-pointer touch-manipulation"
       role="button"
       aria-label={name}
+      whileHover={{ scale: 1.02 }}
+      whileTap={{ scale: 0.98 }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.2 }}
     >
-      <polygon
+      <motion.polygon
         points={points}
         fill={baseFill}
         fillOpacity={fillOpacity * terrain_cfg.extraOpacity}
@@ -66,7 +72,12 @@ export default function TerritoryPolygon({
         strokeWidth={strokeWidth}
         strokeOpacity={strokeOpacity}
         strokeDasharray={terrain_cfg.strokeDash ?? undefined}
-        style={{ transition: 'fill-opacity 0.15s, stroke-width 0.1s' }}
+        animate={{
+          fillOpacity: fillOpacity * terrain_cfg.extraOpacity,
+          strokeWidth: strokeWidth
+        }}
+        transition={{ duration: 0.15 }}
+        style={{ filter: isSelected ? 'drop-shadow(0 0 4px rgba(251, 191, 36, 0.4))' : 'none' }}
       />
 
       {/* Troop count label — only when owned */}
@@ -94,6 +105,6 @@ export default function TerritoryPolygon({
           </text>
         </>
       )}
-    </g>
+    </motion.g>
   );
 }
