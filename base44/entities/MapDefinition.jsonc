@@ -1,0 +1,63 @@
+{
+  "name": "MapDefinition",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Display name of the map (e.g. 'Standard V1')."
+    },
+    "description": {
+      "type": "string",
+      "description": "Optional description shown in map selection."
+    },
+    "width": {
+      "type": "number",
+      "description": "Width of the logical coordinate space (e.g. 1000).",
+      "default": 1000
+    },
+    "height": {
+      "type": "number",
+      "description": "Height of the logical coordinate space (e.g. 700).",
+      "default": 700
+    },
+    "regions": {
+      "type": "array",
+      "description": "Named regions / continents with control bonuses.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "control_bonus": {
+            "type": "number"
+          },
+          "color": {
+            "type": "string"
+          }
+        }
+      },
+      "default": []
+    },
+    "background_image_url": {
+      "type": "string",
+      "description": "Optional background image URL for the map canvas."
+    },
+    "min_players": {
+      "type": "number",
+      "default": 2
+    },
+    "max_players": {
+      "type": "number",
+      "default": 8
+    }
+  },
+  "required": [
+    "name",
+    "width",
+    "height"
+  ]
+}

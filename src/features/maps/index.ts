@@ -1,16 +1,19 @@
 /**
- * Feature: maps
- *
- * Owns: Map definitions, territory data, adjacency graph, map renderer.
- * Entities: MapDefinition, TerritoryDefinition, TerritoryConnection
+ * features/maps — public API.
  *
  * ARCHITECTURE CONSTRAINT:
- *   Map rendering must be schema-driven from MapDefinition + TerritoryDefinition data.
+ *   Map rendering is schema-driven. All shape/position/adjacency data comes
+ *   from mapData.ts (static definitions). Campaign-specific territory state
+ *   (owner, troops, structures) lives in TerritoryState entities.
  *   No hardcoded SVG paths or territory coordinates in components.
- *   The renderer reads x/y coordinates from TerritoryDefinition records and builds the visual.
- *
- * Future prompts will add: components/MapRenderer.tsx, hooks/useMap.ts,
- *   hooks/useTerritories.ts, services/mapService.ts, etc.
- * Do not add logic to this file yet.
  */
-export {};
+
+// Static map definitions and utilities
+export { MAP_V1_STANDARD, MAP_REGISTRY, getMap } from './mapData';
+export type { MapDef, TerritoryDef, RegionDef } from './mapData';
+
+// Pure utilities (adjacency, BFS, geometry)
+export { buildAdjacencyMap, getNeighbors, getFortifiableTargets, parsePoints, centroid } from './mapUtils';
+
+// Hooks
+export { useTerritoryState } from './useTerritoryState';

@@ -1,0 +1,40 @@
+{
+  "name": "TerritoryState",
+  "type": "object",
+  "properties": {
+    "campaign_id": {
+      "type": "string",
+      "description": "Foreign key to Campaign.id."
+    },
+    "map_id": {
+      "type": "string",
+      "description": "Foreign key to MapDefinition.id."
+    },
+    "territory_key": {
+      "type": "string",
+      "description": "Stable identifier matching TerritoryDefinition.key (e.g. 'iron_ridge'). Not the entity id."
+    },
+    "owner_player_id": {
+      "type": "string",
+      "description": "CampaignPlayer.id of the current owner. Null = unoccupied."
+    },
+    "troop_count": {
+      "type": "number",
+      "default": 0,
+      "description": "Current troop count on this territory."
+    },
+    "structures": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "List of structure type keys built on this territory."
+    }
+  },
+  "required": [
+    "campaign_id",
+    "map_id",
+    "territory_key"
+  ]
+}
