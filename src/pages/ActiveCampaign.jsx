@@ -28,6 +28,8 @@ import DeployInfoPanel from '@/components/phases/deploy/DeployInfoPanel';
 import AttackPanel from '@/components/phases/attack/AttackPanel';
 import AttackInfoPanel from '@/components/phases/attack/AttackInfoPanel';
 import AttackArrowLayer from '@/components/phases/attack/AttackArrowLayer';
+import BattlePanel from '@/components/phases/battle/BattlePanel';
+import BattleInfoPanel from '@/components/phases/battle/BattleInfoPanel';
 import { useAttackReveals, useAttackPhase } from '@/features/campaigns/attack';
 
 import { useCampaign } from '@/features/campaigns';
@@ -219,6 +221,18 @@ export default function ActiveCampaign() {
       );
     }
 
+    if (phase === 'battle') {
+      return (
+        <BattlePanel
+          campaign={campaign}
+          players={players}
+          myPlayer={myPlayer}
+          mapDef={mapDef}
+          onPhaseChanged={handlePhaseChanged}
+        />
+      );
+    }
+
     return <PhasePanelPlaceholder campaign={campaign} />;
   }, [campaign, players, myPlayer, gameProfile, phase, stateById, mapDef, selectedId, handlePhaseChanged]);
 
@@ -231,6 +245,9 @@ export default function ActiveCampaign() {
     }
     if (phase === 'attack') {
       return <AttackInfoPanel campaign={campaign} players={players} mapDef={mapDef} />;
+    }
+    if (phase === 'battle') {
+      return <BattleInfoPanel campaign={campaign} players={players} />;
     }
     return <InfoPanelPlaceholder activeTab={activeTab} />;
   }, [isSetupPhase, phase, campaign, players, activeTab]);
