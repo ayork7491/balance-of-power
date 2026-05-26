@@ -25,6 +25,10 @@ import SetupInfoPanel from '@/components/setup/SetupInfoPanel';
 // Gameplay phase panels
 import DeployPanel from '@/components/phases/deploy/DeployPanel';
 import DeployInfoPanel from '@/components/phases/deploy/DeployInfoPanel';
+import AttackPanel from '@/components/phases/attack/AttackPanel';
+import AttackInfoPanel from '@/components/phases/attack/AttackInfoPanel';
+import AttackArrowLayer from '@/components/phases/attack/AttackArrowLayer';
+import { useAttackReveals } from '@/features/campaigns/attack';
 
 import { useCampaign } from '@/features/campaigns';
 import { useTerritoryState, getMap, buildAdjacencyMap } from '@/features/maps';
@@ -79,8 +83,15 @@ export default function ActiveCampaign() {
   const { id } = useParams();
   const [activeTab, setActiveTab]   = useState('map');
   const [selectedId, setSelectedId] = useState(null);
-  const [myPlayerId, setMyPlayerId] = useState(null);
+  const [myPlayerId, setMyPlayerId]   = useState(null);
   const [gameProfile, setGameProfile] = useState(null);
+
+  // Attack reveals — loaded for arrow rendering after reveal (post-attack phase)
+  const { reveals: attackReveals } = useAttackReveals({
+    campaignId: id,
+    round: campaign?.current_round ?? 1,
+    enabled: !!id,
+  });
 
   // Campaign + players
   const { campaign, players, loading: loadingCampaign, reload: reloadCampaign } = useCampaign(id);
@@ -199,6 +210,22 @@ export default function ActiveCampaign() {
       );
     }
 
+    if (phase === 'attack') {
+      return (
+        <AttackPanel
+          campaign={campaign}
+          players={players}
+          myPlayer={myPlayer}
+          stateById={stateById}
+          mapDef={mapDef}
+          adjacencyMap={adjacencyMap}
+          selectedTerritoryId={selectedId}
+          onClearSelection={() => setSelectedId(null)}
+          onPhaseChanged={handlePhaseChanged}
+        />
+      );
+    }
+
     return <PhasePanelPlaceholder campaign={campaign} />;
   }, [campaign, players, myPlayer, gameProfile, phase, stateById, mapDef, selectedId, handlePhaseChanged]);
 
@@ -208,6 +235,9 @@ export default function ActiveCampaign() {
     }
     if (phase === 'deploy') {
       return <DeployInfoPanel campaign={campaign} players={players} />;
+    }
+    if (phase === 'attack') {
+      return <AttackInfoPanel campaign={campaign} players={players} mapDef={mapDef} />;
     }
     return <InfoPanelPlaceholder activeTab={activeTab} />;
   }, [isSetupPhase, phase, campaign, players, activeTab]);
@@ -220,11 +250,27 @@ export default function ActiveCampaign() {
     const setupOrder = campaign?.setup_order ?? [];
     const idx = campaign?.setup_current_index ?? 0;
     if (!myPlayer || setupOrder[idx] !== myPlayer.id) return new Set();
-    // Highlight all unclaimed territories
     if (!mapDef) return new Set();
     const claimed = new Set(Object.keys(stateById));
     return new Set(mapDef.territories.map(t => t.territory_id).filter(tid => !claimed.has(tid)));
   }, [phase, campaign, myPlayer, mapDef, stateById]);
+
+  // In attack phase, highlight attackable (adjacent enemy/neutral) territories when own territory selected
+  const attackableIds = useMemo(() => {
+    if (phase !== 'attack' || !selectedId || !myPlayer || !mapDef) return new Set();
+    const isOwn = stateById[selectedId]?.owner_player_id === myPlayer.id;
+    if (!isOwn) return new Set();
+    const neighbors = adjacencyMap[selectedId] ?? new Set();
+    return new Set([...neighbors].filter(tid => stateById[tid]?.owner_player_id !== myPlayer.id));
+  }, [phase, selectedId, myPlayer, mapDef, stateById, adjacencyMap]);
+
+  // Arrow layer — own staged attacks during attack phase, all revealed after
+  const arrowAttacks = useMemo(() => {
+    // After reveal (battle/fortify phase): show AttackReveal records
+    if (phase !== 'attack' && attackReveals.length > 0) return attackReveals;
+    // During attack phase: no arrows shown (privacy — own staging shown only in panel)
+    return [];
+  }, [phase, attackReveals]);
 
   return (
     <CampaignLayout
@@ -243,7 +289,18 @@ export default function ActiveCampaign() {
             players={players}
             selectedId={selectedId}
             highlightIds={highlightIds}
+            attackableIds={attackableIds}
             onSelect={setSelectedId}
+            arrowLayer={arrowAttacks.length > 0 ? (
+              <AttackArrowLayer
+                attacks={arrowAttacks}
+                mapDef={mapDef}
+                players={players}
+                myPlayerId={myPlayer?.id}
+                viewBox={`0 0 ${mapDef.width} ${mapDef.height}`}
+                revealed={phase !== 'attack'}
+              />
+            ) : null}
           />
 
           <RegionLegend regions={mapDef.regions} />

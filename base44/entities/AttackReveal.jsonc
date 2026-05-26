@@ -1,0 +1,39 @@
+{
+  "name": "AttackReveal",
+  "type": "object",
+  "description": "Public record of a revealed attack. Created by processPhaseEnd. Visible to all campaign players after attack reveal.",
+  "properties": {
+    "campaign_id": {
+      "type": "string",
+      "description": "FK \u2192 Campaign.id"
+    },
+    "round": {
+      "type": "number",
+      "description": "Round this attack occurred in."
+    },
+    "player_id": {
+      "type": "string",
+      "description": "FK \u2192 CampaignPlayer.id \u2014 who attacked"
+    },
+    "origin_territory_id": {
+      "type": "string",
+      "description": "Territory the attack originated from."
+    },
+    "target_territory_id": {
+      "type": "string",
+      "description": "Territory being attacked."
+    },
+    "committed_troops": {
+      "type": "number",
+      "description": "Troops committed to this attack (already removed from origin territory)."
+    }
+  },
+  "required": [
+    "campaign_id",
+    "round",
+    "player_id",
+    "origin_territory_id",
+    "target_territory_id",
+    "committed_troops"
+  ]
+}

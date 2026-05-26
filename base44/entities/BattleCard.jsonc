@@ -1,0 +1,118 @@
+{
+  "name": "BattleCard",
+  "type": "object",
+  "description": "A generated battle card representing a conflict that requires tabletop resolution. Created after attack reveal.",
+  "properties": {
+    "campaign_id": {
+      "type": "string",
+      "description": "FK \u2192 Campaign.id"
+    },
+    "round": {
+      "type": "number",
+      "description": "Round this battle was generated in."
+    },
+    "battle_type": {
+      "type": "string",
+      "enum": [
+        "skirmish",
+        "siege",
+        "double_siege",
+        "capture_objectives",
+        "bloodbath"
+      ],
+      "description": "Classified battle type."
+    },
+    "target_territory_id": {
+      "type": "string",
+      "description": "The territory being fought over."
+    },
+    "defender_player_id": {
+      "type": "string",
+      "description": "CampaignPlayer.id of defender. Null if neutral territory."
+    },
+    "defender_troops": {
+      "type": "number",
+      "default": 0,
+      "description": "Defender troop count after committed troops were removed."
+    },
+    "attackers": {
+      "type": "array",
+      "description": "List of attackers: { player_id, origin_territory_id, committed_troops }",
+      "items": {
+        "type": "object",
+        "properties": {
+          "player_id": {
+            "type": "string"
+          },
+          "origin_territory_id": {
+            "type": "string"
+          },
+          "committed_troops": {
+            "type": "number"
+          }
+        }
+      },
+      "default": []
+    },
+    "total_attacking_troops": {
+      "type": "number",
+      "default": 0
+    },
+    "total_troops_in_battle": {
+      "type": "number",
+      "default": 0
+    },
+    "scale_factor": {
+      "type": "number",
+      "default": 1,
+      "description": "total_troops / avg_battle_size \u2014 used to scale down to tabletop size."
+    },
+    "tabletop_size": {
+      "type": "number",
+      "default": 0,
+      "description": "Scaled tabletop battle point total (each side proportionally scaled)."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "awaiting_result",
+        "result_submitted",
+        "awaiting_approval",
+        "resolved",
+        "auto_resolved",
+        "delayed",
+        "forfeited"
+      ],
+      "default": "pending"
+    },
+    "is_mutual": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if this is a bloodbath (mutual attacks between territories)."
+    },
+    "result": {
+      "type": "object",
+      "description": "Submitted battle result. { winner_player_id, surviving_tabletop_troops, notes, submitted_by, submitted_at }",
+      "default": {}
+    },
+    "approvals": {
+      "type": "array",
+      "description": "Array of { player_id, approved: boolean, flagged: boolean, at: string }",
+      "items": {
+        "type": "object"
+      },
+      "default": []
+    },
+    "resolved_at": {
+      "type": "string",
+      "description": "ISO timestamp when battle was fully resolved."
+    }
+  },
+  "required": [
+    "campaign_id",
+    "round",
+    "battle_type",
+    "target_territory_id"
+  ]
+}

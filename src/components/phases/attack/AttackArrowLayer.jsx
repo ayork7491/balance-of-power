@@ -1,0 +1,189 @@
+/**
+ * AttackArrowLayer — SVG overlay for rendering attack arrows on the map.
+ *
+ * Usage:
+ *   - During staging: renders current player's own staged attacks (my color, dashed).
+ *   - After reveal: renders all AttackReveal records (player colors, solid).
+ *
+ * Arrow design (per spec):
+ *   - Color coded by attacking player
+ *   - Display troop count
+ *   - Offset overlapping arrows (multiple attacks on same route are shifted)
+ *
+ * This component must be placed inside the MapRenderer SVG via a portal-like
+ * render or as a sibling overlay SVG with matching viewBox.
+ *
+ * Props:
+ *   attacks       — array of { origin_territory_id, target_territory_id, committed_troops, player_id }
+ *   mapDef        — MapDefinition (for territory cx/cy centers)
+ *   players       — CampaignPlayer[] (for color lookup)
+ *   myPlayerId    — current player's CampaignPlayer.id (own attacks get dashed style)
+ *   viewBox       — "0 0 W H" string matching map SVG viewBox
+ *   revealed      — boolean — if true, all arrows are solid; if false, own arrows dashed, others hidden
+ */
+import { useMemo } from 'react';
+import { PLAYER_COLORS } from '@/config/theme';
+
+function getPlayerHex(players, playerId) {
+  const p = players?.find(pl => pl.id === playerId);
+  return PLAYER_COLORS.find(c => c.id === p?.color)?.hex ?? '#ef4444';
+}
+
+function getCenter(territoryId, mapDef) {
+  const t = mapDef?.territories.find(t => t.territory_id === territoryId);
+  return t ? { x: t.cx, y: t.cy } : null;
+}
+
+/**
+ * Offset a line's midpoint perpendicularly to separate overlapping arrows.
+ * offsetIndex: which parallel offset to apply (-1, 0, +1, ...)
+ */
+function computeArrowPoints(x1, y1, x2, y2, offsetIndex, totalOverlapping) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.sqrt(dx * dx + dy * dy) || 1;
+
+  // Perpendicular unit vector
+  const px = -dy / len;
+  const py =  dx / len;
+
+  // Offset spacing: 12px per slot, centered
+  const spacing = 12;
+  const offset  = (offsetIndex - (totalOverlapping - 1) / 2) * spacing;
+
+  return {
+    x1: x1 + px * offset,
+    y1: y1 + py * offset,
+    x2: x2 + px * offset,
+    y2: y2 + py * offset,
+  };
+}
+
+function ArrowMarker({ id, color }) {
+  return (
+    <marker
+      id={id}
+      markerWidth="8"
+      markerHeight="8"
+      refX="6"
+      refY="3"
+      orient="auto"
+      markerUnits="strokeWidth"
+    >
+      <path d="M0,0 L0,6 L8,3 z" fill={color} />
+    </marker>
+  );
+}
+
+export default function AttackArrowLayer({
+  attacks,
+  mapDef,
+  players,
+  myPlayerId,
+  viewBox = '0 0 1000 700',
+  revealed = false,
+}) {
+  // Group arrows by route key (origin→target) to offset overlapping ones
+  const arrowData = useMemo(() => {
+    if (!attacks?.length || !mapDef) return [];
+
+    // Build a list with centers
+    const withCenters = attacks.map(atk => {
+      const from = getCenter(atk.origin_territory_id, mapDef);
+      const to   = getCenter(atk.target_territory_id, mapDef);
+      return from && to ? { ...atk, from, to } : null;
+    }).filter(Boolean);
+
+    // Group by route key (canonical: sorted origin+target)
+    const routeGroups = {};
+    for (const atk of withCenters) {
+      const key = [atk.origin_territory_id, atk.target_territory_id].join('→');
+      if (!routeGroups[key]) routeGroups[key] = [];
+      routeGroups[key].push(atk);
+    }
+
+    // Build final arrow list with offsets
+    const result = [];
+    for (const [, group] of Object.entries(routeGroups)) {
+      group.forEach((atk, i) => {
+        const { x1, y1, x2, y2 } = computeArrowPoints(
+          atk.from.x, atk.from.y,
+          atk.to.x,   atk.to.y,
+          i, group.length,
+        );
+        result.push({ ...atk, x1, y1, x2, y2, offsetIndex: i });
+      });
+    }
+    return result;
+  }, [attacks, mapDef]);
+
+  if (!arrowData.length) return null;
+
+  // Collect unique colors for marker defs
+  const uniqueColors = [...new Set(arrowData.map(a => getPlayerHex(players, a.player_id)))];
+
+  return (
+    <svg
+      className="absolute inset-0 pointer-events-none"
+      style={{ width: '100%', height: '100%' }}
+      viewBox={viewBox}
+      preserveAspectRatio="xMidYMid meet"
+    >
+      <defs>
+        {uniqueColors.map(color => (
+          <ArrowMarker
+            key={color}
+            id={`arrow-${color.replace('#', '')}`}
+            color={color}
+          />
+        ))}
+      </defs>
+
+      {arrowData.map((atk, idx) => {
+        const color     = getPlayerHex(players, atk.player_id);
+        const markerId  = `arrow-${color.replace('#', '')}`;
+        const isOwn     = atk.player_id === myPlayerId;
+        const isDashed  = !revealed && isOwn;
+        const strokeW   = 2.5;
+
+        // Label position: 60% along the arrow
+        const lx = atk.x1 + (atk.x2 - atk.x1) * 0.6;
+        const ly = atk.y1 + (atk.y2 - atk.y1) * 0.6;
+
+        return (
+          <g key={idx}>
+            <line
+              x1={atk.x1} y1={atk.y1}
+              x2={atk.x2} y2={atk.y2}
+              stroke={color}
+              strokeWidth={strokeW}
+              strokeDasharray={isDashed ? '6 4' : undefined}
+              strokeOpacity={0.9}
+              markerEnd={`url(#${markerId})`}
+            />
+            {/* Troop count label */}
+            <g transform={`translate(${lx}, ${ly})`}>
+              <rect
+                x="-13" y="-9" width="26" height="16" rx="4"
+                fill="#0a0f1e"
+                fillOpacity={0.75}
+                stroke={color}
+                strokeWidth="1"
+              />
+              <text
+                x="0" y="3"
+                textAnchor="middle"
+                fontSize="9"
+                fontFamily="'Orbitron', monospace"
+                fill={color}
+                fontWeight="700"
+              >
+                {atk.committed_troops}
+              </text>
+            </g>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}

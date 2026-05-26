@@ -36,6 +36,7 @@ export default function MapRenderer({
   highlightIds = new Set(),
   attackableIds = new Set(),
   onSelect,
+  arrowLayer = null,
 }) {
   const containerRef = useRef(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
@@ -193,6 +194,9 @@ export default function MapRenderer({
           ))}
         </g>
       </svg>
+
+      {/* Attack arrow overlay — rendered as absolute SVG sibling, same viewBox */}
+      {arrowLayer}
 
       {/* Zoom controls */}
       <div className="absolute bottom-4 right-4 flex flex-col gap-1 z-10">
