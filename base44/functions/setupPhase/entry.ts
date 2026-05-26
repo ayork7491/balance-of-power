@@ -164,9 +164,14 @@ Deno.serve(async (req) => {
     if (nextIdx >= setupOrder.length) {
       // All factions selected — calculate draft targets and enter territory_draft
       const activePlayers = players.filter(p => !p.is_eliminated);
-      const DRAFT_PCT = 0.6;
-      const TOTAL_TERRITORIES = 36; // Standard V1 map — configurable in future
-      const { perPlayer } = calcDraftTargets(TOTAL_TERRITORIES, activePlayers.length, DRAFT_PCT);
+      // Draft percentage: from campaign settings if present, else engine default (0.6)
+      const draftPct = campaign.settings?.draft_percentage ?? 0.6;
+      // Territory count: from map TerritoryState records (already exist as definitions)
+      // We use the total number of territory definitions for the campaign's map.
+      const allTerritories = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+      // If no TerritoryState rows yet, fall back to the body-provided hint or 36
+      const totalTerritories = body.total_territories ?? (allTerritories.length > 0 ? allTerritories.length : 36);
+      const { perPlayer } = calcDraftTargets(totalTerritories, activePlayers.length, draftPct);
       const totalPicks = perPlayer * activePlayers.length;
 
       await base44.asServiceRole.entities.Campaign.update(campaign_id, {
@@ -297,8 +302,10 @@ Deno.serve(async (req) => {
     const nextIdx = currentIdx + 1;
     if (nextIdx >= setupOrder.length) {
       const activePlayers = players.filter(p => !p.is_eliminated);
-      const TOTAL_TERRITORIES = 36;
-      const { perPlayer } = calcDraftTargets(TOTAL_TERRITORIES, activePlayers.length, 0.6);
+      const draftPct = campaign.settings?.draft_percentage ?? 0.6;
+      const allTerritories = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+      const totalTerritories = body.total_territories ?? (allTerritories.length > 0 ? allTerritories.length : 36);
+      const { perPlayer } = calcDraftTargets(totalTerritories, activePlayers.length, draftPct);
       const totalPicks = perPlayer * activePlayers.length;
       await base44.asServiceRole.entities.Campaign.update(campaign_id, {
         current_phase: 'territory_draft',
