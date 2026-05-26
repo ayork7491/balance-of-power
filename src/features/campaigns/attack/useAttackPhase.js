@@ -39,7 +39,11 @@ export function useAttackPhase({ campaign, myPlayer }) {
 
   useEffect(() => { reload(); }, [reload]);
 
-  // Real-time: refresh if own decision updates
+  // Real-time: own decision only.
+  // We check all three guard fields before reloading. Even if another player's
+  // PhaseDecision change fires this subscription, the guard on player_id ensures
+  // we only react to our own record. The reload() itself fetches user-scoped data
+  // so even a false-positive trigger would return only own data.
   useEffect(() => {
     if (!campaign?.id || !myPlayer?.id) return;
     const unsub = base44.entities.PhaseDecision.subscribe((event) => {

@@ -33,11 +33,22 @@
  *     - simultaneous maneuver warfare
  *
  * ─── BATTLE CARD TYPES ───────────────────────────────────────────────────────
- *   Skirmish:       1 attacker → neutral territory → auto-resolve (no battle needed)
- *   Siege:          1 attacker → defended territory → battle card
- *   Double Siege:   2+ attackers → defended territory → battle card
- *   Capture Obj:    2+ attackers → neutral territory → battle card
- *   Bloodbath:      mutual attacks between 2 territories → battle card
+ *   skirmish:          1 attacker → neutral/vacated territory → auto-resolve (no battle needed)
+ *   siege:             1 attacker → defended territory → battle card
+ *   double_siege:      2+ attackers → defended territory → battle card
+ *   capture_objectives: 2+ attackers → neutral/vacated territory → battle card
+ *   bloodbath:         mutual attacks between same two territories → ONE combined battle card
+ *
+ * ─── BLOODBATH DEDUPLICATION ─────────────────────────────────────────────────
+ *   A bloodbath pair (A→B AND B→A) generates exactly ONE BattleCard.
+ *   Canonical: the pair whose origin_territory_id < target_territory_id lexicographically
+ *   is chosen as the "primary" card. The secondary target is NOT processed again as a
+ *   separate target. A consumed Set tracks which targets have been handled.
+ *
+ * ─── ABANDONED TERRITORY HANDLING ────────────────────────────────────────────
+ *   After troop deduction, if a territory has 0 troops remaining its owner is set
+ *   to null (vacated). Incoming attacks against it resolve as skirmish/capture_objectives
+ *   regardless of the original owner. This persists to the DB immediately after deduction.
  *
  * ─── MAP ADJACENCY ───────────────────────────────────────────────────────────
  *   Local imports are prohibited in Deno deploy. Adjacency for V1 map is inlined.
@@ -122,27 +133,41 @@ async function log(base44, campaignId, round, phase, eventType, playerId, payloa
   });
 }
 
-// ─── Battle card generation ───────────────────────────────────────────────────
+// ─── Battle card generation helpers ──────────────────────────────────────────
 
 /**
  * Classify battle type from post-commitment board state.
  *
+ * Called only for non-bloodbath targets. Bloodbath detection and card generation
+ * is handled separately in the main loop using a consumed-pairs Set.
+ *
+ * A territory is treated as neutral/vacated if:
+ *   - it has no owner (never owned), OR
+ *   - its troop_count dropped to 0 after committed-troop deduction (abandoned)
+ *
  * @param {string} targetId
- * @param {Array} attacksOnTarget  - all attacks whose target === targetId
- * @param {object} postCommitStateById  - territory state AFTER committed troops removed
- * @param {boolean} hasMutualReturn  - whether any attacker is also being attacked from target
+ * @param {Array}  attacksOnTarget  - attacks whose target === targetId
+ * @param {object} postCommitStateById - territory state AFTER committed troop deduction
+ *                                       AND after vacating abandoned territories
  */
-function classifyBattle(targetId, attacksOnTarget, postCommitStateById, hasMutualReturn) {
-  const defenderOwner = postCommitStateById[targetId]?.owner_player_id ?? null;
-  const defenderTroops = postCommitStateById[targetId]?.troop_count ?? 0;
-  const isNeutral = !defenderOwner;
+function classifyBattle(targetId, attacksOnTarget, postCommitStateById) {
+  const state = postCommitStateById[targetId];
+  // Treat vacated (0 troops after deduction) the same as neutral
+  const isNeutral = !state?.owner_player_id || (state.troop_count ?? 0) === 0;
   const attackerCount = attacksOnTarget.length;
 
-  if (hasMutualReturn) return 'bloodbath';
   if (isNeutral && attackerCount === 1) return 'skirmish';
   if (isNeutral && attackerCount > 1)  return 'capture_objectives';
   if (!isNeutral && attackerCount === 1) return 'siege';
-  return 'double_siege'; // multiple attackers, defended
+  return 'double_siege';
+}
+
+/**
+ * Build a canonical key for a mutual-attack pair so each bloodbath is only
+ * processed once. Sort lexicographically so A→B and B→A share the same key.
+ */
+function bloodbathKey(a, b) {
+  return [a, b].sort().join('↔');
 }
 
 /**
@@ -385,14 +410,13 @@ Deno.serve(async (req) => {
       }
     }
 
-    // CRITICAL: Remove committed troops from origin territories BEFORE battle generation
+    // ── STEP 1: Remove committed troops from origin territories ──────────────
     const allTerritoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
     const postCommitStateById = {};
     for (const ts of allTerritoryStates) {
       postCommitStateById[ts.territory_id] = { ...ts };
     }
 
-    // Deduct committed troops from origins (in-memory; persist after)
     for (const atk of allAttacks) {
       if (postCommitStateById[atk.origin_territory_id]) {
         postCommitStateById[atk.origin_territory_id].troop_count = Math.max(
@@ -402,74 +426,160 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Persist troop deductions to DB
+    // ── STEP 2: Mark abandoned territories as vacated (owner_player_id = null) ─
+    // If ALL troops were committed out of a territory, it has no defender.
+    // Incoming attacks treat it as neutral (skirmish/capture_objectives).
+    const vacatedIds = new Set();
+    for (const [tid, state] of Object.entries(postCommitStateById)) {
+      if (state.owner_player_id && (state.troop_count ?? 0) === 0) {
+        // Only vacate if anyone was there originally and all troops left
+        const original = allTerritoryStates.find(s => s.territory_id === tid);
+        if (original?.owner_player_id && original.troop_count > 0) {
+          postCommitStateById[tid].owner_player_id = null;
+          vacatedIds.add(tid);
+        }
+      }
+    }
+
+    // ── STEP 3: Persist troop deductions + vacations to DB ────────────────────
     for (const [tid, state] of Object.entries(postCommitStateById)) {
       const original = allTerritoryStates.find(s => s.territory_id === tid);
-      if (original && original.troop_count !== state.troop_count) {
+      if (!original) continue;
+      const troopChanged  = original.troop_count !== state.troop_count;
+      const ownerChanged  = original.owner_player_id !== state.owner_player_id;
+      if (troopChanged || ownerChanged) {
         await base44.asServiceRole.entities.TerritoryState.update(original.id, {
-          troop_count: state.troop_count,
+          troop_count:      state.troop_count,
+          owner_player_id:  state.owner_player_id ?? null,
         });
       }
     }
 
-    // Load TabletopGameProfile for battle scaling
+    // ── STEP 4: Load scaling profile ──────────────────────────────────────────
     let avgBattleSize = 1000;
     if (campaign.game_profile_id) {
       const profiles = await base44.asServiceRole.entities.TabletopGameProfile.filter({ id: campaign.game_profile_id });
       if (profiles[0]?.average_battle_size) avgBattleSize = profiles[0].average_battle_size;
     }
 
-    const adj = buildAdjacency();
-
-    // Generate battle cards
-    const targetIds = [...new Set(allAttacks.map(a => a.target_territory_id))];
-    const battleCards = [];
+    // ── STEP 5: Generate battle cards ─────────────────────────────────────────
+    // Track which targets have been consumed into a bloodbath so we don't also
+    // generate a second card for the "return" direction.
+    const targetIds     = [...new Set(allAttacks.map(a => a.target_territory_id))];
+    const battleCards   = [];
     const skirmishResults = [];
+    const consumedTargets = new Set(); // bloodbath targets already processed
 
     for (const targetId of targetIds) {
+      if (consumedTargets.has(targetId)) continue; // already handled as part of a bloodbath
+
       const attacksOnTarget = allAttacks.filter(a => a.target_territory_id === targetId);
 
-      // Detect bloodbath: any attacker's origin is also being attacked from target
-      const hasMutualReturn = attacksOnTarget.some(atk =>
-        allAttacks.some(a =>
-          a.origin_territory_id === targetId &&
-          a.target_territory_id === atk.origin_territory_id
-        )
-      );
+      // ── Bloodbath detection ──
+      // A bloodbath exists when at least one attacker's origin is ALSO a target
+      // of an attack coming back from targetId. Find all such pairs.
+      const mutualOrigins = attacksOnTarget
+        .map(atk => atk.origin_territory_id)
+        .filter(originId =>
+          allAttacks.some(a =>
+            a.origin_territory_id === targetId &&
+            a.target_territory_id === originId
+          )
+        );
 
-      const battleType = classifyBattle(
-        targetId, attacksOnTarget, postCommitStateById, hasMutualReturn
-      );
+      const isBloodbath = mutualOrigins.length > 0;
+
+      if (isBloodbath) {
+        // Generate ONE bloodbath card per mutual pair. Mark both targets consumed.
+        // There may be multiple mutual origins (e.g. B→A and C→A while A→B and A→C).
+        // Each mutual pair gets its own bloodbath card.
+        const pairedOrigins = new Set();
+        for (const originId of mutualOrigins) {
+          const pairKey = bloodbathKey(targetId, originId);
+          if (pairedOrigins.has(pairKey)) continue;
+          pairedOrigins.add(pairKey);
+
+          consumedTargets.add(targetId);
+          consumedTargets.add(originId);
+
+          // Combine all attacks involved in this mutual pair
+          const attacksFromTarget = allAttacks.filter(
+            a => a.origin_territory_id === targetId && a.target_territory_id === originId
+          );
+          const attacksFromOrigin = allAttacks.filter(
+            a => a.origin_territory_id === originId && a.target_territory_id === targetId
+          );
+          const allBloodbathAttacks = [...attacksFromOrigin, ...attacksFromTarget];
+
+          const totalTroops = allBloodbathAttacks.reduce((s, a) => s + (a.committed_troops || 0), 0);
+          const { scale_factor, tabletop_size } = calcBattleScaling(totalTroops, avgBattleSize);
+
+          const card = await base44.asServiceRole.entities.BattleCard.create({
+            campaign_id,
+            round,
+            battle_type: 'bloodbath',
+            // target_territory_id is the lexicographically first of the pair
+            target_territory_id: [targetId, originId].sort()[0],
+            defender_player_id:  null, // bloodbath has no single defender
+            defender_troops:     0,
+            attackers: allBloodbathAttacks.map(a => ({
+              player_id:           a.player_id,
+              origin_territory_id: a.origin_territory_id,
+              committed_troops:    a.committed_troops,
+            })),
+            total_attacking_troops: totalTroops,
+            total_troops_in_battle: totalTroops,
+            scale_factor,
+            tabletop_size,
+            status: 'pending',
+            is_mutual: true,
+          });
+          battleCards.push(card);
+
+          await log(base44, campaign_id, round, phase, 'battle_card_generated', null, {
+            battle_type:        'bloodbath',
+            target_territory_id: card.target_territory_id,
+            pair:               [targetId, originId],
+            scale_factor,
+            tabletop_size,
+          }, true);
+        }
+        continue; // do not fall through to regular card generation for this target
+      }
+
+      // ── Normal (non-bloodbath) card generation ──
+      const battleType = classifyBattle(targetId, attacksOnTarget, postCommitStateById);
 
       const totalAttackingTroops = attacksOnTarget.reduce((s, a) => s + (a.committed_troops || 0), 0);
-      const defenderTroops = postCommitStateById[targetId]?.troop_count ?? 0;
-      const totalTroopsInBattle = totalAttackingTroops + defenderTroops;
+      const defenderTroops       = postCommitStateById[targetId]?.troop_count ?? 0;
+      const totalTroopsInBattle  = totalAttackingTroops + defenderTroops;
       const { scale_factor, tabletop_size } = calcBattleScaling(totalTroopsInBattle, avgBattleSize);
 
       if (battleType === 'skirmish') {
-        // Auto-resolve: move attacking troops in, assign ownership
-        const attacker = attacksOnTarget[0];
+        // Auto-resolve: first attacker captures, troops move in
+        const attacker    = attacksOnTarget[0];
         const targetState = allTerritoryStates.find(s => s.territory_id === targetId);
         if (targetState) {
           await base44.asServiceRole.entities.TerritoryState.update(targetState.id, {
             owner_player_id: attacker.player_id,
-            troop_count: attacker.committed_troops,
+            troop_count:     attacker.committed_troops,
           });
         }
         skirmishResults.push({
           target_territory_id: targetId,
-          attacker_player_id: attacker.player_id,
-          troops_moved: attacker.committed_troops,
+          attacker_player_id:  attacker.player_id,
+          troops_moved:        attacker.committed_troops,
         });
         await log(base44, campaign_id, round, phase, 'skirmish_resolved', attacker.player_id, {
           target_territory_id: targetId,
-          troops_moved: attacker.committed_troops,
-          auto_resolved: true,
+          troops_moved:        attacker.committed_troops,
+          auto_resolved:       true,
+          was_vacated:         vacatedIds.has(targetId),
         }, true);
         continue;
       }
 
-      // Create BattleCard entity record
+      // Create BattleCard for siege / double_siege / capture_objectives
       const card = await base44.asServiceRole.entities.BattleCard.create({
         campaign_id,
         round,
@@ -478,26 +588,26 @@ Deno.serve(async (req) => {
         defender_player_id:  postCommitStateById[targetId]?.owner_player_id ?? null,
         defender_troops:     defenderTroops,
         attackers: attacksOnTarget.map(a => ({
-          player_id: a.player_id,
+          player_id:           a.player_id,
           origin_territory_id: a.origin_territory_id,
-          committed_troops: a.committed_troops,
+          committed_troops:    a.committed_troops,
         })),
         total_attacking_troops: totalAttackingTroops,
         total_troops_in_battle: totalTroopsInBattle,
         scale_factor,
         tabletop_size,
         status: 'pending',
-        is_mutual: hasMutualReturn,
+        is_mutual: false,
       });
 
       battleCards.push(card);
 
       await log(base44, campaign_id, round, phase, 'battle_card_generated', null, {
-        battle_type: battleType,
+        battle_type:         battleType,
         target_territory_id: targetId,
         scale_factor,
         tabletop_size,
-        attacker_count: attacksOnTarget.length,
+        attacker_count:      attacksOnTarget.length,
       }, true);
     }
 

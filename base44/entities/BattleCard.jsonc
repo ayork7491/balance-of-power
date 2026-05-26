@@ -1,7 +1,7 @@
 {
   "name": "BattleCard",
   "type": "object",
-  "description": "A generated battle card representing a conflict that requires tabletop resolution. Created after attack reveal.",
+  "description": "A generated battle card representing a conflict requiring tabletop resolution. One card may cover multiple attacks (e.g. double_siege, bloodbath). Skirmishes are auto-resolved and do not generate a card.",
   "properties": {
     "campaign_id": {
       "type": "string",
@@ -20,24 +20,24 @@
         "capture_objectives",
         "bloodbath"
       ],
-      "description": "Classified battle type."
+      "description": "Canonical battle type. skirmish = auto-resolved (no card stored). siege = 1 attacker vs defender. double_siege = 2+ attackers vs defender. capture_objectives = 2+ attackers vs neutral/vacated. bloodbath = mutual attack pair (one card, no single defender)."
     },
     "target_territory_id": {
       "type": "string",
-      "description": "The territory being fought over."
+      "description": "Primary contested territory. For bloodbath: lexicographically first of the mutual-attack pair. For all others: the territory being attacked."
     },
     "defender_player_id": {
       "type": "string",
-      "description": "CampaignPlayer.id of defender. Null if neutral territory."
+      "description": "CampaignPlayer.id of defender. Null for neutral/vacated territories and bloodbath cards."
     },
     "defender_troops": {
       "type": "number",
       "default": 0,
-      "description": "Defender troop count after committed troops were removed."
+      "description": "Defender troop count after committed troops were removed. 0 for neutral/vacated/bloodbath."
     },
     "attackers": {
       "type": "array",
-      "description": "List of attackers: { player_id, origin_territory_id, committed_troops }",
+      "description": "All attacking entries. Bloodbath cards include entries from both territories. Each entry: { player_id, origin_territory_id, committed_troops }",
       "items": {
         "type": "object",
         "properties": {
@@ -60,17 +60,18 @@
     },
     "total_troops_in_battle": {
       "type": "number",
-      "default": 0
+      "default": 0,
+      "description": "Sum of all troops involved. For siege: attacking + defending. For bloodbath: all committed troops from both sides."
     },
     "scale_factor": {
       "type": "number",
       "default": 1,
-      "description": "total_troops / avg_battle_size \u2014 used to scale down to tabletop size."
+      "description": "total_troops_in_battle / avg_battle_size (minimum 1.0). Used to scale down to a playable tabletop size."
     },
     "tabletop_size": {
       "type": "number",
       "default": 0,
-      "description": "Scaled tabletop battle point total (each side proportionally scaled)."
+      "description": "Scaled tabletop battle point total = round(total_troops_in_battle / scale_factor)."
     },
     "status": {
       "type": "string",
@@ -84,21 +85,22 @@
         "delayed",
         "forfeited"
       ],
-      "default": "pending"
+      "default": "pending",
+      "description": "Lifecycle status. pending \u2192 awaiting_result \u2192 result_submitted \u2192 awaiting_approval \u2192 resolved. Admin can set delayed or forfeited at any stage."
     },
     "is_mutual": {
       "type": "boolean",
       "default": false,
-      "description": "True if this is a bloodbath (mutual attacks between territories)."
+      "description": "True only for bloodbath cards (mutual attack between two territories)."
     },
     "result": {
       "type": "object",
-      "description": "Submitted battle result. { winner_player_id, surviving_tabletop_troops, notes, submitted_by, submitted_at }",
+      "description": "Submitted battle result: { winner_player_id, surviving_tabletop_troops, notes, submitted_by, submitted_at }",
       "default": {}
     },
     "approvals": {
       "type": "array",
-      "description": "Array of { player_id, approved: boolean, flagged: boolean, at: string }",
+      "description": "Approval records: [{ player_id, approved: boolean, flagged: boolean, at: string }]",
       "items": {
         "type": "object"
       },

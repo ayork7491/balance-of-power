@@ -28,7 +28,7 @@ import DeployInfoPanel from '@/components/phases/deploy/DeployInfoPanel';
 import AttackPanel from '@/components/phases/attack/AttackPanel';
 import AttackInfoPanel from '@/components/phases/attack/AttackInfoPanel';
 import AttackArrowLayer from '@/components/phases/attack/AttackArrowLayer';
-import { useAttackReveals } from '@/features/campaigns/attack';
+import { useAttackReveals, useAttackPhase } from '@/features/campaigns/attack';
 
 import { useCampaign } from '@/features/campaigns';
 import { useTerritoryState, getMap, buildAdjacencyMap } from '@/features/maps';
@@ -85,13 +85,6 @@ export default function ActiveCampaign() {
   const [selectedId, setSelectedId] = useState(null);
   const [myPlayerId, setMyPlayerId]   = useState(null);
   const [gameProfile, setGameProfile] = useState(null);
-
-  // Attack reveals — loaded for arrow rendering after reveal (post-attack phase)
-  const { reveals: attackReveals } = useAttackReveals({
-    campaignId: id,
-    round: campaign?.current_round ?? 1,
-    enabled: !!id,
-  });
 
   // Campaign + players
   const { campaign, players, loading: loadingCampaign, reload: reloadCampaign } = useCampaign(id);
@@ -264,13 +257,31 @@ export default function ActiveCampaign() {
     return new Set([...neighbors].filter(tid => stateById[tid]?.owner_player_id !== myPlayer.id));
   }, [phase, selectedId, myPlayer, mapDef, stateById, adjacencyMap]);
 
-  // Arrow layer — own staged attacks during attack phase, all revealed after
+  // Own staged attacks — only loaded during attack phase, only own player (user-scoped)
+  const { attacks: myStagedAttacks } = useAttackPhase({
+    campaign: phase === 'attack' ? campaign : null,
+    myPlayer,
+  });
+
+  // Attack reveals — loaded after attack phase ends (post-reveal)
+  const { reveals: attackReveals } = useAttackReveals({
+    campaignId: id,
+    round: campaign?.current_round ?? 1,
+    enabled: !!id && phase !== 'attack',
+  });
+
+  // Arrow layer:
+  //   - During attack phase: show OWN staged attacks as dashed arrows (player_id = myPlayer.id)
+  //     Other players' attacks are NEVER fetched or shown.
+  //   - After reveal (battle/fortify/etc): show all AttackReveal records as solid arrows.
   const arrowAttacks = useMemo(() => {
-    // After reveal (battle/fortify phase): show AttackReveal records
-    if (phase !== 'attack' && attackReveals.length > 0) return attackReveals;
-    // During attack phase: no arrows shown (privacy — own staging shown only in panel)
-    return [];
-  }, [phase, attackReveals]);
+    if (phase === 'attack') {
+      if (!myPlayer || myStagedAttacks.length === 0) return [];
+      // Inject player_id so ArrowLayer can color them correctly
+      return myStagedAttacks.map(a => ({ ...a, player_id: myPlayer.id }));
+    }
+    return attackReveals;
+  }, [phase, myPlayer, myStagedAttacks, attackReveals]);
 
   return (
     <CampaignLayout
