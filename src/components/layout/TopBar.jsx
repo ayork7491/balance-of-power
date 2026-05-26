@@ -3,13 +3,15 @@
  * Shows: campaign name, round, phase, timer, lock status, test mode indicator.
  * In non-campaign screens, shows app branding only.
  */
-import { Link } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Shield, Lock, FlaskConical } from 'lucide-react';
+import { Shield, Lock, FlaskConical, Settings } from 'lucide-react';
 import PhaseTag from '@/components/ui/PhaseTag';
 import CountdownTimer from '@/components/ui/CountdownTimer';
 
 export default function TopBar({ campaign = null, isTestMode = false }) {
+  const { id } = useParams();
+  const isAdmin = campaign?.admin_user_id; // Will be passed from parent if admin
   return (
     <motion.header 
       className="h-11 bg-panel-header border-b border-panel-border flex items-center px-3 sm:px-4 gap-3 sm:gap-4 shrink-0 z-20"
@@ -102,17 +104,16 @@ export default function TopBar({ campaign = null, isTestMode = false }) {
         </motion.span>
       )}
 
-      {/* Test Mode indicator */}
-      {isTestMode && (
-        <motion.div 
-          className="flex items-center gap-1 bg-status-pending/20 border border-status-pending/40 text-status-pending px-2 py-0.5 rounded text-xs font-display tracking-wider uppercase shrink-0"
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.3 }}
+      {/* Test Mode indicator + Admin link */}
+      {isTestMode && campaign?.id && (
+        <Link
+          to={`/campaigns/${id}/admin`}
+          className="flex items-center gap-1 bg-status-pending/20 border border-status-pending/40 text-status-pending px-2 py-0.5 rounded text-xs font-display tracking-wider uppercase shrink-0 hover:brightness-125 transition-all"
+          title="Open Admin Test Mode"
         >
-          <FlaskConical className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">Test Mode</span>
-        </motion.div>
+          <Settings className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">Admin Mode</span>
+        </Link>
       )}
     </motion.header>
   );

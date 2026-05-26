@@ -116,6 +116,7 @@ export default function ActiveCampaign() {
   );
 
   const displayCampaign = campaign ?? { name: 'Loading…', current_round: 0, current_phase: 'faction_selection', phase_deadline: null };
+  const isAdmin = myPlayer?.is_admin;
 
   // Own staged attacks — only loaded during attack phase, only own player (user-scoped)
   const { attacks: myStagedAttacks } = useAttackPhase({
@@ -160,6 +161,7 @@ export default function ActiveCampaign() {
   return (
     <CampaignLayout
       campaign={displayCampaign}
+      isTestMode={isAdmin}
       leftDockContent={leftDockContent}
       rightDockContent={rightDockContent}
       defaultTab={activeTab}

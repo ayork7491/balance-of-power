@@ -5,7 +5,7 @@
  */
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Shield, ChevronRight, Crown, MoreVertical } from 'lucide-react';
+import { Shield, ChevronRight, Crown, MoreVertical, Settings } from 'lucide-react';
 import { CAMPAIGN_STATUS, PHASE_COLORS } from '@/config/theme';
 import ConfirmCleanupModal from './ConfirmCleanupModal';
 import { cleanupCampaign } from '@/features/campaigns';
@@ -56,6 +56,16 @@ export default function CampaignCard({ campaign, myPlayer, onRemoved }) {
                 </h3>
                 {isAdmin && <Crown className="w-3 h-3 text-status-pending shrink-0" title="You are the admin" />}
               </div>
+              {isAdmin && campaign.status === 'active' && (
+                <Link
+                  to={`/campaigns/${campaign.id}/admin`}
+                  className="inline-flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors mt-1"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Settings className="w-3 h-3" />
+                  Admin Mode
+                </Link>
+              )}
               <StatusPill status={status} phase={phaseConfig} gameProfile={{ name: campaign.game_profile_name, icon: Shield }} />
             </div>
             <div className="flex items-center gap-2 shrink-0">
