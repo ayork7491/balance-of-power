@@ -277,10 +277,42 @@ export default function TerritoryDraftPanel({
               {isMyTurn ? '✓ Yes' : '✗ No'}
             </span>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-muted-foreground">Selected Territory ID:</span>
-            <span className="text-foreground font-mono">{pendingPickId ?? 'None'}</span>
+          
+          {/* Territory Selection Diagnostics */}
+          <div className="pt-2 border-t border-border/50 mt-2">
+            <p className="text-[10px] font-display tracking-widest uppercase text-status-pending mb-1.5">
+              Territory Selection Diagnostics
+            </p>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">Canonical selectedTerritoryId:</span>
+                <span className="text-foreground font-mono">{pendingPickId ?? 'None'}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">Map highlighted territory ID:</span>
+                <span className="text-foreground font-mono">{pendingPickId ?? 'None'}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">Do these match:</span>
+                <span className={pendingPickId && !selectionMismatch ? 'text-status-locked font-semibold' : 'text-muted-foreground'}>
+                  {pendingPickId && !selectionMismatch ? '✓ true' : '✗ false'}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">Selected territory lookup success:</span>
+                <span className={pendingTerritory ? 'text-status-locked font-semibold' : 'text-status-danger font-semibold'}>
+                  {pendingTerritory ? '✓ true' : '✗ false'}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">Claim button hidden reason:</span>
+                <span className={canClaim ? 'text-status-locked' : 'text-status-danger'}>
+                  {canClaim ? 'Not hidden (shown)' : (claimBlockedReason || 'Unknown')}
+                </span>
+              </div>
+            </div>
           </div>
+          
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground">Territory Name:</span>
             <span className="text-foreground">{pendingTerritory?.name ?? 'N/A'}</span>

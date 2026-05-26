@@ -14,7 +14,8 @@ import { useCampaignTestContext } from '@/features/adminTestMode/CampaignTestCon
 export default function TopBar({ 
   campaign = null, 
   isTestMode = false, 
-  players = [], 
+  players = [],
+  isAdmin = false,
 }) {
   // Use centralized test context
   const {
@@ -27,7 +28,6 @@ export default function TopBar({
     availableActingAsPlayers,
   } = useCampaignTestContext();
   const { id } = useParams();
-  const isAdmin = campaign?.admin_user_id; // Will be passed from parent if admin
   return (
     <motion.header 
       className="h-11 bg-panel-header border-b border-panel-border flex items-center px-3 sm:px-4 gap-3 sm:gap-4 shrink-0 z-20"
@@ -121,9 +121,9 @@ export default function TopBar({
       )}
 
       {/* Admin Test Mode controls (Viewing As + Acting As) */}
-      {isTestMode && campaign?.id && players?.length > 0 && (
+      {isAdmin && campaign?.id && players?.length > 0 && (
         <div className="flex items-center gap-2 shrink-0">
-          {/* Viewing As selector */}
+          {/* Viewing As selector - show in lobby, setup, and active campaign */}
           <div className="flex items-center gap-1.5 bg-muted/10 border border-border px-2 py-1 rounded">
             <Eye className="w-3.5 h-3.5 text-muted-foreground" />
             <span className="text-[10px] text-muted-foreground uppercase tracking-wider hidden sm:inline">Viewing As</span>
@@ -152,7 +152,7 @@ export default function TopBar({
             </Select>
           </div>
           
-          {/* Acting As selector (action delegation) */}
+          {/* Acting As selector (action delegation) - show in lobby, setup, and active campaign */}
           <div className="flex items-center gap-1.5 bg-status-pending/10 border border-status-pending/40 px-2 py-1 rounded">
             <TestTube className="w-3.5 h-3.5 text-status-pending" />
             <span className="text-[10px] text-status-pending uppercase tracking-wider hidden sm:inline">Acting As</span>

@@ -120,21 +120,27 @@ function ActiveCampaignContent() {
   // ── Panel routing (extracted) ──────────────────────────────────────────────
 
   const leftDockContent = (
-    <PhasePanelRouter
-      campaign={campaign}
-      players={players}
-      myPlayer={effectivePlayer} // Use effective player for perspective
-      actionPlayer={actionPlayer} // Use action player for submissions
-      gameProfile={gameProfile}
-      stateById={stateById}
-      mapDef={mapDef}
-      adjacencyMap={adjacencyMap}
-      selectedTerritoryId={selectedTerritoryId} // Use centralized state
-      onClearSelection={() => setSelectedTerritoryId(null)}
-      onPhaseChanged={handlePhaseChanged}
-      currentPerspective={viewingAsPlayer}
-      actingAsPlayerId={actingAsCampaignPlayerId}
-    />
+    isArchived ? (
+      <div className="p-4 text-center">
+        <p className="text-sm text-muted-foreground">This campaign is archived. Phase controls are disabled.</p>
+      </div>
+    ) : (
+      <PhasePanelRouter
+        campaign={campaign}
+        players={players}
+        myPlayer={effectivePlayer}
+        actionPlayer={actionPlayer}
+        gameProfile={gameProfile}
+        stateById={stateById}
+        mapDef={mapDef}
+        adjacencyMap={adjacencyMap}
+        selectedTerritoryId={selectedTerritoryId}
+        onClearSelection={() => setSelectedTerritoryId(null)}
+        onPhaseChanged={handlePhaseChanged}
+        currentPerspective={viewingAsPlayer}
+        actingAsPlayerId={actingAsCampaignPlayerId}
+      />
+    )
   );
 
   const rightDockContent = (
@@ -148,6 +154,7 @@ function ActiveCampaignContent() {
 
   const displayCampaign = campaign ?? { name: 'Loading…', current_round: 0, current_phase: 'faction_selection', phase_deadline: null };
   const isAdmin = myPlayer?.is_admin;
+  const isArchived = campaign?.status === 'archived';
 
   // Own staged attacks — only loaded during attack phase, only own player (user-scoped)
   const { attacks: myStagedAttacks } = useAttackPhase({
@@ -191,10 +198,25 @@ function ActiveCampaignContent() {
 
   return (
     <>
+      {/* Archived campaign banner */}
+      {isArchived && (
+        <motion.div
+          className="fixed top-0 left-0 right-0 z-50 bg-destructive/20 border-b border-destructive/40 px-4 py-2 text-center"
+          initial={{ y: -100 }}
+          animate={{ y: 0 }}
+          transition={{ duration: 0.3 }}
+        >
+          <p className="text-xs text-destructive font-display tracking-wider uppercase">
+            This campaign is archived and cannot be modified.
+          </p>
+        </motion.div>
+      )}
+
       <CampaignLayout
         campaign={displayCampaign}
-        isTestMode={isTestMode}
+        isTestMode={isTestMode && !isArchived}
         players={players}
+        isAdmin={isAdmin}
         currentPerspective={viewingAsPlayer}
         onPerspectiveChange={setViewingAsCampaignPlayerId}
         actingAsPlayerId={actingAsCampaignPlayerId}

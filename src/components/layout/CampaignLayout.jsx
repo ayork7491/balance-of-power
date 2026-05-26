@@ -24,6 +24,7 @@ export default function CampaignLayout({
   actingAsPlayerId = null,
   onActingAsChange = null,
   availableActingAsPlayers = [],
+  isAdmin = false,
   leftDockContent = null,
   rightDockContent = null,
   children, // map center
@@ -74,6 +75,7 @@ export default function CampaignLayout({
             campaign={campaign} 
             isTestMode={isTestMode}
             players={players}
+            isAdmin={isAdmin}
             currentPerspective={currentPerspective}
             onPerspectiveChange={onPerspectiveChange}
             actingAsPlayerId={actingAsPlayerId}

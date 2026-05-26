@@ -55,6 +55,10 @@ export default function TerritoryPolygon({
   return (
     <motion.g
       onClick={onClick}
+      onPointerDown={(e) => {
+        // Prevent drag from starting on territory clicks
+        e.stopPropagation();
+      }}
       className="cursor-pointer touch-manipulation"
       role="button"
       aria-label={name}
@@ -63,6 +67,7 @@ export default function TerritoryPolygon({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.2 }}
+      style={{ pointerEvents: 'all', touchAction: 'none' }}
     >
       <motion.polygon
         points={points}

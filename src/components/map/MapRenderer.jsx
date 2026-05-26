@@ -87,6 +87,8 @@ export default function MapRenderer({
   // ── Pointer drag (pan) ─────────────────────────────────────────────────────
   const onPointerDown = useCallback((e) => {
     if (e.button !== 0) return;
+    // Only start drag on background, not on territories (they handle their own clicks)
+    if (e.target.tagName !== 'svg') return;
     drag.current = {
       startX: e.clientX,
       startY: e.clientY,
@@ -120,9 +122,22 @@ export default function MapRenderer({
 
   // ── Territory click ────────────────────────────────────────────────────────
   const handleTerritoryClick = useCallback((tid) => {
-    if (drag.current?.moved) return; // was a pan, not a click
-    onSelect?.(selectedId === tid ? null : tid);
-  }, [onSelect, selectedId]);
+    if (drag.current?.moved) {
+      console.log('[MapRenderer] Drag detected, ignoring as click');
+      return;
+    }
+    const prevId = selectedId;
+    const nextId = selectedId === tid ? null : tid;
+    const territoryObj = mapDef?.territories.find(t => t.territory_id === tid);
+    console.log('[MapRenderer] Territory click:', {
+      clicked_territory_id: tid,
+      previous_selected_territory_id: prevId,
+      next_selected_territory_id: nextId,
+      territory_object_found: !!territoryObj,
+      territory_name: territoryObj?.name,
+    });
+    onSelect?.(nextId);
+  }, [onSelect, selectedId, mapDef]);
 
   // ── Region color lookup ────────────────────────────────────────────────────
   const regionColorById = {};
@@ -145,7 +160,8 @@ export default function MapRenderer({
         touchAction: 'none',
         WebkitTouchCallout: 'none',
         WebkitUserSelect: 'none',
-        userSelect: 'none'
+        userSelect: 'none',
+        contain: 'strict',
       }}
     >
       <svg
