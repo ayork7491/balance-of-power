@@ -37,17 +37,17 @@ export function useDeployPhase({ campaign, myPlayer, myTerritories }) {
     if (!campaign?.id || !myPlayer?.id) return;
     setLoading(true);
     try {
-      // Fetch own decision + income in parallel
+      // Fetch acting player's decision + income in parallel
       const [decisionRows, incomeRows] = await Promise.all([
         base44.entities.PhaseDecision.filter({
           campaign_id: campaign.id,
-          player_id:   myPlayer.id,
+          player_id:   actingPlayer.id,
           phase:       'deploy',
           round,
         }),
         base44.entities.DeployIncome.filter({
           campaign_id: campaign.id,
-          player_id:   myPlayer.id,
+          player_id:   actingPlayer.id,
           round,
         }),
       ]);
@@ -67,21 +67,21 @@ export function useDeployPhase({ campaign, myPlayer, myTerritories }) {
     } finally {
       setLoading(false);
     }
-  }, [campaign?.id, myPlayer?.id, round, myTerritories]);
+  }, [campaign?.id, myPlayer?.id, actingPlayer?.id, round, myTerritories]);
 
   useEffect(() => { reload(); }, [reload]);
 
-  // Real-time: refresh if my decision updates (e.g. admin processPhaseEnd)
+  // Real-time: refresh if acting player's decision updates (e.g. admin processPhaseEnd)
   useEffect(() => {
-    if (!campaign?.id || !myPlayer?.id) return;
+    if (!campaign?.id || !actingPlayer?.id) return;
     const unsub = base44.entities.PhaseDecision.subscribe((event) => {
       if (event.data?.campaign_id !== campaign.id) return;
-      if (event.data?.player_id   !== myPlayer.id) return;
+      if (event.data?.player_id   !== actingPlayer.id) return;
       if (event.data?.phase       !== 'deploy') return;
       reload();
     });
     return unsub;
-  }, [campaign?.id, myPlayer?.id, reload]);
+  }, [campaign?.id, actingPlayer?.id, reload]);
 
   const handleChange = useCallback((tid, value) => {
     const n = Math.max(0, parseInt(value) || 0);
