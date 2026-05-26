@@ -1,0 +1,132 @@
+{
+  "name": "Campaign",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Display name of the campaign."
+    },
+    "description": {
+      "type": "string",
+      "description": "Optional description shown in the lobby."
+    },
+    "admin_user_id": {
+      "type": "string",
+      "description": "User ID of the campaign admin."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "lobby",
+        "active",
+        "paused",
+        "complete",
+        "archived"
+      ],
+      "default": "lobby",
+      "description": "Campaign lifecycle status."
+    },
+    "game_profile_id": {
+      "type": "string",
+      "description": "ID of the TabletopGameProfile selected for this campaign."
+    },
+    "game_profile_name": {
+      "type": "string",
+      "description": "Denormalized game profile name for display."
+    },
+    "map_id": {
+      "type": "string",
+      "description": "ID of the map used for this campaign. V1: placeholder until maps are built."
+    },
+    "invite_code": {
+      "type": "string",
+      "description": "Short alphanumeric code players can use to request to join."
+    },
+    "current_round": {
+      "type": "number",
+      "default": 0,
+      "description": "Current round number. 0 = not yet started."
+    },
+    "current_phase": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "deploy",
+        "attack",
+        "battle",
+        "fortify",
+        "complete"
+      ],
+      "description": "Current active phase within the round."
+    },
+    "phase_deadline": {
+      "type": "string",
+      "description": "ISO timestamp when the current phase ends."
+    },
+    "settings": {
+      "type": "object",
+      "description": "Per-campaign gameplay setting overrides.",
+      "properties": {
+        "max_players": {
+          "type": "number",
+          "default": 6
+        },
+        "starting_troops": {
+          "type": "number",
+          "default": 30
+        },
+        "max_attacks_per_phase": {
+          "type": "number",
+          "default": 3
+        },
+        "max_fortifications_per_phase": {
+          "type": "number",
+          "default": 3
+        },
+        "max_fortification_distance": {
+          "type": "number",
+          "default": 4
+        },
+        "phase_schedule": {
+          "type": "string",
+          "enum": [
+            "weekly",
+            "monthly",
+            "manual"
+          ],
+          "default": "weekly"
+        },
+        "battle_day": {
+          "type": "string",
+          "enum": [
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday"
+          ],
+          "default": "saturday"
+        },
+        "allow_faction_duplicates": {
+          "type": "boolean",
+          "default": false
+        },
+        "victory_condition": {
+          "type": "string",
+          "enum": [
+            "domination",
+            "score"
+          ],
+          "default": "domination"
+        }
+      },
+      "default": {}
+    }
+  },
+  "required": [
+    "name",
+    "admin_user_id"
+  ]
+}

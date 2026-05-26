@@ -1,0 +1,59 @@
+{
+  "name": "CampaignInvite",
+  "type": "object",
+  "properties": {
+    "campaign_id": {
+      "type": "string",
+      "description": "Foreign key to Campaign.id."
+    },
+    "campaign_name": {
+      "type": "string",
+      "description": "Denormalized campaign name for display without extra lookup."
+    },
+    "invited_by_user_id": {
+      "type": "string",
+      "description": "User ID of the admin who sent the invite."
+    },
+    "invited_by_name": {
+      "type": "string",
+      "description": "Denormalized name of the inviting admin."
+    },
+    "invitee_email": {
+      "type": "string",
+      "description": "Email address of the invited user."
+    },
+    "invitee_user_id": {
+      "type": "string",
+      "description": "User ID of the invitee (populated if they already have an account)."
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "invite",
+        "join_request"
+      ],
+      "default": "invite",
+      "description": "invite = admin invited player; join_request = player requested to join."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "accepted",
+        "declined",
+        "cancelled"
+      ],
+      "default": "pending",
+      "description": "Current status of this invite/request."
+    },
+    "message": {
+      "type": "string",
+      "description": "Optional message from the requester (join requests only)."
+    }
+  },
+  "required": [
+    "campaign_id",
+    "campaign_name",
+    "type"
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "name": "CampaignPlayer",
+  "type": "object",
+  "properties": {
+    "campaign_id": {
+      "type": "string",
+      "description": "Foreign key to Campaign.id."
+    },
+    "user_id": {
+      "type": "string",
+      "description": "Foreign key to User.id."
+    },
+    "display_name": {
+      "type": "string",
+      "description": "Player's display name within this campaign."
+    },
+    "color": {
+      "type": "string",
+      "description": "PlayerColorId chosen by this player (e.g. crimson, cobalt)."
+    },
+    "faction_name": {
+      "type": "string",
+      "description": "Faction/army type chosen from the game profile."
+    },
+    "is_admin": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether this player has admin privileges."
+    },
+    "is_ready": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether the player has readied up in the lobby."
+    },
+    "troop_count": {
+      "type": "number",
+      "default": 0,
+      "description": "Current total troops across all owned territories."
+    },
+    "is_eliminated": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether this player has been eliminated."
+    },
+    "eliminated_at": {
+      "type": "string",
+      "description": "ISO timestamp of elimination."
+    }
+  },
+  "required": [
+    "campaign_id",
+    "user_id",
+    "display_name",
+    "color"
+  ]
+}
