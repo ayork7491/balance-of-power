@@ -2,7 +2,7 @@
  * BattleCardRow — compact row for a single battle card in the battle list.
  */
 import { Link } from 'react-router-dom';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, Hourglass } from 'lucide-react';
 import BattleTypeTag from './BattleTypeTag';
 import BattleStatusTag from './BattleStatusTag';
 import { PLAYER_COLORS } from '@/config/theme';
@@ -55,6 +55,11 @@ export default function BattleCardRow({ card, players, mapDef, campaignId }) {
         </div>
       </div>
       <div className="flex items-center gap-2 shrink-0">
+        {card.status === 'delayed' && (
+          <span className="text-warning" title="Delayed">
+            <Hourglass className="w-3.5 h-3.5" />
+          </span>
+        )}
         <BattleStatusTag status={card.status} />
         <ChevronRight className="w-3.5 h-3.5 text-muted-foreground group-hover:text-foreground transition-colors" />
       </div>

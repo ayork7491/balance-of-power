@@ -5,7 +5,7 @@
  */
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Swords, Loader2, Check, Flag, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Swords, Loader2, Check, Flag, AlertTriangle, Clock, Zap, Settings } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import AppShell from '@/components/layout/AppShell';
 import BattleTypeTag from '@/components/phases/battle/BattleTypeTag';
@@ -66,6 +66,7 @@ export default function BattleCardDetail() {
   const [myPlayer, setMyPlayer] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [myVote, setMyVote] = useState(null);
 
   useEffect(() => {
     async function load() {
@@ -103,14 +104,25 @@ export default function BattleCardDetail() {
   
   const canSubmit   = myPlayer && card &&
     participantIds.includes(myPlayer.id) &&
-    ['pending', 'awaiting_result'].includes(card.status);
+    ['pending', 'awaiting_result', 'delayed'].includes(card.status);
 
   const canApprove  = myPlayer && card &&
     participantIds.includes(myPlayer.id) &&
     card.status === 'result_submitted' &&
     card.result?.submitted_by !== myPlayer.id;
 
+  const canVote     = myPlayer && card &&
+    participantIds.includes(myPlayer.id) &&
+    ['pending', 'awaiting_result'].includes(card.status);
+
   const isAdmin = myPlayer?.is_admin;
+
+  // Get my existing vote
+  useEffect(() => {
+    if (card?.delay_votes && myPlayer?.id) {
+      setMyVote(card.delay_votes[myPlayer.id] ?? null);
+    }
+  }, [card?.delay_votes, myPlayer?.id]);
 
   const handleApprove = async (approved, flagged = false) => {
     setActionLoading(true);
@@ -126,6 +138,30 @@ export default function BattleCardDetail() {
     if (res.data?.error) {
       setError(res.data.error);
     } else {
+      // Reload card
+      const cardsRes = await base44.functions.invoke('battlePhase', {
+        action: 'getBattleCards',
+        campaign_id: campaignId,
+        round: campaign?.current_round ?? 1,
+      });
+      setCard(cardsRes.data?.battle_cards?.find(c => c.id === battleId) ?? null);
+    }
+  };
+
+  const handleVoteDelay = async (vote) => {
+    setActionLoading(true);
+    setError(null);
+    const res = await base44.functions.invoke('battlePhase', {
+      action: 'voteDelay',
+      campaign_id: campaignId,
+      battle_card_id: battleId,
+      vote,
+    });
+    setActionLoading(false);
+    if (res.data?.error) {
+      setError(res.data.error);
+    } else {
+      setMyVote(vote);
       // Reload card
       const cardsRes = await base44.functions.invoke('battlePhase', {
         action: 'getBattleCards',
@@ -269,35 +305,100 @@ export default function BattleCardDetail() {
         {/* Action buttons */}
         {error && <p className="text-xs text-destructive">{error}</p>}
         
-        <div className="flex gap-2">
-          {canSubmit && (
-            <Link
-              to={`/campaigns/${campaignId}/battles/${battleId}/result`}
-              className="flex-1 text-center px-4 py-3 rounded bg-primary text-primary-foreground text-xs font-display tracking-widest uppercase hover:brightness-110 transition-all"
-            >
-              Submit Result
-            </Link>
+        <div className="space-y-2">
+          {/* Primary actions */}
+          <div className="flex gap-2">
+            {canSubmit && (
+              <Link
+                to={`/campaigns/${campaignId}/battles/${battleId}/result`}
+                className="flex-1 text-center px-4 py-3 rounded bg-primary text-primary-foreground text-xs font-display tracking-widest uppercase hover:brightness-110 transition-all"
+              >
+                Submit Result
+              </Link>
+            )}
+            
+            {canApprove && (
+              <>
+                <button
+                  onClick={() => handleApprove(true)}
+                  disabled={actionLoading}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded bg-status-locked text-white text-xs font-display tracking-widest uppercase hover:brightness-110 transition-all disabled:opacity-40"
+                >
+                  {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                  Approve
+                </button>
+                <button
+                  onClick={() => handleApprove(false, true)}
+                  disabled={actionLoading}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded border border-warning text-warning text-xs font-display tracking-widest uppercase hover:bg-warning/10 transition-all disabled:opacity-40"
+                >
+                  <Flag className="w-4 h-4" />
+                  Flag
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* Delay voting */}
+          {canVote && (
+            <div className="panel p-3 space-y-2">
+              <p className="text-xs font-display tracking-wider uppercase text-muted-foreground flex items-center gap-2">
+                <Clock className="w-3 h-3" />
+                Vote to Delay
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleVoteDelay('yes')}
+                  disabled={actionLoading || myVote === 'yes'}
+                  className={`flex-1 px-3 py-2 rounded text-xs font-display tracking-widest uppercase transition-all ${
+                    myVote === 'yes' 
+                      ? 'bg-warning/20 text-warning border border-warning' 
+                      : 'bg-muted/20 text-muted-foreground border border-border hover:bg-warning/10'
+                  } disabled:opacity-40`}
+                >
+                  Yes ({card.delay_votes ? Object.values(card.delay_votes).filter(v => v === 'yes').length : 0})
+                </button>
+                <button
+                  onClick={() => handleVoteDelay('no')}
+                  disabled={actionLoading || myVote === 'no'}
+                  className={`flex-1 px-3 py-2 rounded text-xs font-display tracking-widest uppercase transition-all ${
+                    myVote === 'no' 
+                      ? 'bg-status-locked/20 text-status-locked border border-status-locked' 
+                      : 'bg-muted/20 text-muted-foreground border border-border hover:bg-status-locked/10'
+                  } disabled:opacity-40`}
+                >
+                  No ({card.delay_votes ? Object.values(card.delay_votes).filter(v => v === 'no').length : 0})
+                </button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Majority required: {Math.ceil(participantIds.length / 2)} of {participantIds.length} participants
+              </p>
+            </div>
           )}
-          
-          {canApprove && (
-            <>
-              <button
-                onClick={() => handleApprove(true)}
-                disabled={actionLoading}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded bg-status-locked text-white text-xs font-display tracking-widest uppercase hover:brightness-110 transition-all disabled:opacity-40"
-              >
-                {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                Approve
-              </button>
-              <button
-                onClick={() => handleApprove(false, true)}
-                disabled={actionLoading}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded border border-warning text-warning text-xs font-display tracking-widest uppercase hover:bg-warning/10 transition-all disabled:opacity-40"
-              >
-                <Flag className="w-4 h-4" />
-                Flag
-              </button>
-            </>
+
+          {/* Admin actions */}
+          {isAdmin && (
+            <div className="panel p-3 space-y-2">
+              <p className="text-xs font-display tracking-wider uppercase text-muted-foreground flex items-center gap-2">
+                <Settings className="w-3 h-3" />
+                Admin Controls
+              </p>
+              <div className="flex gap-2">
+                <Link
+                  to={`/campaigns/${campaignId}/battles/${battleId}/admin`}
+                  className="flex-1 text-center px-3 py-2.5 rounded border border-border bg-muted/20 text-xs font-display tracking-widest uppercase hover:bg-muted/30 transition-all"
+                >
+                  Manage Battle
+                </Link>
+                <button
+                  onClick={() => handleVoteDelay(card.status === 'delayed' ? 'no' : 'yes')}
+                  disabled={actionLoading}
+                  className="flex-1 px-3 py-2.5 rounded border border-warning text-warning text-xs font-display tracking-widest uppercase hover:bg-warning/10 transition-all disabled:opacity-40"
+                >
+                  {card.status === 'delayed' ? 'Resume' : 'Delay'}
+                </button>
+              </div>
+            </div>
           )}
         </div>
       </div>

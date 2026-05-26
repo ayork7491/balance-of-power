@@ -34,10 +34,11 @@ import CreateCampaign    from './pages/CreateCampaign';
 import JoinCampaign      from './pages/JoinCampaign';
 import CampaignLobby     from './pages/CampaignLobby';
 import ActiveCampaign    from './pages/ActiveCampaign.jsx';
-import BattleCardDetail  from './pages/BattleCardDetail';
-import BattleResultEntry from './pages/BattleResultEntry';
-import HistoryDetail     from './pages/HistoryDetail';
-import AdminTestMode     from './pages/AdminTestMode';
+import BattleCardDetail       from './pages/BattleCardDetail';
+import BattleResultEntry      from './pages/BattleResultEntry';
+import AdminBattleResultEntry from './pages/AdminBattleResultEntry';
+import HistoryDetail          from './pages/HistoryDetail';
+import AdminTestMode          from './pages/AdminTestMode';
 
 function App() {
   return (
@@ -73,8 +74,9 @@ function App() {
               <Route path="/campaigns/:id"                          element={<ActiveCampaign />} />
 
               {/* Battle cards */}
-              <Route path="/campaigns/:id/battles/:battleId"        element={<BattleCardDetail />} />
-              <Route path="/campaigns/:id/battles/:battleId/result" element={<BattleResultEntry />} />
+              <Route path="/campaigns/:id/battles/:battleId"         element={<BattleCardDetail />} />
+              <Route path="/campaigns/:id/battles/:battleId/result"  element={<BattleResultEntry />} />
+              <Route path="/campaigns/:id/battles/:battleId/admin"   element={<AdminBattleResultEntry />} />
 
               {/* History */}
               <Route path="/campaigns/:id/history"                  element={<HistoryDetail />} />

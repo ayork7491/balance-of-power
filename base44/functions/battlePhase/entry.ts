@@ -6,12 +6,16 @@
  *   submitResult        — submit tabletop battle result (admin or participant)
  *   approveResult       — approve or flag a submitted result (participant)
  *   autoResolve         — force auto-resolve a specific battle card (admin)
+ *   setDelayed          — admin: delay a battle (pause resolution)
+ *   setForfeited        — admin: mark battle as forfeited (winner by forfeit)
+ *   voteDelay           — participant: vote to delay this battle (requires majority)
  *   processPhaseEnd     — admin: auto-resolve all pending battles, apply all results,
  *                         update territory states, check eliminations, advance phase.
  *
  * ─── LIFECYCLE ───────────────────────────────────────────────────────────────
  *   pending → awaiting_result → result_submitted → awaiting_approval → resolved
  *   pending → auto_resolved (admin force or timeout)
+ *   pending → delayed (admin set or majority vote)
  *   pending → forfeited (admin set)
  *
  * ─── BLOODBAH V1 RULE ────────────────────────────────────────────────────────
@@ -231,7 +235,7 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'You are not a participant in this battle' }, { status: 403 });
     }
 
-    if (!['pending', 'awaiting_result'].includes(card.status)) {
+    if (!['pending', 'awaiting_result', 'delayed'].includes(card.status)) {
       return Response.json({ error: `Cannot submit result for card in status: ${card.status}` }, { status: 400 });
     }
 
@@ -354,6 +358,161 @@ Deno.serve(async (req) => {
     return Response.json({ success: true, result: autoResult });
   }
 
+  // ── ACTION: setDelayed ────────────────────────────────────────────────────────
+  if (action === 'setDelayed') {
+    if (!isAdmin) return Response.json({ error: 'Admin only' }, { status: 403 });
+    const { battle_card_id, delayed } = body;
+    if (!battle_card_id) return Response.json({ error: 'battle_card_id required' }, { status: 400 });
+
+    const cards = await base44.asServiceRole.entities.BattleCard.filter({ id: battle_card_id });
+    const card  = cards[0];
+    if (!card) return Response.json({ error: 'Battle card not found' }, { status: 404 });
+
+    const newStatus = delayed ? 'delayed' : 'pending';
+    await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
+      status: newStatus,
+      ...(delayed ? { resolved_at: null } : {}),
+    });
+
+    await log(base44, campaign_id, round, 'battle_delay_toggled', null, {
+      battle_card_id,
+      delayed,
+    }, true);
+
+    return Response.json({ success: true, status: newStatus });
+  }
+
+  // ── ACTION: setForfeited ──────────────────────────────────────────────────────
+  if (action === 'setForfeited') {
+    if (!isAdmin) return Response.json({ error: 'Admin only' }, { status: 403 });
+    const { battle_card_id, forfeited, winner_player_id } = body;
+    if (!battle_card_id || forfeited == null) {
+      return Response.json({ error: 'battle_card_id and forfeited required' }, { status: 400 });
+    }
+
+    const cards = await base44.asServiceRole.entities.BattleCard.filter({ id: battle_card_id });
+    const card  = cards[0];
+    if (!card) return Response.json({ error: 'Battle card not found' }, { status: 404 });
+
+    if (forfeited) {
+      if (!winner_player_id) {
+        return Response.json({ error: 'winner_player_id required for forfeit' }, { status: 400 });
+      }
+      const participantIds = getParticipantIds(card);
+      if (!participantIds.includes(winner_player_id)) {
+        return Response.json({ error: 'Winner must be a participant' }, { status: 400 });
+      }
+
+      const forfeitResult = {
+        winner_player_id,
+        surviving_tabletop_troops: Math.round(card.total_troops_in_battle * 0.8), // 80% survive forfeit
+        notes: 'Victory by forfeit.',
+        submitted_by: 'admin',
+        submitted_at: new Date().toISOString(),
+        result_source: 'forfeit',
+        applied_at: null,
+      };
+
+      await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
+        status:      'forfeited',
+        resolved_at: new Date().toISOString(),
+        result:      forfeitResult,
+      });
+
+      // Apply territory changes immediately
+      const territoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+      const updates = applyResultToTerritories(card, forfeitResult, territoryStates);
+      for (const upd of updates) {
+        await base44.asServiceRole.entities.TerritoryState.update(upd.id, {
+          owner_player_id: upd.owner_player_id,
+          troop_count:     upd.troop_count,
+        });
+      }
+
+      await base44.asServiceRole.entities.BattleCard.update(battle_card_id, { result_applied: true });
+
+      await log(base44, campaign_id, round, 'battle_forfeited', null, {
+        battle_card_id,
+        winner_player_id,
+      }, true);
+
+      return Response.json({ success: true, result: forfeitResult });
+    } else {
+      // Clear forfeit status
+      await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
+        status: 'pending',
+        resolved_at: null,
+        result: {},
+        result_applied: false,
+      });
+
+      await log(base44, campaign_id, round, 'battle_forfeit_cleared', null, {
+        battle_card_id,
+      }, true);
+
+      return Response.json({ success: true, status: 'pending' });
+    }
+  }
+
+  // ── ACTION: voteDelay ─────────────────────────────────────────────────────────
+  if (action === 'voteDelay') {
+    const { battle_card_id, vote } = body;
+    if (!battle_card_id || !['yes', 'no'].includes(vote)) {
+      return Response.json({ error: 'battle_card_id and vote (yes|no) required' }, { status: 400 });
+    }
+
+    const cards = await base44.asServiceRole.entities.BattleCard.filter({ id: battle_card_id });
+    const card  = cards[0];
+    if (!card) return Response.json({ error: 'Battle card not found' }, { status: 404 });
+    if (card.campaign_id !== campaign_id) return Response.json({ error: 'Campaign mismatch' }, { status: 403 });
+
+    const participantIds = getParticipantIds(card);
+    if (!participantIds.includes(myPlayer.id)) {
+      return Response.json({ error: 'Not a participant in this battle' }, { status: 403 });
+    }
+
+    if (!['pending', 'awaiting_result'].includes(card.status)) {
+      return Response.json({ error: `Cannot vote delay for card in status: ${card.status}` }, { status: 400 });
+    }
+
+    const currentVotes = card.delay_votes ?? {};
+    currentVotes[myPlayer.id] = vote;
+
+    // Count votes
+    const yesVotes = Object.values(currentVotes).filter(v => v === 'yes').length;
+    const noVotes  = Object.values(currentVotes).filter(v => v === 'no').length;
+    const totalVotes = yesVotes + noVotes;
+    const requiredMajority = Math.ceil(participantIds.length / 2);
+
+    let newStatus = card.status;
+    if (yesVotes >= requiredMajority) {
+      newStatus = 'delayed';
+    } else if (noVotes >= requiredMajority) {
+      newStatus = 'awaiting_result'; // Continue normal flow
+    }
+
+    await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
+      status:     newStatus,
+      delay_votes: currentVotes,
+      ...(newStatus === 'delayed' ? { delayed_at: new Date().toISOString() } : {}),
+    });
+
+    await log(base44, campaign_id, round, 'battle_delay_vote', myPlayer.id, {
+      battle_card_id,
+      vote,
+      yes_count: yesVotes,
+      no_count: noVotes,
+      new_status: newStatus,
+    }, true);
+
+    return Response.json({ 
+      success: true, 
+      status: newStatus, 
+      delay_votes: currentVotes,
+      majority_reached: yesVotes >= requiredMajority || noVotes >= requiredMajority,
+    });
+  }
+
   // ── ACTION: processPhaseEnd ───────────────────────────────────────────────────
   if (action === 'processPhaseEnd') {
     if (!isAdmin) return Response.json({ error: 'Admin only' }, { status: 403 });
@@ -366,18 +525,30 @@ Deno.serve(async (req) => {
 
     let resolvedCount   = 0;
     let autoResolvedCount = 0;
+    let forfeitedCount = 0;
+    let delayedCount = 0;
     const territoryUpdates = [];
 
     for (const card of allCards) {
-      // Skip if already applied
+      // Skip if already applied or delayed
       if (card.result_applied) {
         continue;
       }
 
+      if (card.status === 'delayed') {
+        delayedCount++;
+        continue; // Skip delayed battles
+      }
+
       let resultToApply = card.result;
 
+      // Handle forfeited
+      if (card.status === 'forfeited' && resultToApply) {
+        forfeitedCount++;
+        // Apply forfeit result
+      }
       // Auto-resolve if not yet resolved
-      if (!resultToApply || !['resolved', 'auto_resolved', 'forfeited'].includes(card.status)) {
+      else if (!resultToApply || !['resolved', 'auto_resolved', 'forfeited'].includes(card.status)) {
         const autoResult = autoResolveBattle(card, campaign_id);
         await base44.asServiceRole.entities.BattleCard.update(card.id, {
           status:      'auto_resolved',
@@ -465,6 +636,8 @@ Deno.serve(async (req) => {
       round,
       battles_resolved:    resolvedCount,
       battles_auto_resolved: autoResolvedCount,
+      battles_forfeited:   forfeitedCount,
+      battles_delayed:     delayedCount,
       players_eliminated:  eliminatedNow.length,
     }, true);
 
@@ -478,6 +651,8 @@ Deno.serve(async (req) => {
       next_phase: 'fortify',
       battles_resolved: resolvedCount,
       battles_auto_resolved: autoResolvedCount,
+      battles_forfeited: forfeitedCount,
+      battles_delayed: delayedCount,
       players_eliminated: eliminatedNow,
     });
   }
