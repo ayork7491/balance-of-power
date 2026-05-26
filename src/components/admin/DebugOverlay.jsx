@@ -72,6 +72,15 @@ export default function DebugOverlay({ campaign, enabled, onToggle }) {
         </Button>
       </div>
 
+      <div className="p-2 rounded border border-status-pending/40 bg-status-pending/10">
+        <p className="text-[10px] text-status-pending font-semibold">
+          ⚠️ Platform Admin Only
+        </p>
+        <p className="text-[10px] text-muted-foreground mt-0.5">
+          Debug overlay showing all private decisions. Campaign admins can only access this in test campaigns.
+        </p>
+      </div>
+
       <p className="text-xs text-muted-foreground">
         Showing all private decision data for Round {campaign?.current_round} • {campaign?.current_phase}
       </p>

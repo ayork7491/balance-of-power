@@ -148,11 +148,28 @@ export default function PhaseControls({ campaign, onPhaseChanged }) {
           <AlertDialogHeader>
             <AlertDialogTitle>Force Phase Advance?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will skip the timer and immediately advance the campaign from{' '}
-              <span className="font-semibold">{campaign.current_phase}</span> to{' '}
-              <span className="font-semibold">{nextPhase}</span>.
-              <br /><br />
-              This action cannot be undone. All pending decisions will be auto-submitted.
+              <div className="space-y-2">
+                <p>
+                  This will skip the timer and immediately advance the campaign from{' '}
+                  <span className="font-semibold">{campaign.current_phase}</span> to{' '}
+                  <span className="font-semibold">{nextPhase}</span>.
+                </p>
+                <div className="p-2 rounded border border-status-danger/40 bg-status-danger/10">
+                  <p className="text-status-danger font-semibold text-[10px] uppercase">
+                    ⚠️ Debug-Only Unsafe Switch
+                  </p>
+                  <ul className="text-[10px] text-muted-foreground mt-1 space-y-0.5 list-disc list-inside">
+                    <li>Does NOT auto-submit missing decisions</li>
+                    <li>Does NOT apply deploy placements/resources</li>
+                    <li>Does NOT reveal attacks or generate battles</li>
+                    <li>Does NOT apply fortify/build results</li>
+                    <li>Does NOT generate proper phase snapshots</li>
+                  </ul>
+                </div>
+                <p className="text-[10px]">
+                  Only use in test campaigns. For production, use the normal phase transition pipeline.
+                </p>
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

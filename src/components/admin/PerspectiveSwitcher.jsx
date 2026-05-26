@@ -38,9 +38,15 @@ export default function PerspectiveSwitcher({ campaign, players, currentPerspect
         </p>
       </div>
 
-      <p className="text-xs text-muted-foreground">
-        Switch view to see the game as any player would see it. Private staged decisions will be hidden per player.
-      </p>
+      <div className="p-2 rounded border border-border bg-muted/10">
+        <p className="text-[10px] text-muted-foreground">
+          ⚠️ <strong>Simulated Perspective Preview</strong>
+        </p>
+        <p className="text-[10px] text-muted-foreground mt-1">
+          This changes UI state only. Does NOT authenticate as that player or enforce true hidden-information rules.
+          For actual player view, log in as that user.
+        </p>
+      </div>
 
       <div className="space-y-2">
         <Select value={selectedPlayerId} onValueChange={setSelectedPlayerId}>

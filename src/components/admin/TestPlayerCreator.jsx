@@ -69,10 +69,12 @@ export default function TestPlayerCreator({ onPlayerCreated }) {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="user">Player</SelectItem>
-            <SelectItem value="admin">Admin</SelectItem>
+            <SelectItem value="user">Player (test account)</SelectItem>
           </SelectContent>
         </Select>
+        <p className="text-[10px] text-muted-foreground">
+          Test players are always created as regular users. Campaign admins should use the invite flow.
+        </p>
       </div>
 
       <Button type="submit" disabled={isLoading} className="w-full h-8 text-xs">

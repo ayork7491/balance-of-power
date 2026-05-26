@@ -24,15 +24,24 @@ export default function AdminTestMode() {
   const [debugOverlayEnabled, setDebugOverlayEnabled] = useState(false);
 
   // Check admin access
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
+  const [isCampaignAdmin, setIsCampaignAdmin] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     base44.auth.me().then(user => {
-      setIsAdmin(user?.role === 'admin');
+      if (!user) {
+        setIsLoading(false);
+        return;
+      }
+      setIsPlatformAdmin(user.role === 'admin');
+      setIsCampaignAdmin(campaign?.admin_user_id === user.id);
       setIsLoading(false);
     });
-  }, []);
+  }, [campaign?.admin_user_id]);
+
+  const hasAccess = isPlatformAdmin || isCampaignAdmin;
+  const isTestCampaign = campaign?.is_test_campaign === true;
 
   if (isLoading || loadingCampaign) {
     return (
@@ -44,7 +53,7 @@ export default function AdminTestMode() {
     );
   }
 
-  if (!isAdmin) {
+  if (!hasAccess) {
     return (
       <AppShell showBack title="Admin Test Mode">
         <div className="max-w-md mx-auto px-4 py-12 text-center">
@@ -64,24 +73,39 @@ export default function AdminTestMode() {
           <FlaskConical className="w-4 h-4 text-status-pending shrink-0 mt-0.5" />
           <div>
             <p className="text-xs font-display font-semibold tracking-wider text-status-pending uppercase">Test Mode Active</p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Hidden information rules are enforced per player perspective. Use the debug overlay to see all data.
-              {campaign && ` • Campaign: ${campaign.name}`}
-            </p>
+            <div className="text-xs text-muted-foreground mt-0.5 space-y-1">
+              <p>
+                Campaign: <span className="text-foreground font-medium">{campaign?.name}</span>
+                {isTestCampaign && <span className="ml-2 text-status-pending">• Test Campaign</span>}
+              </p>
+              <p>
+                Access: <span className="text-foreground font-medium">{isPlatformAdmin ? 'Platform Admin' : 'Campaign Admin'}</span>
+              </p>
+              {!isTestCampaign && isCampaignAdmin && !isPlatformAdmin && (
+                <p className="text-status-pending mt-1">
+                  ⚠️ Limited access - some tools restricted to test campaigns or platform admins
+                </p>
+              )}
+            </div>
           </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           {/* Left Column */}
           <div className="space-y-5">
-            {/* Test Player Creator */}
+            {/* Test Player Creator - Platform Admin Only */}
             <div className="panel p-4">
               <div className="panel-header -mx-4 -mt-4 px-4 pt-3 pb-2 mb-4">
-                <h2 className="font-display text-xs tracking-widest uppercase text-muted-foreground">
+                <h2 className="font-display text-xs tracking-widest uppercase text-muted-foreground flex items-center gap-2">
                   Create Test Player
+                  {!isPlatformAdmin && <span className="text-[10px] text-status-pending">(Platform Admin Only)</span>}
                 </h2>
               </div>
-              <TestPlayerCreator />
+              {isPlatformAdmin ? <TestPlayerCreator /> : (
+                <p className="text-xs text-muted-foreground p-3">
+                  Test player creation is restricted to platform admins. Campaign admins should use the invite flow to add players.
+                </p>
+              )}
             </div>
 
             {/* Perspective Switcher */}
@@ -105,7 +129,7 @@ export default function AdminTestMode() {
 
           {/* Right Column */}
           <div className="space-y-5">
-            {/* Debug Overlay */}
+            {/* Debug Overlay - Restricted */}
             <div className="panel p-4">
               <DebugOverlay
                 campaign={campaign}
