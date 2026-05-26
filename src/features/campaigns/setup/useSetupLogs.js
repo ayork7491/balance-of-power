@@ -20,8 +20,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { base44 } from '@/api/base44Client';
 
-export function useSetupLogs({ campaignId }) {
-  const [logs, setLogs]     = useState([]);
+export function useSetupLogs({ campaignId, phase = null }) {
+  const [logs, setLogs]       = useState([]);
   const [loading, setLoading] = useState(true);
 
   const reload = useCallback(async () => {
@@ -29,15 +29,14 @@ export function useSetupLogs({ campaignId }) {
     setLoading(true);
     try {
       // Only request public logs — filter is server-side
-      const data = await base44.entities.SetupLog.filter({
-        campaign_id: campaignId,
-        is_public:   true,
-      });
+      const filter = { campaign_id: campaignId, is_public: true };
+      if (phase) filter.phase = phase;
+      const data = await base44.entities.SetupLog.filter(filter);
       setLogs(data.sort((a, b) => new Date(b.created_date) - new Date(a.created_date)));
     } finally {
       setLoading(false);
     }
-  }, [campaignId]);
+  }, [campaignId, phase]);
 
   useEffect(() => {
     reload();

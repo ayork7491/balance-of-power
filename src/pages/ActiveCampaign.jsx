@@ -22,6 +22,10 @@ import TerritoryDraftPanel from '@/components/setup/TerritoryDraftPanel';
 import InitialDeployPanel from '@/components/setup/InitialDeployPanel';
 import SetupInfoPanel from '@/components/setup/SetupInfoPanel';
 
+// Gameplay phase panels
+import DeployPanel from '@/components/phases/deploy/DeployPanel';
+import DeployInfoPanel from '@/components/phases/deploy/DeployInfoPanel';
+
 import { useCampaign } from '@/features/campaigns';
 import { useTerritoryState, getMap, buildAdjacencyMap } from '@/features/maps';
 import { base44 } from '@/api/base44Client';
@@ -182,6 +186,19 @@ export default function ActiveCampaign() {
       );
     }
 
+    if (phase === 'deploy') {
+      return (
+        <DeployPanel
+          campaign={campaign}
+          players={players}
+          myPlayer={myPlayer}
+          stateById={stateById}
+          mapDef={mapDef}
+          onPhaseChanged={handlePhaseChanged}
+        />
+      );
+    }
+
     return <PhasePanelPlaceholder campaign={campaign} />;
   }, [campaign, players, myPlayer, gameProfile, phase, stateById, mapDef, selectedId, handlePhaseChanged]);
 
@@ -189,8 +206,11 @@ export default function ActiveCampaign() {
     if (isSetupPhase) {
       return <SetupInfoPanel campaign={campaign} players={players} />;
     }
+    if (phase === 'deploy') {
+      return <DeployInfoPanel campaign={campaign} players={players} />;
+    }
     return <InfoPanelPlaceholder activeTab={activeTab} />;
-  }, [isSetupPhase, campaign, players, activeTab]);
+  }, [isSetupPhase, phase, campaign, players, activeTab]);
 
   const displayCampaign = campaign ?? { name: 'Loading…', current_round: 0, current_phase: 'faction_selection', phase_deadline: null };
 

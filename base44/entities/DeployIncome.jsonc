@@ -1,0 +1,54 @@
+{
+  "name": "DeployIncome",
+  "type": "object",
+  "description": "Public income record per player per deploy phase. Created at deploy phase start.",
+  "properties": {
+    "campaign_id": {
+      "type": "string",
+      "description": "FK \u2192 Campaign.id"
+    },
+    "round": {
+      "type": "number",
+      "description": "Round number for this income record."
+    },
+    "player_id": {
+      "type": "string",
+      "description": "FK \u2192 CampaignPlayer.id"
+    },
+    "territory_bonus": {
+      "type": "number",
+      "default": 0,
+      "description": "Troops from territory count formula."
+    },
+    "troop_bonus": {
+      "type": "number",
+      "default": 0,
+      "description": "Troops from total troop count formula."
+    },
+    "region_bonus": {
+      "type": "number",
+      "default": 0,
+      "description": "Troops from fully controlled regions."
+    },
+    "continent_bonus": {
+      "type": "number",
+      "default": 0,
+      "description": "Troops from fully controlled continents."
+    },
+    "total": {
+      "type": "number",
+      "default": 0,
+      "description": "Total troops available to deploy this round."
+    },
+    "resources_generated": {
+      "type": "object",
+      "description": "Map of resource_type \u2192 count generated this round.",
+      "default": {}
+    }
+  },
+  "required": [
+    "campaign_id",
+    "round",
+    "player_id"
+  ]
+}

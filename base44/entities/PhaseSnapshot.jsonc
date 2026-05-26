@@ -1,0 +1,85 @@
+{
+  "name": "PhaseSnapshot",
+  "type": "object",
+  "properties": {
+    "campaign_id": {
+      "type": "string",
+      "description": "FK \u2192 Campaign.id"
+    },
+    "round": {
+      "type": "number",
+      "default": 0,
+      "description": "Round number this snapshot was taken at."
+    },
+    "phase": {
+      "type": "string",
+      "description": "Phase name at snapshot time."
+    },
+    "snapshot_type": {
+      "type": "string",
+      "enum": [
+        "phase_start",
+        "phase_end"
+      ],
+      "description": "Whether this was taken at the start or end of the phase."
+    },
+    "territory_states": {
+      "type": "array",
+      "description": "Snapshot of all territory ownership + troop counts at this moment.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "territory_id": {
+            "type": "string"
+          },
+          "owner_player_id": {
+            "type": "string"
+          },
+          "troop_count": {
+            "type": "number"
+          }
+        }
+      },
+      "default": []
+    },
+    "player_standings": {
+      "type": "array",
+      "description": "Snapshot of each player's territory count, troop total, and income at this moment.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "player_id": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "territory_count": {
+            "type": "number"
+          },
+          "troop_total": {
+            "type": "number"
+          },
+          "deploy_income": {
+            "type": "number"
+          },
+          "is_eliminated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "default": []
+    },
+    "deploy_incomes": {
+      "type": "object",
+      "description": "Map of player_id \u2192 { territory_bonus, region_bonus, continent_bonus, total }",
+      "default": {}
+    }
+  },
+  "required": [
+    "campaign_id",
+    "round",
+    "phase",
+    "snapshot_type"
+  ]
+}
