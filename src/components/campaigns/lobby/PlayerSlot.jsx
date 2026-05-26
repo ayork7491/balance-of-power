@@ -1,7 +1,7 @@
 /**
  * PlayerSlot — renders one player row in the campaign lobby.
  */
-import { Crown, Check, Clock, Shield, X } from 'lucide-react';
+import { Crown, Check, Clock, Shield, X, FlaskConical } from 'lucide-react';
 import { PLAYER_COLORS } from '@/config/theme';
 
 export default function PlayerSlot({ player, isMe, canKick, onKick }) {
@@ -27,6 +27,11 @@ export default function PlayerSlot({ player, isMe, canKick, onKick }) {
           {player.is_admin && (
             <span className="flex items-center gap-1 badge-pending">
               <Crown className="w-3 h-3" /> Admin
+            </span>
+          )}
+          {player.is_test_player && (
+            <span className="flex items-center gap-1 text-[10px] text-status-info px-1.5 py-0.5 rounded border border-status-info/40">
+              <FlaskConical className="w-2.5 h-2.5" /> Test
             </span>
           )}
         </div>

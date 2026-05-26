@@ -93,18 +93,32 @@ export default function AdminTestMode() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           {/* Left Column */}
           <div className="space-y-5">
-            {/* Test Player Creator - Platform Admin Only */}
+            {/* Test Player Creator - Campaign Admin or Platform Admin */}
             <div className="panel p-4">
               <div className="panel-header -mx-4 -mt-4 px-4 pt-3 pb-2 mb-4">
                 <h2 className="font-display text-xs tracking-widest uppercase text-muted-foreground flex items-center gap-2">
-                  Create Test Player
-                  {!isPlatformAdmin && <span className="text-[10px] text-status-pending">(Platform Admin Only)</span>}
+                  Add Test Player to Lobby
+                  {campaign?.status !== 'lobby' && (
+                    <span className="text-[10px] text-status-pending">(Lobby Phase Only)</span>
+                  )}
                 </h2>
               </div>
-              {isPlatformAdmin ? <TestPlayerCreator /> : (
-                <p className="text-xs text-muted-foreground p-3">
-                  Test player creation is restricted to platform admins. Campaign admins should use the invite flow to add players.
-                </p>
+              {campaign?.status === 'lobby' ? (
+                <TestPlayerCreator />
+              ) : (
+                <div className="p-3 space-y-2">
+                  <p className="text-xs text-muted-foreground">
+                    Test players can only be added during the lobby phase.
+                  </p>
+                  <p className="text-[10px] text-muted-foreground">
+                    Current status: <span className="text-foreground">{campaign?.status}</span>
+                  </p>
+                  {campaign?.status === 'active' && (
+                    <p className="text-[10px] text-status-pending">
+                      Campaign has already started. Test players would need to be added before starting.
+                    </p>
+                  )}
+                </div>
               )}
             </div>
 

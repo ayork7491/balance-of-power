@@ -4,7 +4,7 @@
  */
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Shield, Users, Play, Loader2, AlertTriangle, RefreshCw, Settings, Bell, Check, X, Trash2 } from 'lucide-react';
+import { Shield, Users, Play, Loader2, AlertTriangle, RefreshCw, Settings, Bell, Check, X, Trash2, FlaskConical } from 'lucide-react';
 import AppShell from '@/components/layout/AppShell';
 import EmptyState from '@/components/ui/EmptyState';
 import PlayerSlot from '@/components/campaigns/lobby/PlayerSlot';
@@ -232,6 +232,28 @@ export default function CampaignLobby() {
                 className="flex items-center gap-1.5 px-3 py-2 rounded border border-destructive/50 text-destructive text-xs font-display tracking-wider uppercase hover:bg-destructive/10 transition-colors shrink-0"
               >
                 <Trash2 className="w-3.5 h-3.5" /> Delete Campaign
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Admin tools — admin only, lobby status only */}
+        {isAdmin && (
+          <div className="panel border-status-pending/30">
+            <div className="panel-header flex items-center justify-between">
+              <p className="font-display text-xs tracking-widest uppercase text-status-pending/70 flex items-center gap-2">
+                <FlaskConical className="w-3.5 h-3.5" /> Test Mode
+              </p>
+            </div>
+            <div className="p-4 flex items-center justify-between gap-4">
+              <p className="text-xs text-muted-foreground">
+                Create test players and simulate campaign setup for testing.
+              </p>
+              <button
+                onClick={() => navigate(`/campaigns/${id}/admin`)}
+                className="flex items-center gap-1.5 px-3 py-2 rounded border border-status-pending/50 text-status-pending text-xs font-display tracking-wider uppercase hover:bg-status-pending/10 transition-colors shrink-0"
+              >
+                <Settings className="w-3.5 h-3.5" /> Open Admin Mode
               </button>
             </div>
           </div>
