@@ -1,10 +1,10 @@
 /**
  * PlayerSlot — renders one player row in the campaign lobby.
  */
-import { Crown, Check, Clock, Shield, X, FlaskConical } from 'lucide-react';
+import { Crown, Check, Clock, Shield, X, FlaskConical, TestTube } from 'lucide-react';
 import { PLAYER_COLORS } from '@/config/theme';
 
-export default function PlayerSlot({ player, isMe, canKick, onKick }) {
+export default function PlayerSlot({ player, isMe, canKick, onKick, canAdminToggleReady, onAdminToggleReady }) {
   const color = PLAYER_COLORS.find(c => c.id === player.color);
 
   return (
@@ -48,8 +48,8 @@ export default function PlayerSlot({ player, isMe, canKick, onKick }) {
         </div>
       </div>
 
-      {/* Ready status */}
-      <div className="shrink-0">
+      {/* Ready status + admin controls */}
+      <div className="flex items-center gap-2 shrink-0">
         {player.is_ready ? (
           <span className="flex items-center gap-1 badge-locked text-xs">
             <Check className="w-3 h-3" /> Ready
@@ -58,6 +58,21 @@ export default function PlayerSlot({ player, isMe, canKick, onKick }) {
           <span className="flex items-center gap-1 badge-pending text-xs">
             <Clock className="w-3 h-3" /> Waiting
           </span>
+        )}
+        
+        {/* Admin ready toggle for test players only */}
+        {canAdminToggleReady && player.is_test_player && (
+          <button
+            onClick={() => onAdminToggleReady(player)}
+            className={`p-1.5 rounded text-xs transition-colors shrink-0 border ${
+              player.is_ready
+                ? 'bg-status-locked/20 text-status-locked border-status-locked/40 hover:bg-status-locked/30'
+                : 'bg-status-pending/20 text-status-pending border-status-pending/40 hover:bg-status-pending/30'
+            }`}
+            title={player.is_ready ? 'Mark as not ready' : 'Mark as ready'}
+          >
+            <TestTube className="w-3 h-3" />
+          </button>
         )}
       </div>
 

@@ -82,7 +82,7 @@ Deno.serve(async (req) => {
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json();
-  const { action, campaign_id, faction_name, territory_id } = body;
+  const { action, campaign_id, faction_name, territory_id, acting_as_player_id } = body;
 
   if (!campaign_id || !action) {
     return Response.json({ error: 'campaign_id and action are required' }, { status: 400 });
@@ -100,6 +100,29 @@ Deno.serve(async (req) => {
   // Find my CampaignPlayer record
   const myPlayer = players.find(p => p.user_id === user.id);
   if (!myPlayer) return Response.json({ error: 'You are not a player in this campaign' }, { status: 403 });
+
+  // ── Acting-as delegation (admin test mode) ───────────────────────────────────
+  let actingPlayer = myPlayer;
+  if (acting_as_player_id) {
+    // Verify admin privileges
+    const isAdmin = myPlayer.is_admin || user.role === 'admin';
+    if (!isAdmin) {
+      return Response.json({ error: 'Only admins can use acting-as delegation' }, { status: 403 });
+    }
+
+    // Verify target player exists in this campaign
+    const targetPlayer = players.find(p => p.id === acting_as_player_id);
+    if (!targetPlayer) {
+      return Response.json({ error: 'Target player not found in this campaign' }, { status: 404 });
+    }
+
+    // Verify target is a test player OR campaign is explicitly a test campaign
+    if (!targetPlayer.is_test_player) {
+      return Response.json({ error: 'Can only act as test players' }, { status: 403 });
+    }
+
+    actingPlayer = targetPlayer;
+  }
 
   // ── ACTION: initSetup ────────────────────────────────────────────────────────
   if (action === 'initSetup') {
@@ -138,7 +161,7 @@ Deno.serve(async (req) => {
     const setupOrder = campaign.setup_order || [];
     const currentIdx = campaign.setup_current_index ?? 0;
 
-    if (setupOrder[currentIdx] !== myPlayer.id) {
+    if (setupOrder[currentIdx] !== actingPlayer.id) {
       return Response.json({ error: 'It is not your turn to select a faction' }, { status: 403 });
     }
 
@@ -148,15 +171,15 @@ Deno.serve(async (req) => {
 
     // Validate uniqueness if duplicates are disabled
     if (!campaign.settings?.allow_faction_duplicates) {
-      const taken = players.find(p => p.faction_name === faction_name && p.id !== myPlayer.id);
+      const taken = players.find(p => p.faction_name === faction_name && p.id !== actingPlayer.id);
       if (taken) return Response.json({ error: `${faction_name} is already chosen by another player` }, { status: 400 });
     }
 
-    await base44.asServiceRole.entities.CampaignPlayer.update(myPlayer.id, { faction_name });
+    await base44.asServiceRole.entities.CampaignPlayer.update(actingPlayer.id, { faction_name });
 
-    await log(base44, campaign_id, 'faction_selection', 'faction_selected', myPlayer.id, {
+    await log(base44, campaign_id, 'faction_selection', 'faction_selected', actingPlayer.id, {
       faction_name,
-      display_name: myPlayer.display_name,
+      display_name: actingPlayer.display_name,
     });
 
     // Advance to next player or to territory_draft
@@ -204,7 +227,7 @@ Deno.serve(async (req) => {
     const setupOrder = campaign.setup_order || [];
     const currentIdx = campaign.setup_current_index ?? 0;
 
-    if (setupOrder[currentIdx] !== myPlayer.id) {
+    if (setupOrder[currentIdx] !== actingPlayer.id) {
       return Response.json({ error: 'It is not your turn to pick' }, { status: 403 });
     }
 
@@ -221,19 +244,19 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Territory already claimed' }, { status: 400 });
     }
 
-    // Assign territory to player
+    // Assign territory to acting player
     await base44.asServiceRole.entities.TerritoryState.create({
       campaign_id,
       map_id: campaign.map_id,
       territory_id,
-      owner_player_id: myPlayer.id,
+      owner_player_id: actingPlayer.id,
       troop_count: 0,
       structures: [],
     });
 
-    await log(base44, campaign_id, 'territory_draft', 'territory_picked', myPlayer.id, {
+    await log(base44, campaign_id, 'territory_draft', 'territory_picked', actingPlayer.id, {
       territory_id,
-      display_name: myPlayer.display_name,
+      display_name: actingPlayer.display_name,
       pick_index: campaign.draft_picks_remaining - 1,
     });
 
@@ -290,12 +313,12 @@ Deno.serve(async (req) => {
     }
     const setupOrder = campaign.setup_order || [];
     const currentIdx = campaign.setup_current_index ?? 0;
-    if (setupOrder[currentIdx] !== myPlayer.id) {
+    if (setupOrder[currentIdx] !== actingPlayer.id) {
       return Response.json({ error: 'It is not your turn' }, { status: 403 });
     }
 
-    await log(base44, campaign_id, 'faction_selection', 'auto_submitted', myPlayer.id, {
-      display_name: myPlayer.display_name,
+    await log(base44, campaign_id, 'faction_selection', 'auto_submitted', actingPlayer.id, {
+      display_name: actingPlayer.display_name,
       note: 'Player skipped faction selection',
     });
 

@@ -112,6 +112,15 @@ function CampaignLobbyContent() {
     } catch { setActionError('Failed to remove player.'); }
   };
 
+  const handleAdminToggleReady = async (player) => {
+    if (!isAdmin || !player.is_test_player) return;
+    setActionError(null);
+    try {
+      await setPlayerReady(player.id, !player.is_ready);
+      reload();
+    } catch { setActionError('Failed to update ready status.'); }
+  };
+
   const s = campaign.settings ?? {};
   const hasTestPlayers = players?.some(p => p.is_test_player) === true;
 
@@ -269,6 +278,8 @@ function CampaignLobbyContent() {
                     isMe={p.user_id === userId}
                     canKick={isAdmin}
                     onKick={handleKick}
+                    canAdminToggleReady={isAdmin}
+                    onAdminToggleReady={handleAdminToggleReady}
                   />
                 ))
               )}

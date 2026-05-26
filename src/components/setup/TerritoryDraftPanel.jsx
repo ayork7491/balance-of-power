@@ -98,6 +98,7 @@ export default function TerritoryDraftPanel({
         action: 'pickTerritory',
         campaign_id: campaign.id,
         territory_id: pendingPickId,
+        acting_as_player_id: actingAsCampaignPlayerId || null,
       });
       setLastPick(pendingTerritory?.name ?? pendingPickId);
       onClearPick?.();
@@ -270,6 +271,10 @@ export default function TerritoryDraftPanel({
             <span className="text-foreground">
               {actingAsPlayer ? `${actingAsPlayer.display_name}${actingAsPlayer.is_test_player ? ' (Test)' : ''}` : `My Player (fallback)`}
             </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Acting-as Player ID (sent to backend):</span>
+            <span className="text-foreground font-mono">{actingAsCampaignPlayerId ?? 'null (use myPlayer)'}</span>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground">Is Acting-As Active:</span>

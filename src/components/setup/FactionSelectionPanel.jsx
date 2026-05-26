@@ -20,15 +20,21 @@ function getPlayerHex(players, playerId) {
   return pc?.hex ?? '#666';
 }
 
+import { useCampaignTestContext } from '@/features/adminTestMode/CampaignTestContext';
+
 export default function FactionSelectionPanel({ campaign, players, myPlayer, gameProfile, onPhaseChanged }) {
   const [selectedFaction, setSelectedFaction] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  
+  // Use test context for acting-as delegation
+  const { actingAsCampaignPlayerId, actingAsPlayer } = useCampaignTestContext();
 
   const setupOrder = campaign?.setup_order ?? [];
   const currentIdx = campaign?.setup_current_index ?? 0;
   const currentPickerId = setupOrder[currentIdx];
-  const isMyTurn = currentPickerId === myPlayer?.id;
+  const activePlayer = actingAsPlayer || myPlayer; // Use acting-as if set
+  const isMyTurn = currentPickerId === activePlayer?.id;
 
   const factions = gameProfile?.factions ?? [];
   const takenFactions = new Set(players.map(p => p.faction_name).filter(Boolean));
@@ -43,6 +49,7 @@ export default function FactionSelectionPanel({ campaign, players, myPlayer, gam
         action: 'selectFaction',
         campaign_id: campaign.id,
         faction_name: selectedFaction,
+        acting_as_player_id: actingAsCampaignPlayerId || null,
       });
       setSelectedFaction('');
       onPhaseChanged?.();
@@ -60,6 +67,7 @@ export default function FactionSelectionPanel({ campaign, players, myPlayer, gam
       await base44.functions.invoke('setupPhase', {
         action: 'skipFaction',
         campaign_id: campaign.id,
+        acting_as_player_id: actingAsCampaignPlayerId || null,
       });
       onPhaseChanged?.();
     } catch (err) {
