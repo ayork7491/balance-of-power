@@ -17,6 +17,7 @@ import { motion } from 'framer-motion';
 import { PLAYER_COLORS } from '@/config/theme';
 import TerritoryPolygon from './TerritoryPolygon';
 import AdjacencyLines from './AdjacencyLines';
+import { useMapInteraction } from '@/features/maps/useMapInteraction';
 
 function getPlayerHex(players, playerId) {
   if (!playerId) return null;
@@ -39,11 +40,50 @@ export default function MapRenderer({
   attackableIds = new Set(),
   onSelect,
   arrowLayer = null,
+  // Phase interaction props
+  currentPhase = null,
+  actingPlayer = null,
+  onAttackOriginSelect = null,
+  onAttackTargetSelect = null,
+  onFortifyOriginSelect = null,
+  onFortifyDestinationSelect = null,
+  onBuildTerritorySelect = null,
+  onDraftTerritorySelect = null,
+  onDeployTerritorySelect = null,
 }) {
   const containerRef = useRef(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
   const drag = useRef(null); // { startX, startY, originX, originY, moved }
   const rafRef = useRef(null); // requestAnimationFrame ID
+
+  // Use canonical map interaction controller
+  const {
+    interactionMode,
+    attackOriginId,
+    fortifyOriginId,
+    handleTerritoryClick,
+    clearInteraction,
+    isOwnedByActingPlayer,
+    areAdjacent,
+    getValidAttackTargets,
+    getValidFortifyDestinations,
+    getValidBuildTerritories,
+  } = useMapInteraction({
+    currentPhase,
+    selectedTerritoryId: selectedId,
+    actingPlayer,
+    mapDef,
+    stateById,
+    players,
+    onSelect,
+    onAttackOriginSelect,
+    onAttackTargetSelect,
+    onFortifyOriginSelect,
+    onFortifyDestinationSelect,
+    onBuildTerritorySelect,
+    onDraftTerritorySelect,
+    onDeployTerritorySelect,
+  });
 
   // Fit map to container on mount
   useEffect(() => {
@@ -145,9 +185,9 @@ export default function MapRenderer({
     drag.current = null;
   }, []);
 
-  // ── Territory click ────────────────────────────────────────────────────────
-  // Tap-vs-drag: only select if movement stayed under threshold
-  const handleTerritoryClick = useCallback((tid) => {
+  // ── Territory click wrapper ────────────────────────────────────────────────
+  // Wrap the controller's handler with tap-vs-drag detection
+  const handleTap = useCallback((tid) => {
     if (!drag.current) return;
     
     const hasMoved = drag.current.moved;
@@ -157,10 +197,9 @@ export default function MapRenderer({
       return;
     }
     
-    // Tap detected (< 3px) - select territory
-    const nextId = selectedId === tid ? null : tid;
-    onSelect?.(nextId);
-  }, [onSelect, selectedId]);
+    // Tap detected (< 3px) - route through interaction controller
+    handleTerritoryClick(tid);
+  }, [handleTerritoryClick]);
 
   // ── Region color lookup ────────────────────────────────────────────────────
   const regionColorById = {};
@@ -224,7 +263,7 @@ export default function MapRenderer({
                 isSelected={selectedId === tid}
                 isHighlighted={highlightIds.has(tid)}
                 isAttackable={attackableIds.has(tid)}
-                onClick={() => handleTerritoryClick(tid)}
+                onClick={() => handleTap(tid)}
               />
             );
           })}

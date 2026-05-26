@@ -5,6 +5,7 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useParams } from 'react-router-dom';
+import { TestTube, User, Eye, Target, Castle, ArrowRight, Hammer } from 'lucide-react';
 import CampaignLayout from '@/components/layout/CampaignLayout';
 import { PLAYER_COLORS } from '@/config/theme';
 import MapRenderer from '@/components/map/MapRenderer';
@@ -31,6 +32,12 @@ function ActiveCampaignContent() {
   const [activeTab, setActiveTab]   = useState('map');
   const [myPlayerId, setMyPlayerId]   = useState(null);
   const [gameProfile, setGameProfile] = useState(null);
+  
+  // Interaction state
+  const [attackOriginId, setAttackOriginId] = useState(null);
+  const [fortifyOriginId, setFortifyOriginId] = useState(null);
+  const [buildTerritoryId, setBuildTerritoryId] = useState(null);
+  const [interactionDebug, setInteractionDebug] = useState(null);
   
   // Use centralized test context (includes selectedTerritoryId)
   const { 
@@ -177,6 +184,76 @@ function ActiveCampaignContent() {
     attackReveals,
   });
 
+  // ── Map interaction callbacks ──────────────────────────────────────────────
+
+  const handleAttackOriginSelect = useCallback((originId) => {
+    setAttackOriginId(originId);
+    setInteractionDebug(prev => ({
+      ...prev,
+      attackOriginId: originId,
+      interactionMode: 'attack_origin_selected',
+      timestamp: new Date().toISOString(),
+    }));
+  }, []);
+
+  const handleAttackTargetSelect = useCallback((originId, targetId) => {
+    setInteractionDebug(prev => ({
+      ...prev,
+      attackOriginId: originId,
+      attackTargetId: targetId,
+      interactionMode: 'attack_target_selected',
+      timestamp: new Date().toISOString(),
+    }));
+  }, []);
+
+  const handleFortifyOriginSelect = useCallback((originId) => {
+    setFortifyOriginId(originId);
+    setInteractionDebug(prev => ({
+      ...prev,
+      fortifyOriginId: originId,
+      interactionMode: 'fortify_origin_selected',
+      timestamp: new Date().toISOString(),
+    }));
+  }, []);
+
+  const handleFortifyDestinationSelect = useCallback((originId, destinationId) => {
+    setInteractionDebug(prev => ({
+      ...prev,
+      fortifyOriginId: originId,
+      fortifyDestinationId: destinationId,
+      interactionMode: 'fortify_destination_selected',
+      timestamp: new Date().toISOString(),
+    }));
+  }, []);
+
+  const handleBuildTerritorySelect = useCallback((territoryId) => {
+    setBuildTerritoryId(territoryId);
+    setInteractionDebug(prev => ({
+      ...prev,
+      buildTerritoryId: territoryId,
+      interactionMode: 'build_territory_selected',
+      timestamp: new Date().toISOString(),
+    }));
+  }, []);
+
+  const handleDraftTerritorySelect = useCallback((territoryId) => {
+    setInteractionDebug(prev => ({
+      ...prev,
+      draftTerritoryId: territoryId,
+      interactionMode: 'draft_claim',
+      timestamp: new Date().toISOString(),
+    }));
+  }, []);
+
+  const handleDeployTerritorySelect = useCallback((territoryId) => {
+    setInteractionDebug(prev => ({
+      ...prev,
+      deployTerritoryId: territoryId,
+      interactionMode: 'deploy_placement',
+      timestamp: new Date().toISOString(),
+    }));
+  }, []);
+
   // Territory highlights (draft + attack) - uses effective player for perspective
   const highlightIds = useMemo(() => {
     if (phase !== 'territory_draft') return new Set();
@@ -234,10 +311,19 @@ function ActiveCampaignContent() {
           mapDef={mapDef}
           stateById={stateById}
           players={players}
-          selectedId={selectedTerritoryId} // Use centralized state
+          selectedId={selectedTerritoryId}
           highlightIds={highlightIds}
           attackableIds={attackableIds}
-          onSelect={setSelectedTerritoryId} // Update centralized state
+          onSelect={setSelectedTerritoryId}
+          currentPhase={phase}
+          actingPlayer={actionPlayer}
+          onAttackOriginSelect={handleAttackOriginSelect}
+          onAttackTargetSelect={handleAttackTargetSelect}
+          onFortifyOriginSelect={handleFortifyOriginSelect}
+          onFortifyDestinationSelect={handleFortifyDestinationSelect}
+          onBuildTerritorySelect={handleBuildTerritorySelect}
+          onDraftTerritorySelect={handleDraftTerritorySelect}
+          onDeployTerritorySelect={handleDeployTerritorySelect}
           arrowLayer={arrowAttacks.length > 0 ? (
             <AttackArrowLayer
               attacks={arrowAttacks}
