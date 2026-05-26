@@ -9,8 +9,10 @@
  */
 import { useState, useEffect, useCallback } from 'react';
 import { base44 } from '@/api/base44Client';
+import { useActingAsPayload } from '@/features/adminTestMode/useActingAsPayload';
 
 export function useAttackPhase({ campaign, myPlayer }) {
+  const { getPayload, actingPlayer } = useActingAsPayload(myPlayer);
   const [attacks, setAttacks]       = useState([]);
   const [decision, setDecision]     = useState(null);
   const [loading, setLoading]       = useState(true);
@@ -65,6 +67,7 @@ export function useAttackPhase({ campaign, myPlayer }) {
         origin_territory_id,
         target_territory_id,
         committed_troops,
+        ...getPayload(),
       });
       setAttacks(res.data.attacks ?? []);
       await reload();
@@ -76,7 +79,7 @@ export function useAttackPhase({ campaign, myPlayer }) {
     } finally {
       setSubmitting(false);
     }
-  }, [campaign?.id, reload]);
+  }, [campaign?.id, reload, getPayload]);
 
   const handleDeleteAttack = useCallback(async (attackId) => {
     setSubmitting(true);
@@ -86,6 +89,7 @@ export function useAttackPhase({ campaign, myPlayer }) {
         action: 'deleteAttack',
         campaign_id: campaign.id,
         attack_id: attackId,
+        ...getPayload(),
       });
       setAttacks(res.data.attacks ?? []);
       await reload();
@@ -94,15 +98,16 @@ export function useAttackPhase({ campaign, myPlayer }) {
     } finally {
       setSubmitting(false);
     }
-  }, [campaign?.id, reload]);
+  }, [campaign?.id, reload, getPayload]);
 
-  const handleLock = useCallback(async (onPhaseChanged) => {
+  const handleLock = useCallback(async (onPhaseChanged, actingAsPlayerId = null) => {
     setSubmitting(true);
     setError(null);
     try {
       await base44.functions.invoke('attackPhase', {
         action: 'lockAttack',
         campaign_id: campaign.id,
+        ...(actingAsPlayerId ? { acting_as_player_id: actingAsPlayerId } : getPayload()),
       });
       await reload();
       onPhaseChanged?.();
@@ -111,7 +116,7 @@ export function useAttackPhase({ campaign, myPlayer }) {
     } finally {
       setSubmitting(false);
     }
-  }, [campaign?.id, reload]);
+  }, [campaign?.id, reload, getPayload]);
 
   const isLocked = decision?.is_locked ?? false;
   const maxAttacks = campaign?.settings?.max_attacks_per_phase ?? 3;

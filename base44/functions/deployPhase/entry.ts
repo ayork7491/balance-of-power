@@ -43,6 +43,35 @@
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
+// ─── Inline: Acting-as validation (mirrors services/permissions/actingAsPermissions.js) ──
+
+function resolveActingCampaignPlayer({ user, campaign_id, acting_as_player_id, campaignPlayers, requireActive = true }) {
+  const ownPlayer = campaignPlayers.find(p => p.user_id === user.id);
+  if (!acting_as_player_id) {
+    if (!ownPlayer) return { success: false, actingPlayer: null, reason: 'You are not a member of this campaign.', code: 'NOT_CAMPAIGN_MEMBER' };
+    if (requireActive && ownPlayer.is_eliminated) return { success: false, actingPlayer: ownPlayer, reason: 'Your player has been eliminated.', code: 'PLAYER_ELIMINATED' };
+    return { success: true, actingPlayer: ownPlayer, reason: 'Acting as yourself.', code: 'ACTING_AS_SELF' };
+  }
+  const requestedPlayer = campaignPlayers.find(p => p.id === acting_as_player_id);
+  if (!requestedPlayer) return { success: false, actingPlayer: null, reason: 'Invalid player ID.', code: 'INVALID_PLAYER_ID' };
+  if (requestedPlayer.campaign_id !== campaign_id) return { success: false, actingPlayer: null, reason: 'Player not in this campaign.', code: 'PLAYER_NOT_IN_CAMPAIGN' };
+  if (requestedPlayer.id === ownPlayer?.id) {
+    if (requireActive && requestedPlayer.is_eliminated) return { success: false, actingPlayer: requestedPlayer, reason: 'Your player has been eliminated.', code: 'PLAYER_ELIMINATED' };
+    return { success: true, actingPlayer: requestedPlayer, reason: 'Acting as yourself.', code: 'ACTING_AS_SELF' };
+  }
+  const isTestPlayer = requestedPlayer.is_test_player === true || (requestedPlayer.user_id && requestedPlayer.user_id.startsWith('test_player_'));
+  if (user.role === 'admin') {
+    if (requireActive && requestedPlayer.is_eliminated) return { success: false, actingPlayer: requestedPlayer, reason: 'Cannot act as eliminated players.', code: 'PLAYER_ELIMINATED' };
+    return { success: true, actingPlayer: requestedPlayer, reason: 'Platform admin override.', code: 'PLATFORM_ADMIN_OVERRIDE' };
+  }
+  if (ownPlayer?.is_admin) {
+    if (!isTestPlayer) return { success: false, actingPlayer: null, reason: 'Campaign admins can only act as test players.', code: 'CANNOT_ACT_AS_REAL_PLAYER' };
+    if (requireActive && requestedPlayer.is_eliminated) return { success: false, actingPlayer: requestedPlayer, reason: 'Cannot act as eliminated test players.', code: 'PLAYER_ELIMINATED' };
+    return { success: true, actingPlayer: requestedPlayer, reason: 'Campaign admin acting as test player.', code: 'ADMIN_ACTING_AS_TEST' };
+  }
+  return { success: false, actingPlayer: null, reason: 'Only admins can act as other players.', code: 'NOT_ADMIN' };
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const DEFAULT_AVG_BATTLE_SIZE  = 1000;
@@ -336,6 +365,20 @@ Deno.serve(async (req) => {
   const myPlayer = players.find(p => p.user_id === user.id);
   if (!myPlayer) return Response.json({ error: 'Not a player in this campaign' }, { status: 403 });
 
+  // ── Acting-as delegation ─────────────────────────────────────────────────────
+  const { acting_as_player_id } = body;
+  const actingResult = resolveActingCampaignPlayer({
+    user,
+    campaign_id,
+    acting_as_player_id,
+    campaignPlayers: players,
+    requireActive: false,
+  });
+  if (!actingResult.success) {
+    return Response.json({ error: actingResult.reason }, { status: 403 });
+  }
+  const actingPlayer = actingResult.actingPlayer;
+
   const round = campaign.current_round ?? 1;
   const phase = 'deploy';
 
@@ -445,24 +488,24 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'placements must be an object { territory_id: number }' }, { status: 400 });
     }
 
-    // Load own decision only (user-scoped — privacy enforced)
+    // Load acting player's decision only (user-scoped — privacy enforced)
     const decisions = await base44.entities.PhaseDecision.filter({
-      campaign_id, player_id: myPlayer.id, phase: 'deploy', round,
+      campaign_id, player_id: actingPlayer.id, phase: 'deploy', round,
     });
     const decision = decisions[0];
     if (!decision) return Response.json({ error: 'No deploy decision found. Has deploy phase been started?' }, { status: 404 });
     if (decision.is_locked) return Response.json({ error: 'You have already locked your deployment' }, { status: 400 });
 
-    // Load income to know allowed total
+    // Load income to know allowed total (acting player)
     const incomeRecords = await base44.asServiceRole.entities.DeployIncome.filter({
-      campaign_id, player_id: myPlayer.id, round,
+      campaign_id, player_id: actingPlayer.id, round,
     });
     const income = incomeRecords[0];
     if (!income) return Response.json({ error: 'Income record not found' }, { status: 404 });
 
-    // Validate ownership and totals
+    // Validate ownership and totals (acting player)
     const ownedStates = await base44.asServiceRole.entities.TerritoryState.filter({
-      campaign_id, owner_player_id: myPlayer.id,
+      campaign_id, owner_player_id: actingPlayer.id,
     });
     const ownedIds = new Set(ownedStates.map(t => t.territory_id));
 
@@ -477,7 +520,7 @@ Deno.serve(async (req) => {
     });
 
     // Private log — placement data NOT public until reveal
-    await log(base44, campaign_id, round, phase, 'troop_staged', myPlayer.id, {
+    await log(base44, campaign_id, round, phase, 'troop_staged', actingPlayer.id, {
       troops_placed: validation.totalPlaced, troops_remaining: troopsRemaining,
     }, false);
 
@@ -491,14 +534,14 @@ Deno.serve(async (req) => {
     }
 
     const decisions = await base44.entities.PhaseDecision.filter({
-      campaign_id, player_id: myPlayer.id, phase: 'deploy', round,
+      campaign_id, player_id: actingPlayer.id, phase: 'deploy', round,
     });
     const decision = decisions[0];
     if (!decision) return Response.json({ error: 'No deploy decision found' }, { status: 404 });
     if (decision.is_locked) return Response.json({ error: 'Already locked' }, { status: 400 });
 
     const incomeRecords = await base44.asServiceRole.entities.DeployIncome.filter({
-      campaign_id, player_id: myPlayer.id, round,
+      campaign_id, player_id: actingPlayer.id, round,
     });
     const allowedTroops = incomeRecords[0]?.total ?? 0;
 
@@ -510,12 +553,12 @@ Deno.serve(async (req) => {
     if (remaining > 0) {
       // Auto-distribute remaining troops (seeded — deterministic)
       const ownedStates = await base44.asServiceRole.entities.TerritoryState.filter({
-        campaign_id, owner_player_id: myPlayer.id,
+        campaign_id, owner_player_id: actingPlayer.id,
       });
       const additions = autoRandomizePlacements(
         ownedStates.map(t => t.territory_id),
         remaining,
-        `${campaign_id}_${myPlayer.id}_r${round}_autolock`,
+        `${campaign_id}_${actingPlayer.id}_r${round}_autolock`,
       );
       finalPlacements = mergePlacements(finalPlacements, additions);
     }
@@ -527,8 +570,8 @@ Deno.serve(async (req) => {
     });
 
     // Public lock log — no placement data
-    await log(base44, campaign_id, round, phase, 'player_locked', myPlayer.id, {
-      display_name: myPlayer.display_name,
+    await log(base44, campaign_id, round, phase, 'player_locked', actingPlayer.id, {
+      display_name: actingPlayer.display_name,
     }, true);
 
     return Response.json({ success: true });

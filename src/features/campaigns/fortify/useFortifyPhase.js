@@ -4,8 +4,10 @@
 import { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
 import { useQuery } from '@tanstack/react-query';
+import { useActingAsPayload } from '@/features/adminTestMode/useActingAsPayload';
 
 export function useFortifyPhase({ campaign, myPlayer }) {
+  const { getPayload, actingPlayer } = useActingAsPayload(myPlayer);
   const [stagedMovements, setStagedMovements] = useState([]);
   const [stagedConstruction, setStagedConstruction] = useState(null);
   const [isLoading, setIsLoading] = useState(true);

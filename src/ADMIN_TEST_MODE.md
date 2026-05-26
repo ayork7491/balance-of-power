@@ -5,6 +5,7 @@
 Admin Test Mode is a comprehensive debugging and solo testing tool for Balance of Power campaigns. It allows administrators to:
 
 - Create test player accounts
+- **Acting-As delegation** — Perform actions as test players (deploy, attack, fortify, etc.)
 - Switch perspectives between players
 - View all private decision data (debug overlay)
 - Force phase advancement
@@ -12,6 +13,185 @@ Admin Test Mode is a comprehensive debugging and solo testing tool for Balance o
 - Test campaign flows without waiting for timers
 
 **CRITICAL SECURITY**: All features are restricted to admin users only and preserve hidden-information rules in production.
+
+---
+
+## Acting-As Delegation Model
+
+### What is Acting-As?
+
+Acting-As allows campaign admins to **perform player actions on behalf of test players**. When you select "Acting As: Test Player 1", all your phase actions (lock deploy, stage attacks, fortify, etc.) are executed as that test player.
+
+### Use Cases
+
+- **Solo testing** — Play all sides of a campaign yourself
+- **Debugging** — Test phase flows from different player perspectives
+- **Bot simulation** — Fill empty slots in test campaigns
+
+### How It Works
+
+**Frontend:**
+1. Admin selects "Acting As" from TopBar dropdown
+2. All player-action buttons use `useActingAsPayload()` hook
+3. Payload includes `acting_as_player_id: <selected_id>`
+4. Backend resolves acting player and executes action
+
+**Backend:**
+1. Every phase function calls `resolveActingCampaignPlayer()`
+2. Validates: admin can act as test players only
+3. Uses `actingPlayer.id` for all PhaseDecision queries/updates
+4. Logs actions under `actingPlayer.id`
+
+### Supported Phase Actions
+
+All player actions support acting-as:
+
+| Phase | Actions |
+|-------|---------|
+| **Faction Selection** | Select faction |
+| **Territory Draft** | Claim territory |
+| **Initial Deploy** | Stage troops, lock deployment |
+| **Deploy** | Stage troops, lock deployment |
+| **Attack** | Stage attack, delete attack, lock attacks |
+| **Fortify** | Stage movement, start construction, lock fortify |
+
+### Security Rules
+
+**Who Can Act As Whom:**
+
+| User Type | Can Act As |
+|-----------|------------|
+| Regular user | Self only |
+| Campaign admin | Self + test players in own campaign |
+| Platform admin | Any player (override) |
+
+**Validation:**
+```javascript
+// Backend validation (all phase functions)
+const actingResult = resolveActingCampaignPlayer({
+  user,
+  campaign_id,
+  acting_as_player_id,
+  campaignPlayers: players,
+  requireActive: false,
+});
+if (!actingResult.success) {
+  return Response.json({ error: actingResult.reason }, { status: 403 });
+}
+const actingPlayer = actingResult.actingPlayer;
+```
+
+### Frontend Helper: `useActingAsPayload`
+
+**Location:** `features/adminTestMode/useActingAsPayload.js`
+
+**Usage:**
+```javascript
+import { useActingAsPayload } from '@/features/adminTestMode/useActingAsPayload';
+
+function MyPhasePanel({ myPlayer }) {
+  const { getPayload, actingPlayer, actingAsId } = useActingAsPayload(myPlayer);
+  
+  const handleLock = async () => {
+    await base44.functions.invoke('deployPhase', {
+      action: 'lockDeploy',
+      campaign_id: campaign.id,
+      ...getPayload(),  // spreads { acting_as_player_id: ... }
+    });
+  };
+}
+```
+
+**Returns:**
+- `getPayload()` — Function returning `{ acting_as_player_id: ... }`
+- `actingPlayer` — Resolved player record (self or test player)
+- `actingAsId` — Selected acting-as CampaignPlayer.id (null if self)
+- `isActingAsSelf` — Boolean
+
+### Backend Resolver: `resolveActingCampaignPlayer`
+
+**Location:** Inlined in each phase function (`deployPhase.js`, `attackPhase.js`, `fortifyPhase.js`, `initialDeploy.js`, `setupPhase.js`)
+
+**Logic:**
+```javascript
+function resolveActingCampaignPlayer({
+  user,
+  campaign_id,
+  acting_as_player_id,
+  campaignPlayers,
+  requireActive = true,
+}) {
+  // 1. Find own player record
+  const ownPlayer = campaignPlayers.find(p => p.user_id === user.id);
+  
+  // 2. No acting-as specified → default to self
+  if (!acting_as_player_id) {
+    return { success: true, actingPlayer: ownPlayer, code: 'ACTING_AS_SELF' };
+  }
+  
+  // 3. Validate requested player exists in campaign
+  const requestedPlayer = campaignPlayers.find(p => p.id === acting_as_player_id);
+  
+  // 4. Platform admin can act as anyone
+  if (user.role === 'admin') {
+    return { success: true, actingPlayer: requestedPlayer, code: 'PLATFORM_ADMIN_OVERRIDE' };
+  }
+  
+  // 5. Campaign admin can act as test players only
+  if (ownPlayer?.is_admin) {
+    const isTestPlayer = requestedPlayer.is_test_player || requestedPlayer.user_id?.startsWith('test_player_');
+    if (!isTestPlayer) {
+      return { success: false, code: 'CANNOT_ACT_AS_REAL_PLAYER' };
+    }
+    return { success: true, actingPlayer: requestedPlayer, code: 'ADMIN_ACTING_AS_TEST' };
+  }
+  
+  // 6. Regular users cannot act as others
+  return { success: false, code: 'NOT_ADMIN' };
+}
+```
+
+### Debug UI Indicators
+
+All phase panels show:
+- **Authenticated:** Your user account
+- **Acting-As:** Selected test player (or "self")
+- **Submit For:** Which player the action will affect
+- **Submission Type:** Manual vs Auto-randomized
+
+**Example (InitialDeployPanel):**
+```jsx
+<div className="flex items-center gap-2">
+  <User className="w-3 h-3" />
+  <span>Authenticated:</span>
+  <span>{myPlayer?.display_name}</span>
+</div>
+<div className="flex items-center gap-2">
+  <TestTube className="w-3 h-3" />
+  <span>Acting-As:</span>
+  <span>{actingAsPlayer ? `${actingAsPlayer.display_name} (Test)` : '(self)'}</span>
+</div>
+<div className="flex items-center gap-2">
+  <span>Submit For:</span>
+  <span>{actionPlayer?.display_name}</span>
+</div>
+```
+
+### Testing Acting-As
+
+**Checklist:**
+
+- [ ] Acting as self → locks deploy for self
+- [ ] Acting as Test Player 1 → locks deploy for Test Player 1
+- [ ] Switch acting-as → button labels update
+- [ ] Lock status shows correct player
+- [ ] PhaseDecision saved for acting player, not authenticated user
+- [ ] Debug panel shows correct "Submit For" player
+- [ ] Cannot act as eliminated players
+- [ ] Campaign admin cannot act as real human players (test players only)
+- [ ] Platform admin can override (act as anyone)
+
+---
 
 ---
 

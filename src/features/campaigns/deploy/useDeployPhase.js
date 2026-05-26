@@ -13,8 +13,10 @@
  */
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { base44 } from '@/api/base44Client';
+import { useActingAsPayload } from '@/features/adminTestMode/useActingAsPayload';
 
 export function useDeployPhase({ campaign, myPlayer, myTerritories }) {
+  const { getPayload, actingPlayer } = useActingAsPayload(myPlayer);
   const [placements, setPlacements] = useState({});
   const [decision, setDecision]     = useState(null);
   const [income, setIncome]         = useState(null);
@@ -100,6 +102,7 @@ export function useDeployPhase({ campaign, myPlayer, myTerritories }) {
         action:      'stageTroops',
         campaign_id: campaign.id,
         placements:  clean,
+        ...getPayload(),
       });
       setSaved(true);
       await reload();
@@ -108,15 +111,16 @@ export function useDeployPhase({ campaign, myPlayer, myTerritories }) {
     } finally {
       setSubmitting(false);
     }
-  }, [decision?.is_locked, placements, campaign?.id, reload]);
+  }, [decision?.is_locked, placements, campaign?.id, reload, getPayload]);
 
-  const handleLock = useCallback(async (onPhaseChanged) => {
+  const handleLock = useCallback(async (onPhaseChanged, actingAsPlayerId = null) => {
     setSubmitting(true);
     setError(null);
     try {
       await base44.functions.invoke('deployPhase', {
         action:      'lockDeploy',
         campaign_id: campaign.id,
+        ...(actingAsPlayerId ? { acting_as_player_id: actingAsPlayerId } : getPayload()),
       });
       await reload();
       onPhaseChanged?.();
@@ -125,7 +129,7 @@ export function useDeployPhase({ campaign, myPlayer, myTerritories }) {
     } finally {
       setSubmitting(false);
     }
-  }, [campaign?.id, reload]);
+  }, [campaign?.id, reload, getPayload]);
 
   return {
     placements, decision, income, troopsRemaining,
