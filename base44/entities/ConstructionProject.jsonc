@@ -1,0 +1,71 @@
+{
+  "name": "ConstructionProject",
+  "type": "object",
+  "description": "Tracks active construction projects. One per player at a time.",
+  "properties": {
+    "campaign_id": {
+      "type": "string",
+      "description": "FK \u2192 Campaign.id"
+    },
+    "round_started": {
+      "type": "number",
+      "description": "Round when construction started"
+    },
+    "player_id": {
+      "type": "string",
+      "description": "FK \u2192 CampaignPlayer.id"
+    },
+    "territory_id": {
+      "type": "string",
+      "description": "Territory where structure is being built"
+    },
+    "structure_type": {
+      "type": "string",
+      "enum": [
+        "castle",
+        "barracks",
+        "stables"
+      ],
+      "description": "Type of structure being built"
+    },
+    "total_cost": {
+      "type": "object",
+      "description": "Total resource cost: { brick, lumber, wool, grain, ore }",
+      "default": {}
+    },
+    "resources_paid": {
+      "type": "object",
+      "description": "Resources paid so far: { brick, lumber, wool, grain, ore }",
+      "default": {}
+    },
+    "rounds_required": {
+      "type": "number",
+      "default": 1,
+      "description": "Number of rounds to complete construction"
+    },
+    "rounds_completed": {
+      "type": "number",
+      "default": 0,
+      "description": "Rounds of construction completed"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "in_progress",
+        "completed"
+      ],
+      "default": "in_progress"
+    },
+    "completed_at": {
+      "type": "string",
+      "description": "ISO timestamp when construction completed"
+    }
+  },
+  "required": [
+    "campaign_id",
+    "player_id",
+    "territory_id",
+    "structure_type",
+    "round_started"
+  ]
+}

@@ -30,6 +30,8 @@ import AttackInfoPanel from '@/components/phases/attack/AttackInfoPanel';
 import AttackArrowLayer from '@/components/phases/attack/AttackArrowLayer';
 import BattlePanel from '@/components/phases/battle/BattlePanel';
 import BattleInfoPanel from '@/components/phases/battle/BattleInfoPanel';
+import FortifyPanel from '@/components/phases/fortify/FortifyPanel';
+import FortifyInfoPanel from '@/components/phases/fortify/FortifyInfoPanel';
 import { useAttackReveals, useAttackPhase } from '@/features/campaigns/attack';
 
 import { useCampaign } from '@/features/campaigns';
@@ -233,6 +235,22 @@ export default function ActiveCampaign() {
       );
     }
 
+    if (phase === 'fortify') {
+      return (
+        <FortifyPanel
+          campaign={campaign}
+          players={players}
+          myPlayer={myPlayer}
+          stateById={stateById}
+          mapDef={mapDef}
+          adjacencyMap={adjacencyMap}
+          selectedTerritoryId={selectedId}
+          onClearSelection={() => setSelectedId(null)}
+          onPhaseChanged={handlePhaseChanged}
+        />
+      );
+    }
+
     return <PhasePanelPlaceholder campaign={campaign} />;
   }, [campaign, players, myPlayer, gameProfile, phase, stateById, mapDef, selectedId, handlePhaseChanged]);
 
@@ -248,6 +266,9 @@ export default function ActiveCampaign() {
     }
     if (phase === 'battle') {
       return <BattleInfoPanel campaign={campaign} players={players} />;
+    }
+    if (phase === 'fortify') {
+      return <FortifyInfoPanel campaign={campaign} players={players} />;
     }
     return <InfoPanelPlaceholder activeTab={activeTab} />;
   }, [isSetupPhase, phase, campaign, players, activeTab]);
