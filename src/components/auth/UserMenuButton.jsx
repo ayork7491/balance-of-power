@@ -5,14 +5,15 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Settings, LogOut, ChevronDown, User } from 'lucide-react';
-import { base44 } from '@/api/base44Client';
+import { useAuth } from '@/lib/AuthContext';
 import { PLAYER_COLORS } from '@/config/theme';
 
 export default function UserMenuButton({ user }) {
   const [open, setOpen] = useState(false);
+  const { logout } = useAuth();
 
   const handleLogout = () => {
-    base44.auth.logout('/login');
+    logout();
   };
 
   // Get the user's default color for the avatar ring

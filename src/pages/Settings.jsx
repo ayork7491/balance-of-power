@@ -8,14 +8,15 @@ import { Link } from 'react-router-dom';
 import AppShell from '@/components/layout/AppShell';
 import ProfileColorPicker from '@/components/auth/ProfileColorPicker';
 import { useUserProfile } from '@/features/auth/useUserProfile';
-import { User, Palette, Bell, Shield, Save, Loader2, Check } from 'lucide-react';
+import { User, Palette, Bell, Shield, Save, Loader2, Check, AlertTriangle } from 'lucide-react';
 
 export default function Settings() {
-  const { user, loading, saving, updateProfile } = useUserProfile();
+  const { user, loading, saving, error: profileError, updateProfile } = useUserProfile();
 
   const [displayName, setDisplayName] = useState('');
   const [defaultColor, setDefaultColor] = useState('');
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState(null);
 
   // Populate form once user data loads
   useEffect(() => {
@@ -28,17 +29,30 @@ export default function Settings() {
   const handleSave = async (e) => {
     e.preventDefault();
     setSaved(false);
-    await updateProfile({
-      display_name: displayName.trim(),
-      default_color: defaultColor || null,
-    });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+    setSaveError(null);
+    try {
+      await updateProfile({
+        display_name: displayName.trim(),
+        default_color: defaultColor || null,
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch {
+      setSaveError('Could not save your profile. Please try again.');
+    }
   };
 
   return (
     <AppShell showBack title="Settings">
       <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
+
+        {/* Profile load error */}
+        {profileError && !loading && (
+          <div className="panel p-4 flex items-start gap-3 border-destructive/40 bg-destructive/5">
+            <AlertTriangle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+            <p className="text-xs text-destructive">{profileError}</p>
+          </div>
+        )}
 
         {loading ? (
           <div className="flex items-center justify-center py-16 text-muted-foreground gap-2 text-xs">
@@ -105,6 +119,14 @@ export default function Settings() {
                 <ProfileColorPicker value={defaultColor} onChange={setDefaultColor} />
               </div>
             </section>
+
+            {/* Save error */}
+            {saveError && (
+              <div className="flex items-center gap-2 p-3 rounded border border-destructive/40 bg-destructive/5">
+                <AlertTriangle className="w-3.5 h-3.5 text-destructive shrink-0" />
+                <p className="text-xs text-destructive">{saveError}</p>
+              </div>
+            )}
 
             {/* Save button */}
             <button
