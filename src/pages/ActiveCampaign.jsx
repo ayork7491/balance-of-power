@@ -34,6 +34,10 @@ import FortifyPanel from '@/components/phases/fortify/FortifyPanel';
 import FortifyInfoPanel from '@/components/phases/fortify/FortifyInfoPanel';
 import { useAttackReveals, useAttackPhase } from '@/features/campaigns/attack';
 
+// History and leaderboard panels
+import LeaderboardPanel from '@/components/campaigns/LeaderboardPanel';
+import HistoryLogPanel from '@/components/campaigns/HistoryLogPanel';
+
 import { useCampaign } from '@/features/campaigns';
 import { useTerritoryState, getMap, buildAdjacencyMap } from '@/features/maps';
 import { base44 } from '@/api/base44Client';
@@ -77,6 +81,18 @@ function InfoPanelPlaceholder({ activeTab }) {
       </div>
     </div>
   );
+}
+
+// Right dock content routing
+function getRightDockContent(activeTab, campaign, players, mapDef) {
+  switch (activeTab) {
+    case 'leaderboard':
+      return <LeaderboardPanel campaign={campaign} players={players} />;
+    case 'history':
+      return <HistoryLogPanel campaign={campaign} players={players} />;
+    default:
+      return <InfoPanelPlaceholder activeTab={activeTab} />;
+  }
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
@@ -255,9 +271,18 @@ export default function ActiveCampaign() {
   }, [campaign, players, myPlayer, gameProfile, phase, stateById, mapDef, selectedId, handlePhaseChanged]);
 
   const rightDockContent = useMemo(() => {
+    // During active gameplay phases, show phase-specific info
+    if (!isSetupPhase && phase !== 'deploy' && phase !== 'attack' && phase !== 'battle' && phase !== 'fortify') {
+      // Use tab-based routing for right dock
+      return getRightDockContent(activeTab, campaign, players, mapDef);
+    }
+    
+    // During setup phases, always show setup info
     if (isSetupPhase) {
       return <SetupInfoPanel campaign={campaign} players={players} />;
     }
+    
+    // During gameplay phases, show phase-specific info
     if (phase === 'deploy') {
       return <DeployInfoPanel campaign={campaign} players={players} />;
     }
@@ -270,8 +295,9 @@ export default function ActiveCampaign() {
     if (phase === 'fortify') {
       return <FortifyInfoPanel campaign={campaign} players={players} />;
     }
+    
     return <InfoPanelPlaceholder activeTab={activeTab} />;
-  }, [isSetupPhase, phase, campaign, players, activeTab]);
+  }, [isSetupPhase, phase, campaign, players, activeTab, mapDef]);
 
   const displayCampaign = campaign ?? { name: 'Loading…', current_round: 0, current_phase: 'faction_selection', phase_deadline: null };
 
