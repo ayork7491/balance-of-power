@@ -104,6 +104,7 @@ function ActiveCampaignContent() {
   }, [selectedTerritoryId, mapDef, adjacencyMap]);
 
   const phase = campaign?.current_phase;
+  const isArchived = campaign?.status === 'archived';
 
   // Determine effective player for VIEWING perspective (simulated or real)
   const effectivePlayer = useMemo(() => {
@@ -154,7 +155,6 @@ function ActiveCampaignContent() {
 
   const displayCampaign = campaign ?? { name: 'Loading…', current_round: 0, current_phase: 'faction_selection', phase_deadline: null };
   const isAdmin = myPlayer?.is_admin;
-  const isArchived = campaign?.status === 'archived';
 
   // Own staged attacks — only loaded during attack phase, only own player (user-scoped)
   const { attacks: myStagedAttacks } = useAttackPhase({
