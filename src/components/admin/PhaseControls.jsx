@@ -16,6 +16,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import AdminAdvancePhase from './AdminAdvancePhase';
 
 const PHASE_ORDER = [
   'faction_selection',
@@ -27,7 +28,7 @@ const PHASE_ORDER = [
   'fortify',
 ];
 
-export default function PhaseControls({ campaign, onPhaseChanged }) {
+export default function PhaseControls({ campaign, players, myPlayer, allLockStatus, onPhaseChanged }) {
   const [isLoading, setIsLoading] = useState(false);
   const [showAdvanceDialog, setShowAdvanceDialog] = useState(false);
 
@@ -75,10 +76,19 @@ export default function PhaseControls({ campaign, onPhaseChanged }) {
   return (
     <>
       <div className="space-y-3">
-        <div className="flex items-center gap-2 mb-2">
+        {/* Admin Advance Phase Control */}
+        <AdminAdvancePhase
+          campaign={campaign}
+          players={players}
+          myPlayer={myPlayer}
+          allLockStatus={allLockStatus}
+          onPhaseChanged={onPhaseChanged}
+        />
+
+        <div className="flex items-center gap-2 mb-2 mt-4">
           <FastForward className="w-3.5 h-3.5 text-muted-foreground" />
           <p className="text-xs font-display tracking-widest uppercase text-muted-foreground">
-            Phase Controls
+            Manual Controls
           </p>
         </div>
 

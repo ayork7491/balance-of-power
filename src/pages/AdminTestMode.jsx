@@ -16,6 +16,7 @@ import PerspectiveSwitcher from '@/components/admin/PerspectiveSwitcher';
 import DebugOverlay from '@/components/admin/DebugOverlay';
 import PhaseControls from '@/components/admin/PhaseControls';
 import SnapshotInspector from '@/components/admin/SnapshotInspector';
+import { useFortifyLockStatus } from '@/features/campaigns/fortify/useFortifyLockStatus';
 
 export default function AdminTestMode() {
   const { id } = useParams();
@@ -42,8 +43,21 @@ export default function AdminTestMode() {
 
   const hasAccess = isPlatformAdmin || isCampaignAdmin;
   const isTestCampaign = campaign?.is_test_campaign === true;
+  
+  // Load lock status for current phase
+  const { allLockStatus, isLoading: loadingLocks } = useFortifyLockStatus({ campaign });
+  
+  // Get my player record
+  const [myPlayer, setMyPlayer] = useState(null);
+  useEffect(() => {
+    base44.auth.me().then(u => {
+      if (u && players) {
+        setMyPlayer(players.find(p => p.user_id === u.id) ?? null);
+      }
+    });
+  }, [players]);
 
-  if (isLoading || loadingCampaign) {
+  if (isLoading || loadingCampaign || loadingLocks) {
     return (
       <AppShell showBack title="Admin Test Mode">
         <div className="flex items-center justify-center py-12">
@@ -136,6 +150,9 @@ export default function AdminTestMode() {
             <div className="panel p-4">
               <PhaseControls
                 campaign={campaign}
+                players={players}
+                myPlayer={myPlayer}
+                allLockStatus={allLockStatus}
                 onPhaseChanged={() => {}}
               />
             </div>
