@@ -95,7 +95,7 @@
     },
     "result": {
       "type": "object",
-      "description": "Submitted battle result: { winner_player_id, surviving_tabletop_troops, notes, submitted_by, submitted_at }",
+      "description": "Battle result: { winner_player_id, surviving_tabletop_troops, notes, submitted_by, submitted_at, result_source, applied_at }. result_source: manual | auto | forfeit. applied_at: ISO timestamp when territory updates were applied.",
       "default": {}
     },
     "approvals": {
@@ -109,6 +109,11 @@
     "resolved_at": {
       "type": "string",
       "description": "ISO timestamp when battle was fully resolved."
+    },
+    "result_applied": {
+      "type": "boolean",
+      "default": false,
+      "description": "True when territory updates have been applied. Prevents double-application during phase end."
     }
   },
   "required": [

@@ -1,5 +1,6 @@
 /**
  * BattleResultEntry — form for submitting a tabletop battle result.
+ * Supports multi-attacker battles where any participant can win.
  */
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
@@ -56,6 +57,7 @@ export default function BattleResultEntry() {
   const targetName = mapDef?.territories.find(t => t.territory_id === card?.target_territory_id)?.name
     ?? card?.target_territory_id ?? '—';
 
+  // Build participant list (all attackers + defender if applicable)
   const participantIds = [...new Set([
     ...(card?.attackers ?? []).map(a => a.player_id),
     ...(card?.defender_player_id ? [card.defender_player_id] : []),
@@ -116,10 +118,11 @@ export default function BattleResultEntry() {
           <p className="font-display text-xs tracking-widest uppercase text-muted-foreground">Reporting result for</p>
           <p className="font-display text-lg font-semibold text-foreground">{targetName}</p>
           <p className="text-xs text-muted-foreground">Tabletop size: <span className="font-mono text-foreground">{card.tabletop_size} pts</span></p>
+          {card.is_mutual && <p className="text-xs text-warning">Bloodbath — Winner captures both territories</p>}
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Winner */}
+          {/* Winner selection */}
           <div className="space-y-1.5">
             <label className="text-xs font-display tracking-wider uppercase text-muted-foreground">Winner</label>
             <div className="space-y-1.5">
@@ -127,6 +130,9 @@ export default function BattleResultEntry() {
                 const p   = players.find(pl => pl.id === pid);
                 const hex = getPlayerHex(players, pid);
                 const checked = winnerId === pid;
+                const isAttacker = (card.attackers ?? []).some(a => a.player_id === pid);
+                const isDefender = card.defender_player_id === pid;
+                const role = isAttacker && isDefender ? 'both' : isAttacker ? 'attacker' : isDefender ? 'defender' : '';
                 return (
                   <label key={pid} className={`flex items-center gap-3 px-3 py-2 rounded border cursor-pointer transition-colors ${checked ? 'border-primary/40 bg-primary/10' : 'border-border bg-muted/10 hover:bg-muted/20'}`}>
                     <input
@@ -139,6 +145,7 @@ export default function BattleResultEntry() {
                     />
                     <span className="w-3 h-3 rounded-full" style={{ backgroundColor: hex }} />
                     <span className="text-sm text-foreground">{p?.display_name ?? '?'}</span>
+                    {role && <span className="text-xs text-muted-foreground">({role})</span>}
                     {checked && <Check className="w-3.5 h-3.5 text-primary ml-auto" />}
                   </label>
                 );
@@ -172,6 +179,9 @@ export default function BattleResultEntry() {
               placeholder="e.g. 450"
               className="w-full bg-input border border-border rounded px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
             />
+            <p className="text-xs text-muted-foreground">
+              These troops will be scaled back to full-scale and placed in {card.is_mutual ? 'both contested territories' : 'the winning territory'}.
+            </p>
           </div>
 
           {/* Notes */}
