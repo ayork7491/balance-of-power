@@ -18,6 +18,9 @@ import BottomRail from './BottomRail';
 export default function CampaignLayout({
   campaign = null,
   isTestMode = false,
+  players = [],
+  currentPerspective = null,
+  onPerspectiveChange = null,
   leftDockContent = null,
   rightDockContent = null,
   children, // map center
@@ -64,7 +67,13 @@ export default function CampaignLayout({
         transition={{ duration: 0.3 }}
       >
         {/* Top bar */}
-        <TopBar campaign={campaign} isTestMode={isTestMode} />
+        <TopBar 
+          campaign={campaign} 
+          isTestMode={isTestMode}
+          players={players}
+          currentPerspective={currentPerspective}
+          onPerspectiveChange={onPerspectiveChange}
+        />
 
         {/* Main row */}
         <div className="flex flex-1 overflow-hidden">

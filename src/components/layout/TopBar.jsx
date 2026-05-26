@@ -5,11 +5,12 @@
  */
 import { Link, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Shield, Lock, FlaskConical, Settings } from 'lucide-react';
+import { Shield, Lock, FlaskConical, Settings, Eye, User } from 'lucide-react';
 import PhaseTag from '@/components/ui/PhaseTag';
 import CountdownTimer from '@/components/ui/CountdownTimer';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
-export default function TopBar({ campaign = null, isTestMode = false }) {
+export default function TopBar({ campaign = null, isTestMode = false, players = [], currentPerspective = null, onPerspectiveChange = null }) {
   const { id } = useParams();
   const isAdmin = campaign?.admin_user_id; // Will be passed from parent if admin
   return (
@@ -104,15 +105,57 @@ export default function TopBar({ campaign = null, isTestMode = false }) {
         </motion.span>
       )}
 
-      {/* Test Mode indicator + Admin link */}
-      {isTestMode && campaign?.id && (
+      {/* Perspective selector (admin/test mode only) */}
+      {isTestMode && campaign?.id && players?.length > 0 && (
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 bg-muted/10 border border-border px-2 py-1 rounded">
+            <Eye className="w-3.5 h-3.5 text-muted-foreground" />
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider hidden sm:inline">Viewing As</span>
+            <Select value={currentPerspective?.id || 'admin'} onValueChange={(val) => {
+              const player = val === 'admin' ? null : players.find(p => p.id === val);
+              onPerspectiveChange?.(player);
+            }}>
+              <SelectTrigger className="h-7 text-xs w-32 sm:w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="admin">
+                  <span className="flex items-center gap-1.5">
+                    <User className="w-3 h-3" /> Admin / My View
+                  </span>
+                </SelectItem>
+                {players.map((player) => (
+                  <SelectItem key={player.id} value={player.id}>
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: player.color ? `hsl(var(--${player.color}))` : '#888' }} />
+                      {player.display_name} {player.is_test_player && '(Test)'}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          
+          <Link
+            to={`/campaigns/${id}/admin`}
+            className="flex items-center gap-1 bg-status-pending/20 border border-status-pending/40 text-status-pending px-2 py-0.5 rounded text-xs font-display tracking-wider uppercase shrink-0 hover:brightness-125 transition-all"
+            title="Open Admin Test Mode"
+          >
+            <Settings className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Admin Mode</span>
+          </Link>
+        </div>
+      )}
+
+      {/* Test Mode indicator (fallback when no players) */}
+      {isTestMode && campaign?.id && (players?.length === 0 || !players) && (
         <Link
           to={`/campaigns/${id}/admin`}
           className="flex items-center gap-1 bg-status-pending/20 border border-status-pending/40 text-status-pending px-2 py-0.5 rounded text-xs font-display tracking-wider uppercase shrink-0 hover:brightness-125 transition-all"
           title="Open Admin Test Mode"
         >
-          <Settings className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">Admin Mode</span>
+          <FlaskConical className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">Test Mode</span>
         </Link>
       )}
     </motion.header>

@@ -31,6 +31,7 @@ export default function TerritoryDraftPanel({
   pendingPickId,   // territory_id the user clicked on the map (from ActiveCampaign)
   onClearPick,     // clear the map selection after pick
   onPhaseChanged,
+  currentPerspective, // simulated perspective from admin mode
 }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -39,7 +40,8 @@ export default function TerritoryDraftPanel({
   const setupOrder = campaign?.setup_order ?? [];
   const currentIdx = campaign?.setup_current_index ?? 0;
   const currentPickerId = setupOrder[currentIdx];
-  const isMyTurn = currentPickerId === myPlayer?.id;
+  const activePlayer = currentPerspective || myPlayer; // Use simulated perspective if set
+  const isMyTurn = currentPickerId === activePlayer?.id;
   const picksRemaining = campaign?.draft_picks_remaining ?? 0;
 
   // Territory counts per player
@@ -56,6 +58,20 @@ export default function TerritoryDraftPanel({
     : null;
   const pendingState = pendingPickId ? stateById[pendingPickId] : null;
   const pendingClaimed = !!pendingState;
+  
+  // Debug info for draft state
+  const canClaim = isMyTurn && pendingPickId && !pendingClaimed && activePlayer;
+  const claimBlockedReason = !activePlayer
+    ? 'No simulated player selected'
+    : !isMyTurn
+      ? 'Not your turn'
+      : !pendingPickId
+        ? 'No territory selected'
+        : pendingClaimed
+          ? 'Territory already claimed'
+          : campaign?.current_phase !== 'territory_draft'
+            ? 'Campaign not in draft phase'
+            : null;
 
   const handlePick = async () => {
     if (!pendingPickId || pendingClaimed || !isMyTurn) return;
@@ -109,33 +125,37 @@ export default function TerritoryDraftPanel({
       </div>
 
       {/* Selected territory confirmation */}
-      {isMyTurn && pendingPickId && (
+      {pendingPickId && (
         <div className={`p-3 rounded border space-y-2 ${
           pendingClaimed
             ? 'border-destructive/40 bg-destructive/5'
-            : 'border-primary/50 bg-primary/5'
+            : isMyTurn
+              ? 'border-primary/50 bg-primary/5'
+              : 'border-border bg-muted/20'
         }`}>
           <p className="text-xs font-display tracking-wide text-foreground">
             {pendingTerritory?.name ?? pendingPickId}
           </p>
           {pendingClaimed
             ? <p className="text-xs text-destructive">Already claimed — pick another.</p>
-            : (
-              <>
-                <p className="text-xs text-muted-foreground capitalize">
-                  {pendingTerritory?.terrain ?? ''} · {mapDef?.regions.find(r => r.id === pendingTerritory?.region_id)?.name ?? ''}
-                </p>
-                {error && <p className="text-xs text-destructive">{error}</p>}
-                <button
-                  onClick={handlePick}
-                  disabled={submitting}
-                  className="w-full flex items-center justify-center gap-1.5 px-4 py-2 rounded bg-primary text-primary-foreground text-xs font-display tracking-wider uppercase hover:brightness-110 disabled:opacity-40"
-                >
-                  {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-                  Claim Territory
-                </button>
-              </>
-            )
+            : !isMyTurn
+              ? <p className="text-xs text-muted-foreground">Waiting for {players.find(p => p.id === currentPickerId)?.display_name ?? 'current player'}...</p>
+              : (
+                <>
+                  <p className="text-xs text-muted-foreground capitalize">
+                    {pendingTerritory?.terrain ?? ''} · {mapDef?.regions.find(r => r.id === pendingTerritory?.region_id)?.name ?? ''}
+                  </p>
+                  {error && <p className="text-xs text-destructive">{error}</p>}
+                  <button
+                    onClick={handlePick}
+                    disabled={submitting}
+                    className="w-full flex items-center justify-center gap-1.5 px-4 py-2 rounded bg-primary text-primary-foreground text-xs font-display tracking-wider uppercase hover:brightness-110 disabled:opacity-40"
+                  >
+                    {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                    Claim Territory
+                  </button>
+                </>
+              )
           }
         </div>
       )}
@@ -171,6 +191,39 @@ export default function TerritoryDraftPanel({
           Direction: <span className="text-foreground capitalize">{campaign?.draft_snake_direction ?? 'forward'}</span>
         </span>
       </div>
+      
+      {/* Debug panel (always show in test/admin mode) */}
+      {currentPerspective && (
+        <div className="mt-4 pt-3 border-t border-border">
+          <p className="text-[10px] font-display tracking-widest uppercase text-muted-foreground mb-2">
+            Draft Debug (Simulated)
+          </p>
+          <div className="space-y-1 text-[10px]">
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">Perspective:</span>
+              <span className="text-foreground">{currentPerspective.display_name}</span>
+              {currentPerspective.is_test_player && <span className="text-status-info">(Test)</span>}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">Current Picker:</span>
+              <span className="text-foreground">{players.find(p => p.id === currentPickerId)?.display_name ?? 'Unknown'}</span>
+              {isMyTurn && <span className="text-status-locked">✓ Your turn</span>}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">Selected Territory:</span>
+              <span className="text-foreground">{pendingTerritory?.name ?? pendingPickId ?? 'None'}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">Claimable:</span>
+              {canClaim ? (
+                <span className="text-status-locked">Yes</span>
+              ) : (
+                <span className="text-status-danger">{claimBlockedReason || 'No'}</span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

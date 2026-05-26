@@ -6,6 +6,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useParams } from 'react-router-dom';
 import CampaignLayout from '@/components/layout/CampaignLayout';
+import { PLAYER_COLORS } from '@/config/theme';
 import MapRenderer from '@/components/map/MapRenderer';
 import TerritoryDetailPanel from '@/components/map/TerritoryDetailPanel';
 import RegionLegend from '@/components/map/RegionLegend';
@@ -30,6 +31,7 @@ export default function ActiveCampaign() {
   const [selectedId, setSelectedId] = useState(null);
   const [myPlayerId, setMyPlayerId]   = useState(null);
   const [gameProfile, setGameProfile] = useState(null);
+  const [currentPerspective, setCurrentPerspective] = useState(null); // null = admin view
 
   // Campaign + players
   const { campaign, players, loading: loadingCampaign, reload: reloadCampaign } = useCampaign(id);
@@ -95,7 +97,7 @@ export default function ActiveCampaign() {
     <PhasePanelRouter
       campaign={campaign}
       players={players}
-      myPlayer={myPlayer}
+      myPlayer={effectivePlayer} // Use effective player for perspective
       gameProfile={gameProfile}
       stateById={stateById}
       mapDef={mapDef}
@@ -103,6 +105,7 @@ export default function ActiveCampaign() {
       selectedTerritoryId={selectedId}
       onClearSelection={() => setSelectedId(null)}
       onPhaseChanged={handlePhaseChanged}
+      currentPerspective={currentPerspective}
     />
   );
 
@@ -117,6 +120,15 @@ export default function ActiveCampaign() {
 
   const displayCampaign = campaign ?? { name: 'Loading…', current_round: 0, current_phase: 'faction_selection', phase_deadline: null };
   const isAdmin = myPlayer?.is_admin;
+  
+  // Determine effective player for perspective (simulated or real)
+  const effectivePlayer = useMemo(() => {
+    if (currentPerspective) return currentPerspective; // simulated perspective
+    return myPlayer; // admin view
+  }, [currentPerspective, myPlayer]);
+  
+  // Check if campaign has test players (for showing perspective selector)
+  const hasTestPlayers = players?.some(p => p.is_test_player) === true;
 
   // Own staged attacks — only loaded during attack phase, only own player (user-scoped)
   const { attacks: myStagedAttacks } = useAttackPhase({
@@ -139,29 +151,32 @@ export default function ActiveCampaign() {
     attackReveals,
   });
 
-  // Territory highlights (draft + attack)
+  // Territory highlights (draft + attack) - uses effective player for perspective
   const highlightIds = useMemo(() => {
     if (phase !== 'territory_draft') return new Set();
     const setupOrder = campaign?.setup_order ?? [];
     const idx = campaign?.setup_current_index ?? 0;
-    if (!myPlayer || setupOrder[idx] !== myPlayer.id) return new Set();
+    if (!effectivePlayer || setupOrder[idx] !== effectivePlayer.id) return new Set();
     if (!mapDef) return new Set();
     const claimed = new Set(Object.keys(stateById));
     return new Set(mapDef.territories.map(t => t.territory_id).filter(tid => !claimed.has(tid)));
-  }, [phase, campaign, myPlayer, mapDef, stateById]);
+  }, [phase, campaign, effectivePlayer, mapDef, stateById]);
 
   const attackableIds = useMemo(() => {
-    if (phase !== 'attack' || !selectedId || !myPlayer || !mapDef) return new Set();
-    const isOwn = stateById[selectedId]?.owner_player_id === myPlayer.id;
+    if (phase !== 'attack' || !selectedId || !effectivePlayer || !mapDef) return new Set();
+    const isOwn = stateById[selectedId]?.owner_player_id === effectivePlayer.id;
     if (!isOwn) return new Set();
     const neighbors = adjacencyMap[selectedId] ?? new Set();
-    return new Set([...neighbors].filter(tid => stateById[tid]?.owner_player_id !== myPlayer.id));
-  }, [phase, selectedId, myPlayer, mapDef, stateById, adjacencyMap]);
+    return new Set([...neighbors].filter(tid => stateById[tid]?.owner_player_id !== effectivePlayer.id));
+  }, [phase, selectedId, effectivePlayer, mapDef, stateById, adjacencyMap]);
 
   return (
     <CampaignLayout
       campaign={displayCampaign}
-      isTestMode={isAdmin}
+      isTestMode={isAdmin || hasTestPlayers}
+      players={players}
+      currentPerspective={currentPerspective}
+      onPerspectiveChange={setCurrentPerspective}
       leftDockContent={leftDockContent}
       rightDockContent={rightDockContent}
       defaultTab={activeTab}
@@ -171,23 +186,23 @@ export default function ActiveCampaign() {
       {mapDef && (
         <>
           <MapRenderer
-            mapDef={mapDef}
-            stateById={stateById}
-            players={players}
-            selectedId={selectedId}
-            highlightIds={highlightIds}
-            attackableIds={attackableIds}
-            onSelect={setSelectedId}
-            arrowLayer={arrowAttacks.length > 0 ? (
-              <AttackArrowLayer
-                attacks={arrowAttacks}
-                mapDef={mapDef}
-                players={players}
-                myPlayerId={myPlayer?.id}
-                viewBox={`0 0 ${mapDef.width} ${mapDef.height}`}
-                revealed={phase !== 'attack'}
-              />
-            ) : null}
+          mapDef={mapDef}
+          stateById={stateById}
+          players={players}
+          selectedId={selectedId}
+          highlightIds={highlightIds}
+          attackableIds={attackableIds}
+          onSelect={setSelectedId}
+          arrowLayer={arrowAttacks.length > 0 ? (
+            <AttackArrowLayer
+              attacks={arrowAttacks}
+              mapDef={mapDef}
+              players={players}
+              myPlayerId={effectivePlayer?.id}
+              viewBox={`0 0 ${mapDef.width} ${mapDef.height}`}
+              revealed={phase !== 'attack'}
+            />
+          ) : null}
           />
 
           <RegionLegend regions={mapDef.regions} />

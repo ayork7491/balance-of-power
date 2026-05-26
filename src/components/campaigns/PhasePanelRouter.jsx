@@ -35,6 +35,7 @@ export default function PhasePanelRouter({
   selectedTerritoryId,
   onClearSelection,
   onPhaseChanged,
+  currentPerspective,
 }) {
   return useMemo(() => {
     if (!campaign || !myPlayer) {
@@ -66,6 +67,7 @@ export default function PhasePanelRouter({
           pendingPickId={selectedTerritoryId}
           onClearPick={onClearSelection}
           onPhaseChanged={onPhaseChanged}
+          currentPerspective={currentPerspective}
         />
       );
     }
