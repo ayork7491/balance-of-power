@@ -1,5 +1,115 @@
 # Attack Phase — Architecture & Privacy Notes
 
+## Attack Declaration UI Flow
+
+### Overview
+
+The attack declaration UI allows players to stage attacks during the attack phase through map interaction.
+
+### Step-by-Step Flow
+
+1. **Phase Detection**
+   - When `campaign.current_phase === 'attack'`, the Attack Panel becomes active
+   - Map clicks drive attack selection mode instead of just territory detail
+
+2. **Origin Selection**
+   - Player taps/clicks a territory on the map
+   - System checks if territory is valid attack origin:
+     - ✅ Owned by **Acting-As CampaignPlayer** (not just authenticated user)
+     - ✅ Has `troop_count > 0`
+     - ✅ Not locked by unresolved battle
+   - If invalid, shows reason:
+     - "You do not control this territory"
+     - "No troops available"
+     - "Territory cannot attack right now"
+
+3. **Target Selection**
+   - After valid origin selected, `AttackTargetSelector` component renders in left dock
+   - Shows list of adjacent territories from `adjacencyMap[originId]`
+   - Filters out:
+     - Own territories (cannot attack yourself)
+     - Non-adjacent territories (not in adjacency map)
+   - Allows:
+     - Enemy-owned territories
+     - Neutral/vacated territories
+   - Invalid target shows reason:
+     - "Target is not adjacent"
+     - "Cannot attack your own territory"
+
+4. **Troop Commitment UI**
+   - After selecting valid target, shows:
+     - Origin territory name
+     - Target territory name
+     - Available troops: `origin.troop_count - already_committed`
+     - Numeric input for troop commitment
+     - "Stage Attack as [Player Name]" button
+     - "All (N)" quick-fill button
+     - Cancel/Reset button
+   - Validation:
+     - Must commit at least 1 troop
+     - Cannot commit more than available
+     - If committing all troops, shows warning: "Abandoning territory — no troops will remain"
+
+5. **Stage Attack Action**
+   - Payload sent to `attackPhase` backend:
+   ```json
+   {
+     "action": "stageAttack",
+     "campaign_id": "camp_123",
+     "acting_as_player_id": "player_test1",  // from acting-as
+     "origin_territory_id": "terr_5",
+     "target_territory_id": "terr_8",
+     "committed_troops": 15
+   }
+   ```
+   - Backend validates:
+     - Acting-as permissions
+     - Territory ownership
+     - Adjacency
+     - Troop availability
+   - Response includes updated attacks array
+
+6. **Attack Panel Visibility**
+   During attack phase, left dock shows:
+   - Attack counter: "X / maxAttacks"
+   - Acting-as indicator (if test mode)
+   - AttackTargetSelector (when origin selected)
+   - Staged attacks list (AttackStagingRow components)
+   - Lock/Skip buttons
+   - Player lock status list
+   - Debug output (test mode)
+
+7. **Map Visuals**
+   - Owned valid origins: selectable on tap/click
+   - Valid targets: highlighted in AttackTargetSelector list
+   - Staged attacks: preview arrows (dashed lines) via `AttackArrowLayer`
+   - Revealed attacks: solid arrows after phase ends
+
+8. **Acting-As Support**
+   -As Support**
+   - All staging/lock actions use `useActingAsPayload` hook
+   - Payload includes `acting_as_player_id`
+   - Backend resolves acting player via `resolveActingCampaignPlayer`
+   - Button labels show: "Stage as [Acting Player Name]", "Lock as [Acting Player Name]"
+   - Debug panels show:
+     - Authenticated user/player
+     - Acting-As player
+     - Payload acting_as_player_id
+     - Decision player ID
+     - "Submit For: [Player Name]"
+
+9. **Debug Output (Test Mode)**
+   Attack panel debug shows:
+   - Current phase
+   - Acting-As player name/ID
+   - Selected origin territory
+   - Selected target territory
+   - Valid target IDs
+   - Staged attack count
+   - Reason attack button is hidden (if applicable)
+
+---
+
 ## Privacy Model
 
 ### Why clients must NEVER subscribe to PhaseDecision for lock status

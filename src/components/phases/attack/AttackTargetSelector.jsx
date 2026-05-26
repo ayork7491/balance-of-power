@@ -11,7 +11,7 @@
  * Server is always authoritative on submit.
  */
 import { useState, useMemo } from 'react';
-import { Loader2, Swords, X } from 'lucide-react';
+import { Loader2, Swords, X, TestTube } from 'lucide-react';
 
 function getTerritoryName(territoryId, mapDef) {
   return mapDef?.territories.find(t => t.territory_id === territoryId)?.name ?? territoryId;
@@ -36,6 +36,9 @@ export default function AttackTargetSelector({
 
   const originState = stateById[originId];
   const originName  = getTerritoryName(originId, mapDef);
+  
+  // Check if origin is owned by acting player (not just myPlayer)
+  const originOwner = originState?.owner_player_id ? players.find(p => p.id === originState.owner_player_id) : null;
 
   // Troops already committed from this origin in other staged attacks
   const alreadyCommittedFromOrigin = useMemo(
@@ -67,17 +70,25 @@ export default function AttackTargetSelector({
   return (
     <div className="space-y-3 p-3 rounded border border-status-danger/40 bg-status-danger/5">
       {/* Origin */}
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-xs font-display tracking-wider uppercase text-status-danger">Staging Attack</p>
-          <p className="text-xs text-foreground font-medium mt-0.5">
-            From: <span className="text-status-pending">{originName}</span>
-            <span className="text-muted-foreground ml-1">({maxAvailable} available)</span>
-          </p>
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-xs font-display tracking-wider uppercase text-status-danger">Staging Attack</p>
+            <p className="text-xs text-foreground font-medium mt-0.5">
+              From: <span className="text-status-pending">{originName}</span>
+              <span className="text-muted-foreground ml-1">({maxAvailable} available)</span>
+            </p>
+            {originOwner && originOwner.id !== myPlayer?.id && (
+              <div className="flex items-center gap-1 mt-1 text-[10px] text-accent">
+                <TestTube className="w-2.5 h-2.5" />
+                <span>Acting as {originOwner.display_name}</span>
+              </div>
+            )}
+          </div>
+          <button onClick={onCancel} className="text-muted-foreground hover:text-foreground transition-colors">
+            <X className="w-4 h-4" />
+          </button>
         </div>
-        <button onClick={onCancel} className="text-muted-foreground hover:text-foreground transition-colors">
-          <X className="w-4 h-4" />
-        </button>
       </div>
 
       {!canAddMore && (
@@ -158,7 +169,7 @@ export default function AttackTargetSelector({
                 ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 : <Swords className="w-3.5 h-3.5" />
               }
-              Commit Attack
+              Stage as {myPlayer?.display_name || 'Player'}
             </button>
           )}
         </>

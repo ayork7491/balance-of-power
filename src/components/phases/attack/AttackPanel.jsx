@@ -14,9 +14,10 @@
  *   - Other players' attack staging is NEVER fetched or shown.
  */
 import { useMemo, useState } from 'react';
-import { Loader2, Lock, Swords, Check, SkipForward } from 'lucide-react';
+import { Loader2, Lock, Swords, Check, SkipForward, User, TestTube } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { useAttackPhase, useAttackLockStatus } from '@/features/campaigns/attack';
+import { useActingAsPayload } from '@/features/adminTestMode/useActingAsPayload';
 import DeployLockStatusRow from '@/components/phases/deploy/DeployLockStatusRow';
 import AttackStagingRow from './AttackStagingRow';
 import AttackTargetSelector from './AttackTargetSelector';
@@ -36,12 +37,16 @@ export default function AttackPanel({
   const isAdmin = myPlayer?.is_admin;
   const [advancing, setAdvancing] = useState(false);
 
+  const { getPayload, actingPlayer, actingAsId } = useActingAsPayload(myPlayer);
   const {
     attacks, decision, loading, submitting, error,
     isLocked, maxAttacks,
     handleStageAttack, handleDeleteAttack, handleLock,
     reload: reloadDecision,
   } = useAttackPhase({ campaign, myPlayer });
+  
+  // Debug state
+  const [debugInfo, setDebugInfo] = useState(null);
 
   const { lockStatus, reload: reloadLocks } = useAttackLockStatus({
     campaignId: campaign?.id,
@@ -63,12 +68,36 @@ export default function AttackPanel({
   );
 
   const handleLockAndRefresh = async () => {
-    await handleLock(onPhaseChanged);
+    const payload = getPayload();
+    setDebugInfo({
+      authenticatedUserId: myPlayer?.user_id,
+      authenticatedPlayerId: myPlayer?.id,
+      authenticatedPlayerName: myPlayer?.display_name,
+      actingAsPlayerId: actingAsId,
+      actingAsPlayerName: actingPlayer?.display_name,
+      payloadActingAsPlayerId: payload.acting_as_player_id,
+      decisionPlayerId: decision?.player_id,
+      stagedAttacks: attacks.length,
+      timestamp: new Date().toISOString(),
+    });
+    await handleLock(onPhaseChanged, actingAsId);
     reloadLocks();
   };
 
   const handleSkipAndLock = async () => {
-    await handleLock(onPhaseChanged);
+    const payload = getPayload();
+    setDebugInfo({
+      authenticatedUserId: myPlayer?.user_id,
+      authenticatedPlayerId: myPlayer?.id,
+      authenticatedPlayerName: myPlayer?.display_name,
+      actingAsPlayerId: actingAsId,
+      actingAsPlayerName: actingPlayer?.display_name,
+      payloadActingAsPlayerId: payload.acting_as_player_id,
+      decisionPlayerId: decision?.player_id,
+      stagedAttacks: attacks.length,
+      timestamp: new Date().toISOString(),
+    });
+    await handleLock(onPhaseChanged, actingAsId);
     reloadLocks();
   };
 
@@ -115,14 +144,36 @@ export default function AttackPanel({
         </span>
       </div>
 
-      {/* Attack target selector — shown when own territory selected on map */}
-      {!isLocked && selectedIsMyTerritory && (
+      {/* Debug output */}
+      {debugInfo && (
+        <div className="p-2 rounded bg-muted/30 border border-border text-[10px] space-y-0.5 font-mono">
+          <p className="font-display uppercase text-muted-foreground mb-1">Attack Lock Debug</p>
+          <p><span className="text-muted-foreground">Auth User:</span> {debugInfo.authenticatedUserId?.slice(-8)}</p>
+          <p><span className="text-muted-foreground">Auth Player:</span> {debugInfo.authenticatedPlayerName} ({debugInfo.authenticatedPlayerId?.slice(-8)})</p>
+          <p><span className="text-muted-foreground">Acting-As:</span> {debugInfo.actingAsPlayerName} ({debugInfo.actingAsPlayerId?.slice(-8) || 'self'})</p>
+          <p><span className="text-muted-foreground">Payload:</span> {debugInfo.payloadActingAsPlayerId?.slice(-8) || 'null'}</p>
+          <p><span className="text-muted-foreground">Decision Player:</span> {debugInfo.decisionPlayerId?.slice(-8)}</p>
+          <p><span className="text-muted-foreground">Staged Attacks:</span> {debugInfo.stagedAttacks}</p>
+          <p className="text-status-danger mt-1">Submit For: {debugInfo.actingAsPlayerName}</p>
+        </div>
+      )}
+
+      {/* Acting-as indicator */}
+      {actingAsId && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded border border-accent/40 bg-accent/10 text-xs">
+          <TestTube className="w-3.5 h-3.5 text-accent" />
+          <span className="text-accent font-display tracking-wide">Acting as {actingPlayer?.display_name}</span>
+        </div>
+      )}
+
+      {/* Attack target selector — shown when acting player's territory selected on map */}
+      {!isLocked && selectedTerritoryId && stateById[selectedTerritoryId]?.owner_player_id === actingPlayer?.id && (
         <AttackTargetSelector
           originId={selectedTerritoryId}
           mapDef={mapDef}
           stateById={stateById}
           players={players}
-          myPlayer={myPlayer}
+          myPlayer={actingPlayer}
           adjacencyMap={adjacencyMap}
           currentAttacks={attacks}
           maxAttacks={maxAttacks}
@@ -164,7 +215,7 @@ export default function AttackPanel({
 
       {!isLocked && !selectedIsMyTerritory && attacks.length === 0 && (
         <p className="text-xs text-muted-foreground">
-          Tap one of your territories on the map to stage an attack.
+          Tap one of {actingPlayer?.display_name}'s territories on the map to stage an attack.
         </p>
       )}
 
@@ -189,7 +240,7 @@ export default function AttackPanel({
             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded bg-status-danger text-white text-xs font-display tracking-wider uppercase hover:brightness-110 disabled:opacity-40"
           >
             {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
-            Lock Attacks
+            Lock as {actingPlayer?.display_name || 'Player'}
           </button>
         </div>
       )}

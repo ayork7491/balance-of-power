@@ -22,12 +22,12 @@ export function useAttackPhase({ campaign, myPlayer }) {
   const round = campaign?.current_round ?? 1;
 
   const reload = useCallback(async () => {
-    if (!campaign?.id || !myPlayer?.id) return;
+    if (!campaign?.id || !actingPlayer?.id) return;
     setLoading(true);
     try {
       const rows = await base44.entities.PhaseDecision.filter({
         campaign_id: campaign.id,
-        player_id:   myPlayer.id,
+        player_id:   actingPlayer.id,
         phase:       'attack',
         round,
       });
@@ -37,25 +37,21 @@ export function useAttackPhase({ campaign, myPlayer }) {
     } finally {
       setLoading(false);
     }
-  }, [campaign?.id, myPlayer?.id, round]);
+  }, [campaign?.id, actingPlayer?.id, round]);
 
   useEffect(() => { reload(); }, [reload]);
 
-  // Real-time: own decision only.
-  // We check all three guard fields before reloading. Even if another player's
-  // PhaseDecision change fires this subscription, the guard on player_id ensures
-  // we only react to our own record. The reload() itself fetches user-scoped data
-  // so even a false-positive trigger would return only own data.
+  // Real-time: acting player's decision only.
   useEffect(() => {
-    if (!campaign?.id || !myPlayer?.id) return;
+    if (!campaign?.id || !actingPlayer?.id) return;
     const unsub = base44.entities.PhaseDecision.subscribe((event) => {
       if (event.data?.campaign_id !== campaign.id) return;
-      if (event.data?.player_id   !== myPlayer.id) return;
+      if (event.data?.player_id   !== actingPlayer.id) return;
       if (event.data?.phase       !== 'attack') return;
       reload();
     });
     return unsub;
-  }, [campaign?.id, myPlayer?.id, reload]);
+  }, [campaign?.id, actingPlayer?.id, reload]);
 
   const handleStageAttack = useCallback(async ({ origin_territory_id, target_territory_id, committed_troops }) => {
     setSubmitting(true);
