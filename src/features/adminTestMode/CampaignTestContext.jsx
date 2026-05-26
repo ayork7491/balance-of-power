@@ -1,10 +1,10 @@
-import { createContext, useContext, useState, useMemo, useCallback } from 'react';
+import { createContext, useContext, useState, useMemo, useCallback, useEffect } from 'react';
 
 /**
  * Campaign Test Mode Context
  * 
  * Centralized state for admin test mode perspective and action delegation.
- * Single source of truth for viewing-as and acting-as across all campaign components.
+ * Single source of truth for viewing-as, acting-as, and territory selection across all campaign components.
  */
 
 const CampaignTestContext = createContext(null);
@@ -16,6 +16,7 @@ const CampaignTestContext = createContext(null);
 export function CampaignTestModeProvider({ children, campaign, players, isAdmin }) {
   const [viewingAsCampaignPlayerId, setViewingAsCampaignPlayerId] = useState(null);
   const [actingAsCampaignPlayerId, setActingAsCampaignPlayerId] = useState(null);
+  const [selectedTerritoryId, setSelectedTerritoryId] = useState(null);
 
   // Determine if test mode is active
   const isTestMode = useMemo(() => {
@@ -56,16 +57,26 @@ export function CampaignTestModeProvider({ children, campaign, players, isAdmin 
     return players.filter(p => canActAsPlayer(p.id));
   }, [players, isAdmin, canActAsPlayer]);
 
+  // Debug: Check if selection is synchronized (test mode only)
+  useEffect(() => {
+    if (isTestMode && selectedTerritoryId) {
+      // Validation happens in ActiveCampaign where mapDef is available
+      // This is just a placeholder for future validation logic
+    }
+  }, [selectedTerritoryId, isTestMode]);
+
   const value = {
     // State
     viewingAsCampaignPlayerId,
     actingAsCampaignPlayerId,
+    selectedTerritoryId,
     viewingAsPlayer,
     actingAsPlayer,
     
     // Setters
     setViewingAsCampaignPlayerId,
     setActingAsCampaignPlayerId,
+    setSelectedTerritoryId,
     
     // Flags
     isTestMode,

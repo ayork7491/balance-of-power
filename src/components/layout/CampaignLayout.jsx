@@ -81,16 +81,16 @@ export default function CampaignLayout({
             availableActingAsPlayers={availableActingAsPlayers}
           />
 
-        {/* Main row */}
-        <div className="flex flex-1 overflow-hidden">
-          {/* Left dock */}
+        {/* Main row - critical for mobile scrolling: min-h-0 enables flex child overflow */}
+        <div className="flex flex-1 overflow-hidden min-h-0">
+          {/* Left dock - constrained height for scroll containment */}
           <AnimatePresence>
             <motion.div
               initial={{ x: -20, opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
               exit={{ x: -20, opacity: 0 }}
               transition={{ duration: 0.2 }}
-              className="h-full"
+              className="h-full min-h-0 flex flex-col"
             >
               <LeftDock>
                 {leftDockContent}
@@ -99,18 +99,18 @@ export default function CampaignLayout({
           </AnimatePresence>
 
           {/* Map / center content */}
-          <main className="flex-1 relative overflow-hidden bg-background tactical-grid">
+          <main className="flex-1 relative overflow-hidden bg-background tactical-grid min-h-0">
             {children}
           </main>
 
-          {/* Right dock */}
+          {/* Right dock - constrained height for scroll containment */}
           <AnimatePresence>
             <motion.div
               initial={{ x: 20, opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
               exit={{ x: 20, opacity: 0 }}
               transition={{ duration: 0.2 }}
-              className="h-full"
+              className="h-full min-h-0 flex flex-col"
             >
               <RightDock>
                 {rightDockContent}

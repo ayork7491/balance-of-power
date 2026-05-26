@@ -64,14 +64,12 @@ export default function PhasePanelRouter({
           campaign={campaign}
           players={players}
           myPlayer={myPlayer}
-          actionPlayer={actionPlayer}
           stateById={stateById}
           mapDef={mapDef}
-          pendingPickId={selectedTerritoryId}
-          onClearPick={onClearSelection}
+          selectedTerritoryId={selectedTerritoryId}
+          onClearSelection={onClearSelection}
           onPhaseChanged={onPhaseChanged}
           currentPerspective={currentPerspective}
-          actingAsPlayerId={actingAsPlayerId}
         />
       );
     }

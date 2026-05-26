@@ -19,11 +19,11 @@ export default function LeftDock({ children, defaultCollapsed = false }) {
       style={{ touchAction: 'none' }}
       data-dock="left"
     >
-      {/* Content with smooth opacity transition and proper scrolling */}
+      {/* Content wrapper with flex structure for proper scrolling */}
       <AnimatePresence>
         {!collapsed && (
           <motion.div
-            className="flex-1 overflow-y-auto dock-scroll min-w-0"
+            className="flex-1 overflow-y-auto dock-scroll min-w-0 min-h-0 flex flex-col"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -31,10 +31,9 @@ export default function LeftDock({ children, defaultCollapsed = false }) {
             style={{ 
               overscrollBehavior: 'contain',
               WebkitOverflowScrolling: 'touch',
-              minHeight: 0,
             }}
           >
-            <div className="p-3 min-h-full">
+            <div className="p-3">
               {children}
             </div>
           </motion.div>

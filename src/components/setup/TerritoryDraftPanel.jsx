@@ -29,8 +29,8 @@ export default function TerritoryDraftPanel({
   myPlayer,
   stateById,
   mapDef,
-  pendingPickId,   // territory_id the user clicked on the map (from ActiveCampaign)
-  onClearPick,     // clear the map selection after pick
+  selectedTerritoryId, // Use centralized selectedTerritoryId from context
+  onClearSelection,
   onPhaseChanged,
   currentPerspective, // simulated perspective from admin mode
 }) {
@@ -39,7 +39,12 @@ export default function TerritoryDraftPanel({
     actingAsPlayer,
     actingAsCampaignPlayerId,
     viewingAsCampaignPlayerId,
+    selectedTerritoryId: contextSelectedId, // Alias for clarity
   } = useCampaignTestContext();
+  
+  // Use prop (from context) or fallback to context directly
+  const pendingPickId = selectedTerritoryId ?? contextSelectedId;
+  const onClearPick = onClearSelection;
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [lastPick, setLastPick] = useState(null);
@@ -59,12 +64,15 @@ export default function TerritoryDraftPanel({
     }
   }
 
-  // Selected territory details
+  // Selected territory details (using centralized state)
   const pendingTerritory = pendingPickId
     ? mapDef?.territories.find(t => t.territory_id === pendingPickId)
     : null;
   const pendingState = pendingPickId ? stateById[pendingPickId] : null;
   const pendingClaimed = !!pendingState;
+  
+  // Debug: Check if map highlight and selectedTerritoryId are synchronized
+  const selectionMismatch = pendingPickId && (!mapDef?.territories.some(t => t.territory_id === pendingPickId));
   
   // Debug info for draft state
   const isInDraftPhase = campaign?.current_phase === 'territory_draft';
@@ -135,7 +143,7 @@ export default function TerritoryDraftPanel({
       {/* Selected territory + Claim Action Panel */}
       <div className="panel border-border bg-muted/10">
         <div className="p-3 space-y-3">
-          {/* Territory name */}
+          {/* Territory name - synchronized with map highlight */}
           <div className="flex items-center justify-between">
             <p className="text-sm font-display font-semibold text-foreground">
               {pendingTerritory?.name ?? pendingPickId ?? 'No territory selected'}
@@ -149,12 +157,19 @@ export default function TerritoryDraftPanel({
           
           {/* Territory details */}
           {pendingPickId && (
-            <div className="text-xs text-muted-foreground">
+            <div className="text-xs text-muted-foreground space-y-1">
               <p>Region: {mapDef?.regions.find(r => r.id === pendingTerritory?.region_id)?.name ?? 'Unknown'}</p>
-              {pendingClaimed && (
-                <p className="text-status-danger flex items-center gap-1 mt-1">
+              <p>Status: {pendingClaimed ? (
+                <span className="text-status-danger flex items-center gap-1 mt-1">
                   <Shield className="w-3 h-3" />
-                  Already claimed by {players.find(p => p.id === pendingState?.owner_player_id)?.display_name ?? 'Unknown'}
+                  Claimed by {players.find(p => p.id === pendingState?.owner_player_id)?.display_name ?? 'Unknown'}
+                </span>
+              ) : (
+                <span className="text-status-locked">Unclaimed</span>
+              )}</p>
+              {selectionMismatch && (
+                <p className="text-status-danger text-[10px] mt-1">
+                  ⚠ Warning: Territory ID not found in map
                 </p>
               )}
             </div>
@@ -265,6 +280,24 @@ export default function TerritoryDraftPanel({
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground">Selected Territory ID:</span>
             <span className="text-foreground font-mono">{pendingPickId ?? 'None'}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Territory Name:</span>
+            <span className="text-foreground">{pendingTerritory?.name ?? 'N/A'}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Territory Status:</span>
+            <span className={pendingClaimed ? 'text-status-danger' : 'text-status-locked'}>
+              {pendingClaimed ? 'Claimed' : 'Unclaimed'}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Selection Sync:</span>
+            {selectionMismatch ? (
+              <span className="text-status-danger font-semibold">⚠ Mismatch</span>
+            ) : (
+              <span className="text-status-locked font-semibold">✓ Synchronized</span>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground">Claimable:</span>

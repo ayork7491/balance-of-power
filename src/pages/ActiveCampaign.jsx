@@ -29,18 +29,19 @@ import { base44 } from '@/api/base44Client';
 function ActiveCampaignContent() {
   const { id } = useParams();
   const [activeTab, setActiveTab]   = useState('map');
-  const [selectedId, setSelectedId] = useState(null);
   const [myPlayerId, setMyPlayerId]   = useState(null);
   const [gameProfile, setGameProfile] = useState(null);
   
-  // Use centralized test context
+  // Use centralized test context (includes selectedTerritoryId)
   const { 
     viewingAsCampaignPlayerId,
     actingAsCampaignPlayerId,
+    selectedTerritoryId,
     viewingAsPlayer,
     actingAsPlayer,
     setViewingAsCampaignPlayerId,
     setActingAsCampaignPlayerId,
+    setSelectedTerritoryId,
     isTestMode,
     isSimulatedPerspective,
     availableActingAsPlayers,
@@ -86,21 +87,21 @@ function ActiveCampaignContent() {
     reloadState();
   }, [reloadCampaign, reloadState]);
 
-  // Selected territory details
+  // Selected territory details (using centralized selectedTerritoryId)
   const selectedTerritory   = useMemo(
-    () => mapDef?.territories.find(t => t.territory_id === selectedId) ?? null,
-    [mapDef, selectedId]
+    () => mapDef?.territories.find(t => t.territory_id === selectedTerritoryId) ?? null,
+    [mapDef, selectedTerritoryId]
   );
-  const selectedTState      = selectedId ? (stateById[selectedId] ?? null) : null;
+  const selectedTState      = selectedTerritoryId ? (stateById[selectedTerritoryId] ?? null) : null;
   const selectedRegion      = selectedTerritory
     ? (mapDef?.regions.find(r => r.id === selectedTerritory.region_id) ?? null) : null;
   const selectedContinent   = selectedTerritory
     ? (mapDef?.continents.find(c => c.id === selectedTerritory.continent_id) ?? null) : null;
   const adjacentTerritories = useMemo(() => {
-    if (!selectedId || !mapDef) return [];
-    const ids = adjacencyMap[selectedId] ?? new Set();
+    if (!selectedTerritoryId || !mapDef) return [];
+    const ids = adjacencyMap[selectedTerritoryId] ?? new Set();
     return mapDef.territories.filter(t => ids.has(t.territory_id));
-  }, [selectedId, mapDef, adjacencyMap]);
+  }, [selectedTerritoryId, mapDef, adjacencyMap]);
 
   const phase = campaign?.current_phase;
 
@@ -128,8 +129,8 @@ function ActiveCampaignContent() {
       stateById={stateById}
       mapDef={mapDef}
       adjacencyMap={adjacencyMap}
-      selectedTerritoryId={selectedId}
-      onClearSelection={() => setSelectedId(null)}
+      selectedTerritoryId={selectedTerritoryId} // Use centralized state
+      onClearSelection={() => setSelectedTerritoryId(null)}
       onPhaseChanged={handlePhaseChanged}
       currentPerspective={viewingAsPlayer}
       actingAsPlayerId={actingAsCampaignPlayerId}
@@ -181,12 +182,12 @@ function ActiveCampaignContent() {
   }, [phase, campaign, effectivePlayer, mapDef, stateById]);
 
   const attackableIds = useMemo(() => {
-    if (phase !== 'attack' || !selectedId || !effectivePlayer || !mapDef) return new Set();
-    const isOwn = stateById[selectedId]?.owner_player_id === effectivePlayer.id;
+    if (phase !== 'attack' || !selectedTerritoryId || !effectivePlayer || !mapDef) return new Set();
+    const isOwn = stateById[selectedTerritoryId]?.owner_player_id === effectivePlayer.id;
     if (!isOwn) return new Set();
-    const neighbors = adjacencyMap[selectedId] ?? new Set();
+    const neighbors = adjacencyMap[selectedTerritoryId] ?? new Set();
     return new Set([...neighbors].filter(tid => stateById[tid]?.owner_player_id !== effectivePlayer.id));
-  }, [phase, selectedId, effectivePlayer, mapDef, stateById, adjacencyMap]);
+  }, [phase, selectedTerritoryId, effectivePlayer, mapDef, stateById, adjacencyMap]);
 
   return (
     <>
@@ -211,10 +212,10 @@ function ActiveCampaignContent() {
           mapDef={mapDef}
           stateById={stateById}
           players={players}
-          selectedId={selectedId}
+          selectedId={selectedTerritoryId} // Use centralized state
           highlightIds={highlightIds}
           attackableIds={attackableIds}
-          onSelect={setSelectedId}
+          onSelect={setSelectedTerritoryId} // Update centralized state
           arrowLayer={arrowAttacks.length > 0 ? (
             <AttackArrowLayer
               attacks={arrowAttacks}
@@ -230,7 +231,7 @@ function ActiveCampaignContent() {
           <RegionLegend regions={mapDef.regions} />
 
           {/* Only show territory detail panel outside of draft phase (draft uses left dock) */}
-          {phase !== 'territory_draft' && (
+          {phase !== 'territory_draft' && selectedTerritory && (
             <TerritoryDetailPanel
               territory={selectedTerritory}
               tState={selectedTState}
@@ -238,7 +239,7 @@ function ActiveCampaignContent() {
               regionDef={selectedRegion}
               continentDef={selectedContinent}
               adjacentTerritories={adjacentTerritories}
-              onClose={() => setSelectedId(null)}
+              onClose={() => setSelectedTerritoryId(null)}
             />
           )}
         </>
