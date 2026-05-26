@@ -15,6 +15,7 @@ import { useState, useEffect } from 'react';
 import { Loader2, Map, ChevronRight, Check, Users, Shield } from 'lucide-react';
 import { PLAYER_COLORS } from '@/config/theme';
 import { base44 } from '@/api/base44Client';
+import { useCampaignTestContext } from '@/features/adminTestMode/CampaignTestContext';
 
 function getPlayerHex(players, playerId) {
   const p = players.find(pl => pl.id === playerId);
@@ -26,15 +27,19 @@ export default function TerritoryDraftPanel({
   campaign,
   players,
   myPlayer,
-  actionPlayer, // Player to submit actions for (acting-as)
   stateById,
   mapDef,
   pendingPickId,   // territory_id the user clicked on the map (from ActiveCampaign)
   onClearPick,     // clear the map selection after pick
   onPhaseChanged,
   currentPerspective, // simulated perspective from admin mode
-  actingAsPlayerId,
 }) {
+  // Use centralized test context
+  const { 
+    actingAsPlayer,
+    actingAsCampaignPlayerId,
+    viewingAsCampaignPlayerId,
+  } = useCampaignTestContext();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [lastPick, setLastPick] = useState(null);
@@ -43,7 +48,7 @@ export default function TerritoryDraftPanel({
   const currentIdx = campaign?.setup_current_index ?? 0;
   const currentPickerId = setupOrder[currentIdx];
   const activePlayer = currentPerspective || myPlayer; // Use simulated perspective if set
-  const isMyTurn = currentPickerId === actionPlayer?.id; // Check if it's acting-as player's turn
+  const isMyTurn = currentPickerId === actingAsPlayer?.id; // Check if it's acting-as player's turn
   const picksRemaining = campaign?.draft_picks_remaining ?? 0;
 
   // Territory counts per player
@@ -63,11 +68,11 @@ export default function TerritoryDraftPanel({
   
   // Debug info for draft state
   const isInDraftPhase = campaign?.current_phase === 'territory_draft';
-  const canClaim = isMyTurn && pendingPickId && !pendingClaimed && actionPlayer && isInDraftPhase;
-  const claimBlockedReason = !actionPlayer
+  const canClaim = isMyTurn && pendingPickId && !pendingClaimed && actingAsPlayer && isInDraftPhase;
+  const claimBlockedReason = !actingAsPlayer
     ? 'No acting-as player selected'
     : !isMyTurn
-      ? `Not ${actionPlayer?.display_name ?? 'player'}'s turn`
+      ? `Not ${actingAsPlayer?.display_name ?? 'player'}'s turn`
       : !pendingPickId
         ? 'No territory selected'
         : pendingClaimed
@@ -248,7 +253,13 @@ export default function TerritoryDraftPanel({
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground">Acting As:</span>
             <span className="text-foreground">
-              {actionPlayer ? `${actionPlayer.display_name}${actionPlayer.is_test_player ? ' (Test)' : ''}` : 'My Player'}
+              {actingAsPlayer ? `${actingAsPlayer.display_name}${actingAsPlayer.is_test_player ? ' (Test)' : ''}` : `My Player (fallback)`}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Is Acting-As Active:</span>
+            <span className={isMyTurn ? 'text-status-locked font-semibold' : 'text-muted-foreground'}>
+              {isMyTurn ? '✓ Yes' : '✗ No'}
             </span>
           </div>
           <div className="flex items-center gap-2">

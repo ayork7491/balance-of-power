@@ -15,8 +15,9 @@ import { useCampaign, setPlayerReady, startCampaign, kickPlayer, cleanupCampaign
 import { base44 } from '@/api/base44Client';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Link } from 'react-router-dom';
+import { CampaignTestModeProvider, useCampaignTestContext } from '@/features/adminTestMode/CampaignTestContext';
 
-export default function CampaignLobby() {
+function CampaignLobbyContent() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { campaign, players, invites, myPlayer, loading, error, reload } = useCampaign(id);
@@ -25,8 +26,16 @@ export default function CampaignLobby() {
   const [actionError, setActionError] = useState(null);
   const [starting, setStarting]     = useState(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [currentPerspective, setCurrentPerspective] = useState(null); // For admin test mode in lobby
-  const [actingAsPlayerId, setActingAsPlayerId] = useState(null); // Action delegation in lobby
+  
+  // Use centralized test context
+  const {
+    viewingAsCampaignPlayerId,
+    actingAsCampaignPlayerId,
+    setViewingAsCampaignPlayerId,
+    setActingAsCampaignPlayerId,
+    availableActingAsPlayers,
+    isTestMode,
+  } = useCampaignTestContext();
 
   useEffect(() => {
     base44.auth.me().then(u => setUserId(u?.id));
@@ -73,14 +82,6 @@ export default function CampaignLobby() {
   const canStart = isAdmin && players.length >= 2 && players.every(p => p.is_ready);
   const hasTestPlayers = players?.some(p => p.is_test_player) === true;
   const showPerspectiveSelector = isAdmin && (campaign?.status === 'lobby' || hasTestPlayers);
-  
-  // Acting As available for: test campaigns, test players, or admin override
-  const isTestCampaign = campaign?.name.toLowerCase().includes('test');
-  const availableActingAsPlayers = players.filter(p => 
-    p.user_id === userId || // Own player
-    p.is_test_player || // Test players
-    isTestCampaign // All players in test campaign
-  );
 
   const handleToggleReady = async () => {
     if (!myPlayer) return;
@@ -115,88 +116,6 @@ export default function CampaignLobby() {
 
   return (
     <AppShell>
-      {/* Custom top bar with perspective selector for lobby */}
-      <div className="h-11 bg-panel-header border-b border-panel-border flex items-center px-3 sm:px-4 gap-3 shrink-0">
-        <Link to="/" className="flex items-center gap-2 shrink-0 group touch-manipulation active:scale-95 transition-transform" title="Back to Dashboard">
-          <Shield className="w-4 h-4 text-primary group-hover:brightness-125 transition-all" />
-          <span className="font-mono text-xs font-bold tracking-widest text-primary uppercase hidden xs:block">BoP</span>
-        </Link>
-        <div className="w-px h-5 bg-border shrink-0" />
-        <span className="font-display text-sm font-semibold tracking-wide text-foreground truncate">{campaign.name}</span>
-        <div className="flex-1" />
-        
-        {/* Admin Test Mode controls (Viewing As + Acting As) */}
-        {showPerspectiveSelector && players.length > 0 && (
-          <div className="flex items-center gap-2 shrink-0">
-            {/* Viewing As selector */}
-            <div className="flex items-center gap-1.5 bg-muted/10 border border-border px-2 py-1 rounded">
-              <Eye className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wider hidden sm:inline">Viewing As</span>
-              <Select value={currentPerspective?.id || 'admin'} onValueChange={(val) => {
-                const player = val === 'admin' ? null : players.find(p => p.id === val);
-                setCurrentPerspective(player);
-              }}>
-                <SelectTrigger className="h-7 text-xs w-32 sm:w-40">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="admin">
-                    <span className="flex items-center gap-1.5">
-                      <User className="w-3 h-3" /> Admin / My View
-                    </span>
-                  </SelectItem>
-                  {players.map((player) => (
-                    <SelectItem key={player.id} value={player.id}>
-                      <span className="flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: player.color ? `hsl(var(--${player.color}))` : '#888' }} />
-                        {player.display_name} {player.is_test_player && ' (Test)'}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            
-            {/* Acting As selector (action delegation) */}
-            <div className="flex items-center gap-1.5 bg-status-pending/10 border border-status-pending/40 px-2 py-1 rounded">
-              <TestTube className="w-3.5 h-3.5 text-status-pending" />
-              <span className="text-[10px] text-status-pending uppercase tracking-wider hidden sm:inline">Acting As</span>
-              <Select value={actingAsPlayerId || 'admin'} onValueChange={(val) => {
-                setActingAsPlayerId(val === 'admin' ? null : val);
-              }}>
-                <SelectTrigger className="h-7 text-xs w-32 sm:w-40">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="admin">
-                    <span className="flex items-center gap-1.5">
-                      <User className="w-3 h-3" /> My Player
-                    </span>
-                  </SelectItem>
-                  {availableActingAsPlayers.map((player) => (
-                    <SelectItem key={player.id} value={player.id}>
-                      <span className="flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: player.color ? `hsl(var(--${player.color}))` : '#888' }} />
-                        {player.display_name} {player.is_test_player && ' (Test)'}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            
-            <Link
-              to={`/campaigns/${id}/admin`}
-              className="flex items-center gap-1 bg-status-pending/20 border border-status-pending/40 text-status-pending px-2 py-0.5 rounded text-xs font-display tracking-wider uppercase shrink-0 hover:brightness-125 transition-all"
-              title="Open Admin Test Mode"
-            >
-              <FlaskConical className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Admin Mode</span>
-            </Link>
-          </div>
-        )}
-      </div>
-      
       <div className="max-w-3xl mx-auto px-4 py-6 space-y-5">
 
         {/* Campaign summary */}
@@ -394,6 +313,27 @@ export default function CampaignLobby() {
         />
       )}
     </AppShell>
+  );
+}
+
+// Wrap with provider for centralized test mode state
+export default function CampaignLobby() {
+  const { id } = useParams();
+  const { campaign, players, myPlayer, loading } = useCampaign(id);
+  const isAdmin = myPlayer?.is_admin;
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-muted-foreground">Loading campaign...</div>
+      </div>
+    );
+  }
+
+  return (
+    <CampaignTestModeProvider campaign={campaign} players={players} isAdmin={isAdmin}>
+      <CampaignLobbyContent />
+    </CampaignTestModeProvider>
   );
 }
 

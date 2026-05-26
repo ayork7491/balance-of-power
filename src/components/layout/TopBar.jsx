@@ -9,17 +9,23 @@ import { Shield, Lock, FlaskConical, Settings, Eye, User, TestTube } from 'lucid
 import PhaseTag from '@/components/ui/PhaseTag';
 import CountdownTimer from '@/components/ui/CountdownTimer';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useCampaignTestContext } from '@/features/adminTestMode/CampaignTestContext';
 
 export default function TopBar({ 
   campaign = null, 
   isTestMode = false, 
   players = [], 
-  currentPerspective = null, 
-  onPerspectiveChange = null,
-  actingAsPlayerId = null,
-  onActingAsChange = null,
-  availableActingAsPlayers = [],
 }) {
+  // Use centralized test context
+  const {
+    viewingAsCampaignPlayerId,
+    actingAsCampaignPlayerId,
+    viewingAsPlayer,
+    actingAsPlayer,
+    setViewingAsCampaignPlayerId,
+    setActingAsCampaignPlayerId,
+    availableActingAsPlayers,
+  } = useCampaignTestContext();
   const { id } = useParams();
   const isAdmin = campaign?.admin_user_id; // Will be passed from parent if admin
   return (
@@ -121,9 +127,9 @@ export default function TopBar({
           <div className="flex items-center gap-1.5 bg-muted/10 border border-border px-2 py-1 rounded">
             <Eye className="w-3.5 h-3.5 text-muted-foreground" />
             <span className="text-[10px] text-muted-foreground uppercase tracking-wider hidden sm:inline">Viewing As</span>
-            <Select value={currentPerspective?.id || 'admin'} onValueChange={(val) => {
+            <Select value={viewingAsCampaignPlayerId || 'admin'} onValueChange={(val) => {
               const player = val === 'admin' ? null : players.find(p => p.id === val);
-              onPerspectiveChange?.(player);
+              setViewingAsCampaignPlayerId(player?.id ?? null);
             }}>
               <SelectTrigger className="h-7 text-xs w-32 sm:w-40">
                 <SelectValue />
@@ -150,8 +156,8 @@ export default function TopBar({
           <div className="flex items-center gap-1.5 bg-status-pending/10 border border-status-pending/40 px-2 py-1 rounded">
             <TestTube className="w-3.5 h-3.5 text-status-pending" />
             <span className="text-[10px] text-status-pending uppercase tracking-wider hidden sm:inline">Acting As</span>
-            <Select value={actingAsPlayerId || 'admin'} onValueChange={(val) => {
-              onActingAsChange?.(val === 'admin' ? null : val);
+            <Select value={actingAsCampaignPlayerId || 'admin'} onValueChange={(val) => {
+              setActingAsCampaignPlayerId(val === 'admin' ? null : val);
             }}>
               <SelectTrigger className="h-7 text-xs w-32 sm:w-40">
                 <SelectValue />

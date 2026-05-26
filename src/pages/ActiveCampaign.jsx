@@ -21,29 +21,33 @@ import { useAttackReveals, useAttackPhase } from '@/features/campaigns/attack';
 import { useAttackArrows } from '@/features/campaigns/attack/useAttackArrows.js';
 import { useCampaign } from '@/features/campaigns';
 import { useTerritoryState, getMap, buildAdjacencyMap } from '@/features/maps';
-import { useActingAs } from '@/features/adminTestMode/useActingAs';
+import { CampaignTestModeProvider, useCampaignTestContext } from '@/features/adminTestMode/CampaignTestContext';
 import { base44 } from '@/api/base44Client';
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
-export default function ActiveCampaign() {
+function ActiveCampaignContent() {
   const { id } = useParams();
   const [activeTab, setActiveTab]   = useState('map');
   const [selectedId, setSelectedId] = useState(null);
   const [myPlayerId, setMyPlayerId]   = useState(null);
   const [gameProfile, setGameProfile] = useState(null);
-  const [currentPerspective, setCurrentPerspective] = useState(null); // null = admin view
-  const [actingAsPlayerId, setActingAsPlayerId] = useState(null); // Action delegation
+  
+  // Use centralized test context
+  const { 
+    viewingAsCampaignPlayerId,
+    actingAsCampaignPlayerId,
+    viewingAsPlayer,
+    actingAsPlayer,
+    setViewingAsCampaignPlayerId,
+    setActingAsCampaignPlayerId,
+    isTestMode,
+    isSimulatedPerspective,
+    availableActingAsPlayers,
+  } = useCampaignTestContext();
 
   // Campaign + players
   const { campaign, players, loading: loadingCampaign, reload: reloadCampaign } = useCampaign(id);
-
-  // Acting As hook (admin test mode action delegation)
-  const { 
-    actingAsPlayer, 
-    availableActingAsPlayers,
-    isTestCampaign 
-  } = useActingAs(id, players);
 
   // Territory state (real-time)
   const mapId = campaign?.map_id ?? 'map_v1_standard';
@@ -102,9 +106,9 @@ export default function ActiveCampaign() {
 
   // Determine effective player for VIEWING perspective (simulated or real)
   const effectivePlayer = useMemo(() => {
-    if (currentPerspective) return currentPerspective; // simulated perspective
+    if (viewingAsPlayer) return viewingAsPlayer; // simulated perspective
     return myPlayer; // admin view
-  }, [currentPerspective, myPlayer]);
+  }, [viewingAsPlayer, myPlayer]);
 
   // Determine effective player for ACTIONS (acting-as delegation)
   const actionPlayer = useMemo(() => {
@@ -127,8 +131,8 @@ export default function ActiveCampaign() {
       selectedTerritoryId={selectedId}
       onClearSelection={() => setSelectedId(null)}
       onPhaseChanged={handlePhaseChanged}
-      currentPerspective={currentPerspective}
-      actingAsPlayerId={actingAsPlayerId}
+      currentPerspective={viewingAsPlayer}
+      actingAsPlayerId={actingAsCampaignPlayerId}
     />
   );
 
@@ -143,10 +147,6 @@ export default function ActiveCampaign() {
 
   const displayCampaign = campaign ?? { name: 'Loading…', current_round: 0, current_phase: 'faction_selection', phase_deadline: null };
   const isAdmin = myPlayer?.is_admin;
-  
-  // Check if campaign has test players (for showing perspective selector)
-  const hasTestPlayers = players?.some(p => p.is_test_player) === true;
-  const isTestMode = isAdmin || hasTestPlayers || isTestCampaign;
 
   // Own staged attacks — only loaded during attack phase, only own player (user-scoped)
   const { attacks: myStagedAttacks } = useAttackPhase({
@@ -189,22 +189,23 @@ export default function ActiveCampaign() {
   }, [phase, selectedId, effectivePlayer, mapDef, stateById, adjacencyMap]);
 
   return (
-    <CampaignLayout
-      campaign={displayCampaign}
-      isTestMode={isTestMode}
-      players={players}
-      currentPerspective={currentPerspective}
-      onPerspectiveChange={setCurrentPerspective}
-      actingAsPlayerId={actingAsPlayerId}
-      onActingAsChange={setActingAsPlayerId}
-      availableActingAsPlayers={availableActingAsPlayers}
-      leftDockContent={leftDockContent}
-      rightDockContent={rightDockContent}
-      defaultTab={activeTab}
-      onTabChange={setActiveTab}
-    >
-      {/* Map area */}
-      {mapDef && (
+    <>
+      <CampaignLayout
+        campaign={displayCampaign}
+        isTestMode={isTestMode}
+        players={players}
+        currentPerspective={viewingAsPlayer}
+        onPerspectiveChange={setViewingAsCampaignPlayerId}
+        actingAsPlayerId={actingAsCampaignPlayerId}
+        onActingAsChange={setActingAsCampaignPlayerId}
+        availableActingAsPlayers={availableActingAsPlayers}
+        leftDockContent={leftDockContent}
+        rightDockContent={rightDockContent}
+        defaultTab={activeTab}
+        onTabChange={setActiveTab}
+      >
+        {/* Map area */}
+        {mapDef && (
         <>
           <MapRenderer
           mapDef={mapDef}
@@ -269,6 +270,50 @@ export default function ActiveCampaign() {
           </motion.div>
         )}
       </AnimatePresence>
-    </CampaignLayout>
+      </CampaignLayout>
+    </>
   );
+}
+
+// Wrap with provider for centralized test mode state
+export default function ActiveCampaign() {
+  const { campaign, players, myPlayer, loading } = useCampaignData();
+  const isAdmin = myPlayer?.is_admin;
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-muted-foreground">Loading campaign...</div>
+      </div>
+    );
+  }
+
+  return (
+    <CampaignTestModeProvider campaign={campaign} players={players} isAdmin={isAdmin}>
+      <ActiveCampaignContent />
+    </CampaignTestModeProvider>
+  );
+}
+
+// Helper hook to load campaign data
+function useCampaignData() {
+  const { id } = useParams();
+  const [myPlayerId, setMyPlayerId] = useState(null);
+  const { campaign, players, loading: loadingCampaign } = useCampaign(id);
+  
+  useEffect(() => {
+    base44.auth.me().then(u => setMyPlayerId(u?.id));
+  }, []);
+
+  const myPlayer = useMemo(
+    () => myPlayerId ? players.find(p => p.user_id === myPlayerId) ?? null : null,
+    [players, myPlayerId]
+  );
+
+  return {
+    campaign,
+    players,
+    myPlayer,
+    loading: loadingCampaign,
+  };
 }
