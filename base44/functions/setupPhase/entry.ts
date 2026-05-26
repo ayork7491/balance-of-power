@@ -12,6 +12,63 @@
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
+// Inline acting-as validation (services/permissions/actingAsPermissions.js logic)
+function resolveActingCampaignPlayer({
+  user,
+  campaign_id,
+  acting_as_player_id,
+  campaignPlayers,
+  requireActive = true,
+}) {
+  const ownPlayer = campaignPlayers.find(p => p.user_id === user.id);
+  
+  if (!acting_as_player_id) {
+    if (!ownPlayer) {
+      return { success: false, actingPlayer: null, reason: 'You are not a member of this campaign.', code: 'NOT_CAMPAIGN_MEMBER' };
+    }
+    if (requireActive && ownPlayer.is_eliminated) {
+      return { success: false, actingPlayer: ownPlayer, reason: 'Your player has been eliminated.', code: 'PLAYER_ELIMINATED' };
+    }
+    return { success: true, actingPlayer: ownPlayer, reason: 'Acting as yourself.', code: 'ACTING_AS_SELF' };
+  }
+
+  const requestedPlayer = campaignPlayers.find(p => p.id === acting_as_player_id);
+  if (!requestedPlayer) {
+    return { success: false, actingPlayer: null, reason: 'Invalid player ID.', code: 'INVALID_PLAYER_ID' };
+  }
+  if (requestedPlayer.campaign_id !== campaign_id) {
+    return { success: false, actingPlayer: null, reason: 'Player not in this campaign.', code: 'PLAYER_NOT_IN_CAMPAIGN' };
+  }
+
+  if (requestedPlayer.id === ownPlayer?.id) {
+    if (requireActive && requestedPlayer.is_eliminated) {
+      return { success: false, actingPlayer: requestedPlayer, reason: 'Your player has been eliminated.', code: 'PLAYER_ELIMINATED' };
+    }
+    return { success: true, actingPlayer: requestedPlayer, reason: 'Acting as yourself.', code: 'ACTING_AS_SELF' };
+  }
+
+  const isTestPlayer = requestedPlayer.is_test_player === true || (requestedPlayer.user_id && requestedPlayer.user_id.startsWith('test_player_'));
+
+  if (user.role === 'admin') {
+    if (requireActive && requestedPlayer.is_eliminated) {
+      return { success: false, actingPlayer: requestedPlayer, reason: 'Cannot act as eliminated players.', code: 'PLAYER_ELIMINATED' };
+    }
+    return { success: true, actingPlayer: requestedPlayer, reason: 'Platform admin override.', code: 'PLATFORM_ADMIN_OVERRIDE' };
+  }
+
+  if (ownPlayer?.is_admin) {
+    if (!isTestPlayer) {
+      return { success: false, actingPlayer: null, reason: 'Campaign admins can only act as test players.', code: 'CANNOT_ACT_AS_REAL_PLAYER' };
+    }
+    if (requireActive && requestedPlayer.is_eliminated) {
+      return { success: false, actingPlayer: requestedPlayer, reason: 'Cannot act as eliminated test players.', code: 'PLAYER_ELIMINATED' };
+    }
+    return { success: true, actingPlayer: requestedPlayer, reason: 'Campaign admin acting as test player.', code: 'ADMIN_ACTING_AS_TEST' };
+  }
+
+  return { success: false, actingPlayer: null, reason: 'Only admins can act as other players.', code: 'NOT_ADMIN' };
+}
+
 // ─── Seeded shuffle (Fisher-Yates with xmur3 seed) ───────────────────────────
 
 function xmur3(str) {
@@ -102,27 +159,19 @@ Deno.serve(async (req) => {
   if (!myPlayer) return Response.json({ error: 'You are not a player in this campaign' }, { status: 403 });
 
   // ── Acting-as delegation (admin test mode) ───────────────────────────────────
-  let actingPlayer = myPlayer;
-  if (acting_as_player_id) {
-    // Verify admin privileges
-    const isAdmin = myPlayer.is_admin || user.role === 'admin';
-    if (!isAdmin) {
-      return Response.json({ error: 'Only admins can use acting-as delegation' }, { status: 403 });
-    }
+  const actingResult = resolveActingCampaignPlayer({
+    user,
+    campaign_id,
+    acting_as_player_id,
+    campaignPlayers: players,
+    requireActive: false, // Setup actions can be done by eliminated players (e.g., rejoining)
+  });
 
-    // Verify target player exists in this campaign
-    const targetPlayer = players.find(p => p.id === acting_as_player_id);
-    if (!targetPlayer) {
-      return Response.json({ error: 'Target player not found in this campaign' }, { status: 404 });
-    }
-
-    // Verify target is a test player OR campaign is explicitly a test campaign
-    if (!targetPlayer.is_test_player) {
-      return Response.json({ error: 'Can only act as test players' }, { status: 403 });
-    }
-
-    actingPlayer = targetPlayer;
+  if (!actingResult.success) {
+    return Response.json({ error: actingResult.reason }, { status: 403 });
   }
+
+  const actingPlayer = actingResult.actingPlayer;
 
   // ── ACTION: initSetup ────────────────────────────────────────────────────────
   if (action === 'initSetup') {
