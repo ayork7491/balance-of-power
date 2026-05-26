@@ -321,10 +321,18 @@ export async function startCampaign(campaignId, adminUserId, players) {
     throw new Error(`Not all players are ready. Waiting on: ${names}`);
   }
 
-  return base44.entities.Campaign.update(campaignId, {
+  await base44.entities.Campaign.update(campaignId, {
     status: 'active',
-    current_round: 1,
-    current_phase: 'draft',
+    current_round: 0,
+    current_phase: 'faction_selection',
+    setup_current_index: 0,
+    setup_order: [],
+  });
+
+  // Randomize player order and initialize setup phase
+  await base44.functions.invoke('setupPhase', {
+    action: 'initSetup',
+    campaign_id: campaignId,
   });
 }
 

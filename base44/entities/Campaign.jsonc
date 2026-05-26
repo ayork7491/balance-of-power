@@ -36,7 +36,7 @@
     },
     "map_id": {
       "type": "string",
-      "description": "ID of the map used for this campaign. V1: placeholder until maps are built."
+      "description": "ID of the map used for this campaign."
     },
     "invite_code": {
       "type": "string",
@@ -45,23 +45,52 @@
     "current_round": {
       "type": "number",
       "default": 0,
-      "description": "Current round number. 0 = not yet started."
+      "description": "Current round number. 0 = setup phases."
     },
     "current_phase": {
       "type": "string",
       "enum": [
-        "draft",
+        "faction_selection",
+        "territory_draft",
+        "initial_deploy",
         "deploy",
         "attack",
         "battle",
         "fortify",
         "complete"
       ],
-      "description": "Current active phase within the round."
+      "description": "Current active phase."
     },
     "phase_deadline": {
       "type": "string",
       "description": "ISO timestamp when the current phase ends."
+    },
+    "setup_order": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Randomized CampaignPlayer.id array. Determines faction selection and draft pick order."
+    },
+    "setup_current_index": {
+      "type": "number",
+      "default": 0,
+      "description": "Index into setup_order for whose turn it is in the current sequential setup phase."
+    },
+    "draft_snake_direction": {
+      "type": "string",
+      "enum": [
+        "forward",
+        "backward"
+      ],
+      "default": "forward",
+      "description": "Current snake draft direction."
+    },
+    "draft_picks_remaining": {
+      "type": "number",
+      "default": 0,
+      "description": "Total picks remaining across all players in territory draft."
     },
     "settings": {
       "type": "object",

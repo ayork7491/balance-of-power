@@ -1,18 +1,32 @@
 /**
  * ActiveCampaign — primary gameplay screen.
- * Wires the schema-driven MapRenderer with live TerritoryState,
- * CampaignPlayer data, territory selection, and detail panel.
+ *
+ * Phase routing:
+ *   faction_selection → FactionSelectionPanel (left) + SetupInfoPanel (right)
+ *   territory_draft   → TerritoryDraftPanel (left) + SetupInfoPanel (right)
+ *   initial_deploy    → InitialDeployPanel (left) + SetupInfoPanel (right)
+ *   deploy/attack/… → Placeholder panels (future implementation)
+ *
+ * Map is always visible. Left dock changes based on current phase.
  */
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import CampaignLayout from '@/components/layout/CampaignLayout';
 import MapRenderer from '@/components/map/MapRenderer';
 import TerritoryDetailPanel from '@/components/map/TerritoryDetailPanel';
 import RegionLegend from '@/components/map/RegionLegend';
+
+// Setup phase panels
+import FactionSelectionPanel from '@/components/setup/FactionSelectionPanel';
+import TerritoryDraftPanel from '@/components/setup/TerritoryDraftPanel';
+import InitialDeployPanel from '@/components/setup/InitialDeployPanel';
+import SetupInfoPanel from '@/components/setup/SetupInfoPanel';
+
 import { useCampaign } from '@/features/campaigns';
 import { useTerritoryState, getMap, buildAdjacencyMap } from '@/features/maps';
+import { base44 } from '@/api/base44Client';
 
-// ── Placeholder dock panels (to be replaced in future prompts) ────────────────
+// ── Placeholder panels (for post-setup phases) ────────────────────────────────
 
 function PhasePanelPlaceholder({ campaign }) {
   const phase = campaign?.current_phase ?? 'deploy';
@@ -24,15 +38,12 @@ function PhasePanelPlaceholder({ campaign }) {
           Round {round} — {phase} Phase
         </p>
       </div>
-      <p className="text-xs text-muted-foreground">Phase action panel — deploy, attack, fortify controls will appear here.</p>
+      <p className="text-xs text-muted-foreground">Phase controls will appear here.</p>
       <div className="space-y-2 pt-2">
         <div className="h-8 bg-muted rounded animate-pulse" />
         <div className="h-8 bg-muted rounded animate-pulse" />
         <div className="h-16 bg-muted/50 rounded animate-pulse" />
       </div>
-      <button disabled className="w-full mt-4 px-4 py-2 rounded border border-primary/30 text-primary/40 text-xs font-display tracking-wider uppercase cursor-not-allowed">
-        Lock Decisions
-      </button>
     </div>
   );
 }
@@ -50,7 +61,7 @@ function InfoPanelPlaceholder({ activeTab }) {
       <p className="font-display text-xs tracking-widest uppercase text-muted-foreground mb-2">{info.label}</p>
       <p className="text-xs text-muted-foreground">{info.desc}</p>
       <div className="space-y-2 mt-4">
-        {[1,2,3].map(i => <div key={i} className="h-8 bg-muted/50 rounded animate-pulse" />)}
+        {[1, 2, 3].map(i => <div key={i} className="h-8 bg-muted/50 rounded animate-pulse" />)}
       </div>
     </div>
   );
@@ -58,53 +69,148 @@ function InfoPanelPlaceholder({ activeTab }) {
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
+const SETUP_PHASES = new Set(['faction_selection', 'territory_draft', 'initial_deploy']);
+
 export default function ActiveCampaign() {
   const { id } = useParams();
-  const [activeTab, setActiveTab]  = useState('map');
+  const [activeTab, setActiveTab]   = useState('map');
   const [selectedId, setSelectedId] = useState(null);
+  const [myPlayerId, setMyPlayerId] = useState(null);
+  const [gameProfile, setGameProfile] = useState(null);
 
-  // Campaign + players (real data)
-  const { campaign, players, loading: loadingCampaign } = useCampaign(id);
+  // Campaign + players
+  const { campaign, players, loading: loadingCampaign, reload: reloadCampaign } = useCampaign(id);
 
-  // Territory state (real data, real-time)
+  // Territory state (real-time)
   const mapId = campaign?.map_id ?? 'map_v1_standard';
-  const { stateById, loading: loadingState } = useTerritoryState(id);
+  const { stateById, loading: loadingState, reload: reloadState } = useTerritoryState(id);
 
-  // Static map definition (schema)
+  // Static map definition
   const mapDef = useMemo(() => getMap(mapId), [mapId]);
 
-  // Adjacency map for detail panel
+  // Adjacency map
   const adjacencyMap = useMemo(
     () => mapDef ? buildAdjacencyMap(mapDef) : {},
     [mapDef]
   );
 
+  // Resolve current user's player record
+  useEffect(() => {
+    base44.auth.me().then(u => setMyPlayerId(u?.id));
+  }, []);
+
+  const myPlayer = useMemo(
+    () => myPlayerId ? players.find(p => p.user_id === myPlayerId) ?? null : null,
+    [players, myPlayerId]
+  );
+
+  // Load game profile for faction names
+  useEffect(() => {
+    if (!campaign?.game_profile_id) return;
+    base44.entities.TabletopGameProfile.filter({ id: campaign.game_profile_id })
+      .then(r => setGameProfile(r[0] ?? null))
+      .catch(() => {});
+  }, [campaign?.game_profile_id]);
+
+  // Re-fetch campaign + territory state when a setup action completes
+  const handlePhaseChanged = useCallback(() => {
+    reloadCampaign();
+    reloadState();
+  }, [reloadCampaign, reloadState]);
+
   // Selected territory details
-  const selectedTerritory = useMemo(
+  const selectedTerritory   = useMemo(
     () => mapDef?.territories.find(t => t.territory_id === selectedId) ?? null,
     [mapDef, selectedId]
   );
-  const selectedTState    = selectedId ? (stateById[selectedId] ?? null) : null;
-  const selectedRegion    = selectedTerritory
-    ? (mapDef?.regions.find(r => r.id === selectedTerritory.region_id) ?? null)
-    : null;
-  const selectedContinent = selectedTerritory
-    ? (mapDef?.continents.find(c => c.id === selectedTerritory.continent_id) ?? null)
-    : null;
+  const selectedTState      = selectedId ? (stateById[selectedId] ?? null) : null;
+  const selectedRegion      = selectedTerritory
+    ? (mapDef?.regions.find(r => r.id === selectedTerritory.region_id) ?? null) : null;
+  const selectedContinent   = selectedTerritory
+    ? (mapDef?.continents.find(c => c.id === selectedTerritory.continent_id) ?? null) : null;
   const adjacentTerritories = useMemo(() => {
     if (!selectedId || !mapDef) return [];
     const ids = adjacencyMap[selectedId] ?? new Set();
     return mapDef.territories.filter(t => ids.has(t.territory_id));
   }, [selectedId, mapDef, adjacencyMap]);
 
-  // Fallback campaign data while loading
-  const displayCampaign = campaign ?? { name: 'Loading…', current_round: 0, current_phase: 'deploy', phase_deadline: null };
+  const phase = campaign?.current_phase;
+  const isSetupPhase = SETUP_PHASES.has(phase);
+
+  // ── Panel routing ──────────────────────────────────────────────────────────
+
+  const leftDockContent = useMemo(() => {
+    if (!campaign || !myPlayer) return <PhasePanelPlaceholder campaign={campaign} />;
+
+    if (phase === 'faction_selection') {
+      return (
+        <FactionSelectionPanel
+          campaign={campaign}
+          players={players}
+          myPlayer={myPlayer}
+          gameProfile={gameProfile}
+          onPhaseChanged={handlePhaseChanged}
+        />
+      );
+    }
+
+    if (phase === 'territory_draft') {
+      return (
+        <TerritoryDraftPanel
+          campaign={campaign}
+          players={players}
+          myPlayer={myPlayer}
+          stateById={stateById}
+          mapDef={mapDef}
+          pendingPickId={selectedId}
+          onClearPick={() => setSelectedId(null)}
+          onPhaseChanged={handlePhaseChanged}
+        />
+      );
+    }
+
+    if (phase === 'initial_deploy') {
+      return (
+        <InitialDeployPanel
+          campaign={campaign}
+          players={players}
+          myPlayer={myPlayer}
+          stateById={stateById}
+          mapDef={mapDef}
+          onPhaseChanged={handlePhaseChanged}
+        />
+      );
+    }
+
+    return <PhasePanelPlaceholder campaign={campaign} />;
+  }, [campaign, players, myPlayer, gameProfile, phase, stateById, mapDef, selectedId, handlePhaseChanged]);
+
+  const rightDockContent = useMemo(() => {
+    if (isSetupPhase) {
+      return <SetupInfoPanel campaign={campaign} players={players} />;
+    }
+    return <InfoPanelPlaceholder activeTab={activeTab} />;
+  }, [isSetupPhase, campaign, players, activeTab]);
+
+  const displayCampaign = campaign ?? { name: 'Loading…', current_round: 0, current_phase: 'faction_selection', phase_deadline: null };
+
+  // In territory_draft, highlight unclaimed territories when it's my turn
+  const highlightIds = useMemo(() => {
+    if (phase !== 'territory_draft') return new Set();
+    const setupOrder = campaign?.setup_order ?? [];
+    const idx = campaign?.setup_current_index ?? 0;
+    if (!myPlayer || setupOrder[idx] !== myPlayer.id) return new Set();
+    // Highlight all unclaimed territories
+    if (!mapDef) return new Set();
+    const claimed = new Set(Object.keys(stateById));
+    return new Set(mapDef.territories.map(t => t.territory_id).filter(tid => !claimed.has(tid)));
+  }, [phase, campaign, myPlayer, mapDef, stateById]);
 
   return (
     <CampaignLayout
       campaign={displayCampaign}
-      leftDockContent={<PhasePanelPlaceholder campaign={campaign} />}
-      rightDockContent={<InfoPanelPlaceholder activeTab={activeTab} />}
+      leftDockContent={leftDockContent}
+      rightDockContent={rightDockContent}
       defaultTab={activeTab}
       onTabChange={setActiveTab}
     >
@@ -116,20 +222,24 @@ export default function ActiveCampaign() {
             stateById={stateById}
             players={players}
             selectedId={selectedId}
+            highlightIds={highlightIds}
             onSelect={setSelectedId}
           />
 
           <RegionLegend regions={mapDef.regions} />
 
-          <TerritoryDetailPanel
-            territory={selectedTerritory}
-            tState={selectedTState}
-            players={players}
-            regionDef={selectedRegion}
-            continentDef={selectedContinent}
-            adjacentTerritories={adjacentTerritories}
-            onClose={() => setSelectedId(null)}
-          />
+          {/* Only show territory detail panel outside of draft phase (draft uses left dock) */}
+          {phase !== 'territory_draft' && (
+            <TerritoryDetailPanel
+              territory={selectedTerritory}
+              tState={selectedTState}
+              players={players}
+              regionDef={selectedRegion}
+              continentDef={selectedContinent}
+              adjacentTerritories={adjacentTerritories}
+              onClose={() => setSelectedId(null)}
+            />
+          )}
         </>
       )}
 

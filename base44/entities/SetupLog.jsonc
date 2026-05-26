@@ -1,0 +1,45 @@
+{
+  "name": "SetupLog",
+  "type": "object",
+  "properties": {
+    "campaign_id": {
+      "type": "string",
+      "description": "FK \u2192 Campaign.id"
+    },
+    "phase": {
+      "type": "string",
+      "description": "Which setup phase: 'faction_selection' | 'territory_draft' | 'initial_deploy'"
+    },
+    "round": {
+      "type": "number",
+      "default": 0
+    },
+    "event_type": {
+      "type": "string",
+      "description": "Type of event logged: 'draft_order_set' | 'faction_selected' | 'territory_picked' | 'troop_staged' | 'player_locked' | 'auto_submitted' | 'phase_advanced'"
+    },
+    "player_id": {
+      "type": "string",
+      "description": "CampaignPlayer.id \u2014 null for system events"
+    },
+    "payload": {
+      "type": "object",
+      "description": "Event-specific data (territory_id, faction, troop amounts, etc.)",
+      "default": {}
+    },
+    "is_public": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether this log entry is visible to all players"
+    },
+    "visibility_revealed_at": {
+      "type": "string",
+      "description": "ISO timestamp when hidden entry becomes visible"
+    }
+  },
+  "required": [
+    "campaign_id",
+    "phase",
+    "event_type"
+  ]
+}

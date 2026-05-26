@@ -29,8 +29,10 @@ export interface PhaseColorConfig {
   text: string;
 }
 
-export const PHASE_COLORS: Record<CampaignPhase, PhaseColorConfig> = {
-  draft:    { label: 'Draft',    color: '#7c3aed', bg: 'bg-violet-900/30', border: 'border-violet-600/40', text: 'text-violet-300' },
+export const PHASE_COLORS: Partial<Record<CampaignPhase, PhaseColorConfig>> = {
+  faction_selection: { label: 'Faction Select', color: '#7c3aed', bg: 'bg-violet-900/30', border: 'border-violet-600/40', text: 'text-violet-300' },
+  territory_draft:   { label: 'Territory Draft', color: '#7c3aed', bg: 'bg-violet-900/30', border: 'border-violet-600/40', text: 'text-violet-300' },
+  initial_deploy:    { label: 'Initial Deploy',  color: '#ca8a04', bg: 'bg-yellow-900/30', border: 'border-yellow-600/40', text: 'text-yellow-300' },
   deploy:   { label: 'Deploy',   color: '#ca8a04', bg: 'bg-yellow-900/30', border: 'border-yellow-600/40', text: 'text-yellow-300' },
   attack:   { label: 'Attack',   color: '#dc2626', bg: 'bg-red-900/30',    border: 'border-red-600/40',    text: 'text-red-300'    },
   battle:   { label: 'Battle',   color: '#ea580c', bg: 'bg-orange-900/30', border: 'border-orange-600/40', text: 'text-orange-300' },

@@ -1,0 +1,46 @@
+{
+  "name": "PhaseDecision",
+  "type": "object",
+  "properties": {
+    "campaign_id": {
+      "type": "string",
+      "description": "FK \u2192 Campaign.id"
+    },
+    "player_id": {
+      "type": "string",
+      "description": "FK \u2192 CampaignPlayer.id"
+    },
+    "phase": {
+      "type": "string",
+      "description": "Campaign phase this decision belongs to: 'faction_selection' | 'territory_draft' | 'initial_deploy' | 'deploy' | 'attack' | 'fortify'"
+    },
+    "round": {
+      "type": "number",
+      "default": 0
+    },
+    "is_locked": {
+      "type": "boolean",
+      "default": false,
+      "description": "Player has submitted/locked their decisions for this phase."
+    },
+    "is_auto_submitted": {
+      "type": "boolean",
+      "default": false
+    },
+    "data": {
+      "type": "object",
+      "description": "Phase-specific staged decision data. For initial_deploy: { placements: { [territory_id]: number }, troops_remaining: number }",
+      "default": {}
+    },
+    "locked_at": {
+      "type": "string",
+      "description": "ISO timestamp when player locked."
+    }
+  },
+  "required": [
+    "campaign_id",
+    "player_id",
+    "phase",
+    "round"
+  ]
+}

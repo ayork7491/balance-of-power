@@ -13,7 +13,15 @@
 // ─── Status / Phase Enums ─────────────────────────────────────────────────────
 
 export type CampaignStatus = 'lobby' | 'active' | 'paused' | 'complete' | 'archived';
-export type CampaignPhase = 'draft' | 'deploy' | 'attack' | 'battle' | 'fortify' | 'complete';
+export type CampaignPhase =
+  | 'faction_selection'
+  | 'territory_draft'
+  | 'initial_deploy'
+  | 'deploy'
+  | 'attack'
+  | 'battle'
+  | 'fortify'
+  | 'complete';
 export type PhaseSchedule = 'weekly' | 'monthly' | 'manual';
 export type VictoryCondition = 'domination' | 'score';
 export type InviteType = 'invite' | 'join_request';

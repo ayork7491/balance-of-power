@@ -33,7 +33,7 @@ import CreateEditProfile from './pages/CreateEditProfile';
 import CreateCampaign    from './pages/CreateCampaign';
 import JoinCampaign      from './pages/JoinCampaign';
 import CampaignLobby     from './pages/CampaignLobby';
-import ActiveCampaign    from './pages/ActiveCampaign';
+import ActiveCampaign    from './pages/ActiveCampaign.jsx';
 import BattleCardDetail  from './pages/BattleCardDetail';
 import BattleResultEntry from './pages/BattleResultEntry';
 import HistoryDetail     from './pages/HistoryDetail';
