@@ -97,17 +97,20 @@ export default function FortifyInfoPanel({ campaign, players }) {
         </div>
       </div>
 
-      {/* Active Construction Projects */}
+      {/* Active Construction Projects (PUBLIC ONLY - after reveal) */}
       <div className="space-y-2">
         <p className="text-xs font-display tracking-wider uppercase text-muted-foreground">
-          Active Projects
+          Construction Projects
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Projects are private during fortify phase. Completed structures appear here after phase reveal.
         </p>
         {isLoading ? (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Loader2 className="w-3 h-3 animate-spin" /> Loading...
           </div>
         ) : projects.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No active construction projects</p>
+          <p className="text-xs text-muted-foreground">No public construction projects</p>
         ) : (
           <div className="space-y-1.5">
             {projects.map(project => {
@@ -120,7 +123,7 @@ export default function FortifyInfoPanel({ campaign, players }) {
                     <p className="text-xs text-muted-foreground">{progress}%</p>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    {player?.display_name ?? 'Unknown'} in territory {project.territory_id}
+                    {player?.display_name ?? 'Unknown'} • Round {project.round_started}
                   </p>
                   <div className="mt-1 h-1.5 rounded-full bg-border overflow-hidden">
                     <div 

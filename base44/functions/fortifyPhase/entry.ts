@@ -101,25 +101,34 @@ function areAdjacent(a, b, adj) {
   return adj[a]?.has(b) ?? false;
 }
 
-// BFS to find shortest path distance
-function findShortestDistance(startId, endId, adj) {
-  if (startId === endId) return 0;
+// BFS to find shortest path and return both distance and path
+function findPath(startId, endId, adj, ownedTerritories) {
+  if (startId === endId) return { distance: 0, path: [startId] };
+  
   const visited = new Set([startId]);
-  const queue = [[startId, 0]];
+  const queue = [[startId, [startId]]];
   
   while (queue.length > 0) {
-    const [current, dist] = queue.shift();
+    const [current, path] = queue.shift();
     const neighbors = adj[current] || new Set();
     
     for (const neighbor of neighbors) {
-      if (neighbor === endId) return dist + 1;
       if (!visited.has(neighbor)) {
+        // V1 RULE: Path must travel only through owned territories
+        if (!ownedTerritories.has(neighbor)) {
+          continue;
+        }
+        
+        const newPath = [...path, neighbor];
+        if (neighbor === endId) {
+          return { distance: newPath.length - 1, path: newPath };
+        }
         visited.add(neighbor);
-        queue.push([neighbor, dist + 1]);
+        queue.push([neighbor, newPath]);
       }
     }
   }
-  return Infinity; // No path found
+  return { distance: Infinity, path: [] }; // No valid path found
 }
 
 // ─── Inline: Log helper ───────────────────────────────────────────────────────
@@ -228,11 +237,24 @@ Deno.serve(async (req) => {
       return Response.json({ error: `You do not own ${destination_territory_id}` }, { status: 400 });
     }
 
-    // Validate adjacency/distance
+    // Validate adjacency/distance with path finding
     const adj = buildAdjacency();
-    const distance = findShortestDistance(origin_territory_id, destination_territory_id, adj);
-    if (distance > maxDistance) {
-      return Response.json({ error: `Distance ${distance} exceeds maximum ${maxDistance}` }, { status: 400 });
+    
+    // Get all territories owned by player for path validation
+    const ownedTerritoryIds = new Set(
+      allStates.filter(s => s.owner_player_id === myPlayer.id).map(s => s.territory_id)
+    );
+    
+    const pathResult = findPath(origin_territory_id, destination_territory_id, adj, ownedTerritoryIds);
+    if (pathResult.distance > maxDistance) {
+      return Response.json({ 
+        error: `Distance ${pathResult.distance} exceeds maximum ${maxDistance}. Path must travel through owned territories only.`,
+      }, { status: 400 });
+    }
+    if (pathResult.path.length === 0) {
+      return Response.json({ 
+        error: `No valid path found. Fortification must travel through territories you own.`,
+      }, { status: 400 });
     }
 
     // Load own decision
@@ -260,7 +282,7 @@ Deno.serve(async (req) => {
       }, { status: 400 });
     }
 
-    // Upsert movement
+    // Upsert movement with path storage
     const existingIdx = currentMovements.findIndex(
       m => m.origin_territory_id === origin_territory_id && m.destination_territory_id === destination_territory_id
     );
@@ -269,6 +291,7 @@ Deno.serve(async (req) => {
       origin_territory_id,
       destination_territory_id,
       committed_troops,
+      path_territory_ids: pathResult.path, // Store actual path for revealed arrows
     };
     const updatedMovements = existingIdx >= 0
       ? currentMovements.map((m, i) => i === existingIdx ? newMovement : m)
@@ -340,14 +363,6 @@ Deno.serve(async (req) => {
       return Response.json({ error: `Territory ${territory_id} already has a structure` }, { status: 400 });
     }
 
-    // Check for active construction project
-    const existingProjects = await base44.asServiceRole.entities.ConstructionProject.filter({
-      campaign_id, player_id: myPlayer.id, status: 'in_progress',
-    });
-    if (existingProjects.length > 0) {
-      return Response.json({ error: 'You already have an active construction project' }, { status: 400 });
-    }
-
     // Load own decision
     const decisions = await base44.entities.PhaseDecision.filter({
       campaign_id, player_id: myPlayer.id, phase: 'fortify', round,
@@ -359,46 +374,20 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Construction project already started this phase' }, { status: 400 });
     }
 
-    // Check resource availability
-    const incomeRecords = await base44.asServiceRole.entities.DeployIncome.filter({
-      campaign_id, player_id: myPlayer.id, round,
-    });
-    const income = incomeRecords[0];
-    const config = STRUCTURE_CONFIG[structure_type];
+    // Check resource availability (V1: use persistent resource inventory)
+    // For V1, we'll validate resources at phase reveal, not at staging time
+    // This allows players to stage construction privately without revealing resources
     
-    // For V1, check if player has resources from this round
-    // (Simplified: assume resources are tracked in income.resources_generated)
-    const resourcesGenerated = income?.resources_generated ?? {};
-    const canAfford = Object.entries(config.cost).every(([res, amount]) => {
-      if (amount === 0) return true;
-      return (resourcesGenerated[res] ?? 0) >= amount;
-    });
-
-    if (!canAfford) {
-      return Response.json({ 
-        error: 'Insufficient resources for this structure',
-        required: config.cost,
-        available: resourcesGenerated,
-      }, { status: 400 });
-    }
-
-    // Create construction project
-    const project = await base44.asServiceRole.entities.ConstructionProject.create({
-      campaign_id,
-      round_started: round,
-      player_id: myPlayer.id,
-      territory_id,
-      structure_type,
-      total_cost: config.cost,
-      resources_paid: config.cost, // V1: pay upfront
-      rounds_required: config.rounds,
-      rounds_completed: 0,
-      status: 'in_progress',
-    });
-
-    // Update decision
+    // Store construction choice privately in PhaseDecision (no ConstructionProject yet)
     await base44.entities.PhaseDecision.update(decision.id, {
-      data: { movements: decision.data?.movements ?? [], construction: { project_id: project.id } },
+      data: { 
+        movements: decision.data?.movements ?? [], 
+        construction: { 
+          territory_id, 
+          structure_type,
+          staged_at: new Date().toISOString(),
+        },
+      },
     });
 
     await log(base44, campaign_id, round, phase, 'construction_started', myPlayer.id, {
@@ -406,7 +395,7 @@ Deno.serve(async (req) => {
       territory_id,
     }, false);
 
-    return Response.json({ success: true, project_id: project.id });
+    return Response.json({ success: true, construction_staged: true });
   }
 
   // ── ACTION: lockFortify ───────────────────────────────────────────────────────
@@ -451,6 +440,20 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Not in fortify phase' }, { status: 400 });
     }
 
+    // DUPLICATE PHASE-END PROTECTION: Check if already processed
+    const existingSnapshot = await base44.asServiceRole.entities.PhaseSnapshot.filter({
+      campaign_id,
+      round,
+      phase: 'fortify',
+      snapshot_type: 'phase_end',
+    });
+    if (existingSnapshot.length > 0) {
+      return Response.json({ 
+        error: 'Fortify phase already processed for this round',
+        already_processed: true,
+      }, { status: 400 });
+    }
+
     const activePlayers = players.filter(p => !p.is_eliminated);
     const allDecisions = await base44.asServiceRole.entities.PhaseDecision.filter({
       campaign_id, phase: 'fortify', round,
@@ -483,7 +486,6 @@ Deno.serve(async (req) => {
     });
 
     // REVEAL: Apply all troop movements
-    const allTerritoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
     const troopChanges = {}; // territory_id -> net change
 
     for (const dec of finalDecisions) {
@@ -497,6 +499,7 @@ Deno.serve(async (req) => {
     }
 
     // Apply troop changes
+    const allTerritoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
     for (const [tid, change] of Object.entries(troopChanges)) {
       if (change === 0) continue;
       const existing = allTerritoryStates.find(s => s.territory_id === tid);
@@ -507,7 +510,74 @@ Deno.serve(async (req) => {
       }
     }
 
-    // REVEAL: Complete construction projects
+    // REVEAL: Process staged construction choices and create ConstructionProjects
+    const constructionsToCreate = [];
+    
+    for (const dec of finalDecisions) {
+      const construction = dec.data?.construction;
+      if (!construction || !construction.territory_id || !construction.structure_type) continue;
+      
+      // Validate resources at reveal time (V1: check current round income)
+      const incomeRecords = await base44.asServiceRole.entities.DeployIncome.filter({
+        campaign_id, player_id: dec.player_id, round,
+      });
+      const income = incomeRecords[0];
+      const config = STRUCTURE_CONFIG[construction.structure_type];
+      const resourcesGenerated = income?.resources_generated ?? {};
+      
+      const canAfford = Object.entries(config.cost).every(([res, amount]) => {
+        if (amount === 0) return true;
+        return (resourcesGenerated[res] ?? 0) >= amount;
+      });
+      
+      if (!canAfford) {
+        // Skip construction if insufficient resources (log for admin)
+        await log(base44, campaign_id, round, phase, 'construction_failed', dec.player_id, {
+          structure_type: construction.structure_type,
+          territory_id: construction.territory_id,
+          reason: 'insufficient_resources',
+        }, false);
+        continue;
+      }
+      
+      // Deduct resources exactly once
+      const updatedResources = { ...resourcesGenerated };
+      Object.entries(config.cost).forEach(([res, amount]) => {
+        if (amount > 0) {
+          updatedResources[res] = (updatedResources[res] ?? 0) - amount;
+        }
+      });
+      
+      // Update DeployIncome with deducted resources
+      if (income) {
+        await base44.asServiceRole.entities.DeployIncome.update(income.id, {
+          resources_generated: updatedResources,
+        });
+      }
+      
+      // Create ConstructionProject (now visible to all)
+      const project = await base44.asServiceRole.entities.ConstructionProject.create({
+        campaign_id,
+        round_started: round,
+        player_id: dec.player_id,
+        territory_id: construction.territory_id,
+        structure_type: construction.structure_type,
+        total_cost: config.cost,
+        resources_paid: config.cost,
+        rounds_required: config.rounds,
+        rounds_completed: 0,
+        status: 'in_progress',
+      });
+      
+      constructionsToCreate.push(project);
+      
+      await log(base44, campaign_id, round, phase, 'construction_revealed', dec.player_id, {
+        structure_type: construction.structure_type,
+        territory_id: construction.territory_id,
+      }, false);
+    }
+    
+    // Process existing and new construction projects
     const allProjects = await base44.asServiceRole.entities.ConstructionProject.filter({
       campaign_id, status: 'in_progress',
     });
@@ -518,9 +588,7 @@ Deno.serve(async (req) => {
 
       if (isComplete) {
         // Add structure to territory
-        const territoryStates = await base44.asServiceRole.entities.TerritoryState.filter({
-          campaign_id, territory_id: project.territory_id,
-        });
+        const territoryStates = allTerritoryStates.filter(ts => ts.territory_id === project.territory_id);
         const ts = territoryStates[0];
         if (ts) {
           const structures = ts.structures ?? [];

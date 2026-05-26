@@ -1,5 +1,6 @@
 /**
  * MovementSelector — UI for selecting origin, destination, and troop count.
+ * Allows explicit destination selection (not automatic).
  */
 import { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
@@ -11,6 +12,7 @@ export default function MovementSelector({
   selectedTerritoryId, maxDistance, existingMovements, onStageMovement, onClearSelection 
 }) {
   const [troopCount, setTroopCount] = useState('');
+  const [selectedDestination, setSelectedDestination] = useState(null);
 
   // Find valid destinations from selected territory
   const validDestinations = useMemo(() => {
@@ -60,9 +62,10 @@ export default function MovementSelector({
   }, [selectedTerritoryId, stateById, existingMovements]);
 
   const handleStage = () => {
-    if (!selectedTerritoryId || validDestinations.length === 0 || !troopCount) return;
-    onStageMovement(selectedTerritoryId, validDestinations[0], parseInt(troopCount));
+    if (!selectedTerritoryId || !selectedDestination || !troopCount) return;
+    onStageMovement(selectedTerritoryId, selectedDestination, parseInt(troopCount));
     setTroopCount('');
+    setSelectedDestination(null);
     onClearSelection();
   };
 
@@ -90,21 +93,25 @@ export default function MovementSelector({
       ) : (
         <div className="space-y-2">
           <div className="space-y-1">
-            <p className="text-xs text-muted-foreground">To:</p>
-            <div className="flex flex-wrap gap-1">
-              {validDestinations.slice(0, 6).map(tid => {
+            <p className="text-xs text-muted-foreground">Select destination:</p>
+            <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto">
+              {validDestinations.map(tid => {
                 const name = mapDef?.territories.find(t => t.territory_id === tid)?.name ?? tid;
+                const isSelected = selectedDestination === tid;
                 return (
-                  <span key={tid} className="px-2 py-1 rounded bg-primary/10 text-primary text-xs border border-primary/20">
+                  <button
+                    key={tid}
+                    onClick={() => setSelectedDestination(tid)}
+                    className={`px-2 py-1 rounded text-xs border transition-colors ${
+                      isSelected 
+                        ? 'bg-primary/20 text-primary border-primary/40' 
+                        : 'bg-muted/20 text-muted-foreground border-border hover:bg-muted/30'
+                    }`}
+                  >
                     {name}
-                  </span>
+                  </button>
                 );
               })}
-              {validDestinations.length > 6 && (
-                <span className="px-2 py-1 text-xs text-muted-foreground">
-                  +{validDestinations.length - 6} more
-                </span>
-              )}
             </div>
           </div>
 
@@ -123,7 +130,7 @@ export default function MovementSelector({
 
           <Button
             onClick={handleStage}
-            disabled={!troopCount || parseInt(troopCount) < 1 || parseInt(troopCount) > availableTroops}
+            disabled={!troopCount || !selectedDestination || parseInt(troopCount) < 1 || parseInt(troopCount) > availableTroops}
             className="w-full h-8 text-xs"
           >
             Stage Movement

@@ -1,5 +1,6 @@
 /**
  * useFortifyLockStatus — hook for fetching fortify phase lock status for all players.
+ * Uses safe getFortifyLockStatus endpoint that does NOT expose private movements/construction.
  */
 import { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
@@ -19,19 +20,11 @@ export function useFortifyLockStatus({ campaign }) {
       setIsLoading(true);
       setError(null);
       try {
-        const decisions = await base44.asServiceRole.entities.PhaseDecision.filter({
+        const res = await base44.functions.invoke('getFortifyLockStatus', {
           campaign_id: campaign.id,
-          phase: 'fortify',
           round: campaign.current_round ?? 1,
         });
-
-        const lockStatus = decisions.map(d => ({
-          player_id: d.player_id,
-          is_locked: d.is_locked ?? false,
-          locked_at: d.locked_at,
-        }));
-
-        setAllLockStatus(lockStatus);
+        setAllLockStatus(res.data.lock_status ?? []);
       } catch (err) {
         setError(err.message);
       } finally {
