@@ -6,7 +6,7 @@
  */
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronLeft, ChevronRight, PanelRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Menu } from 'lucide-react';
 
 export default function RightDock({ children, defaultCollapsed = false }) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
@@ -64,7 +64,7 @@ export default function RightDock({ children, defaultCollapsed = false }) {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
         >
-          <PanelRight className="w-5 h-5 text-muted-foreground/50" />
+          <Menu className="w-5 h-5 text-muted-foreground/50" />
         </motion.div>
       )}
     </motion.div>
