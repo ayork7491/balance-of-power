@@ -1,47 +1,77 @@
 import { Toaster } from "@/components/ui/toaster"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
-import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
+import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
-// Add page imports here
+import LoadingScreen from '@/components/ui/LoadingScreen';
+
+// Page imports
+import Home from './pages/Home';
+import Settings from './pages/Settings';
+import TabletopProfiles from './pages/TabletopProfiles';
+import CreateEditProfile from './pages/CreateEditProfile';
+import CreateCampaign from './pages/CreateCampaign';
+import JoinCampaign from './pages/JoinCampaign';
+import CampaignLobby from './pages/CampaignLobby';
+import ActiveCampaign from './pages/ActiveCampaign';
+import BattleCardDetail from './pages/BattleCardDetail';
+import BattleResultEntry from './pages/BattleResultEntry';
+import HistoryDetail from './pages/HistoryDetail';
+import AdminTestMode from './pages/AdminTestMode';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
 
-  // Show loading spinner while checking app public settings or auth
   if (isLoadingPublicSettings || isLoadingAuth) {
-    return (
-      <div className="fixed inset-0 flex items-center justify-center">
-        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
-      </div>
-    );
+    return <LoadingScreen message="Loading Balance of Power..." />;
   }
 
-  // Handle authentication errors
   if (authError) {
     if (authError.type === 'user_not_registered') {
       return <UserNotRegisteredError />;
     } else if (authError.type === 'auth_required') {
-      // Redirect to login automatically
       navigateToLogin();
       return null;
     }
   }
 
-  // Render the main app
   return (
     <Routes>
-      {/* Add your page Route elements here */}
+      {/* Home */}
+      <Route path="/" element={<Home />} />
+
+      {/* Settings */}
+      <Route path="/settings" element={<Settings />} />
+
+      {/* Tabletop Game Profiles */}
+      <Route path="/profiles" element={<TabletopProfiles />} />
+      <Route path="/profiles/create" element={<CreateEditProfile />} />
+      <Route path="/profiles/:id/edit" element={<CreateEditProfile />} />
+
+      {/* Campaigns */}
+      <Route path="/campaigns/create" element={<CreateCampaign />} />
+      <Route path="/campaigns/join" element={<JoinCampaign />} />
+      <Route path="/campaigns/:id/lobby" element={<CampaignLobby />} />
+      <Route path="/campaigns/:id" element={<ActiveCampaign />} />
+
+      {/* Battle cards */}
+      <Route path="/campaigns/:id/battles/:battleId" element={<BattleCardDetail />} />
+      <Route path="/campaigns/:id/battles/:battleId/result" element={<BattleResultEntry />} />
+
+      {/* History */}
+      <Route path="/campaigns/:id/history" element={<HistoryDetail />} />
+
+      {/* Admin tools */}
+      <Route path="/campaigns/:id/admin" element={<AdminTestMode />} />
+
       <Route path="*" element={<PageNotFound />} />
     </Routes>
   );
 };
 
-
 function App() {
-
   return (
     <AuthProvider>
       <QueryClientProvider client={queryClientInstance}>
@@ -51,7 +81,7 @@ function App() {
         <Toaster />
       </QueryClientProvider>
     </AuthProvider>
-  )
+  );
 }
 
-export default App
+export default App;
