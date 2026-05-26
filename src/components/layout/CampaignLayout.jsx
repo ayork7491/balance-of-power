@@ -21,6 +21,9 @@ export default function CampaignLayout({
   players = [],
   currentPerspective = null,
   onPerspectiveChange = null,
+  actingAsPlayerId = null,
+  onActingAsChange = null,
+  availableActingAsPlayers = [],
   leftDockContent = null,
   rightDockContent = null,
   children, // map center
@@ -68,12 +71,15 @@ export default function CampaignLayout({
       >
         {/* Top bar */}
         <TopBar 
-          campaign={campaign} 
-          isTestMode={isTestMode}
-          players={players}
-          currentPerspective={currentPerspective}
-          onPerspectiveChange={onPerspectiveChange}
-        />
+            campaign={campaign} 
+            isTestMode={isTestMode}
+            players={players}
+            currentPerspective={currentPerspective}
+            onPerspectiveChange={onPerspectiveChange}
+            actingAsPlayerId={actingAsPlayerId}
+            onActingAsChange={onActingAsChange}
+            availableActingAsPlayers={availableActingAsPlayers}
+          />
 
         {/* Main row */}
         <div className="flex flex-1 overflow-hidden">

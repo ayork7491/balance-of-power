@@ -5,12 +5,21 @@
  */
 import { Link, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Shield, Lock, FlaskConical, Settings, Eye, User } from 'lucide-react';
+import { Shield, Lock, FlaskConical, Settings, Eye, User, TestTube } from 'lucide-react';
 import PhaseTag from '@/components/ui/PhaseTag';
 import CountdownTimer from '@/components/ui/CountdownTimer';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
-export default function TopBar({ campaign = null, isTestMode = false, players = [], currentPerspective = null, onPerspectiveChange = null }) {
+export default function TopBar({ 
+  campaign = null, 
+  isTestMode = false, 
+  players = [], 
+  currentPerspective = null, 
+  onPerspectiveChange = null,
+  actingAsPlayerId = null,
+  onActingAsChange = null,
+  availableActingAsPlayers = [],
+}) {
   const { id } = useParams();
   const isAdmin = campaign?.admin_user_id; // Will be passed from parent if admin
   return (
@@ -105,9 +114,10 @@ export default function TopBar({ campaign = null, isTestMode = false, players = 
         </motion.span>
       )}
 
-      {/* Perspective selector (admin/test mode only) */}
+      {/* Admin Test Mode controls (Viewing As + Acting As) */}
       {isTestMode && campaign?.id && players?.length > 0 && (
         <div className="flex items-center gap-2 shrink-0">
+          {/* Viewing As selector */}
           <div className="flex items-center gap-1.5 bg-muted/10 border border-border px-2 py-1 rounded">
             <Eye className="w-3.5 h-3.5 text-muted-foreground" />
             <span className="text-[10px] text-muted-foreground uppercase tracking-wider hidden sm:inline">Viewing As</span>
@@ -125,6 +135,34 @@ export default function TopBar({ campaign = null, isTestMode = false, players = 
                   </span>
                 </SelectItem>
                 {players.map((player) => (
+                  <SelectItem key={player.id} value={player.id}>
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: player.color ? `hsl(var(--${player.color}))` : '#888' }} />
+                      {player.display_name} {player.is_test_player && '(Test)'}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          
+          {/* Acting As selector (action delegation) */}
+          <div className="flex items-center gap-1.5 bg-status-pending/10 border border-status-pending/40 px-2 py-1 rounded">
+            <TestTube className="w-3.5 h-3.5 text-status-pending" />
+            <span className="text-[10px] text-status-pending uppercase tracking-wider hidden sm:inline">Acting As</span>
+            <Select value={actingAsPlayerId || 'admin'} onValueChange={(val) => {
+              onActingAsChange?.(val === 'admin' ? null : val);
+            }}>
+              <SelectTrigger className="h-7 text-xs w-32 sm:w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="admin">
+                  <span className="flex items-center gap-1.5">
+                    <User className="w-3 h-3" /> My Player
+                  </span>
+                </SelectItem>
+                {availableActingAsPlayers.map((player) => (
                   <SelectItem key={player.id} value={player.id}>
                     <span className="flex items-center gap-1.5">
                       <span className="w-2 h-2 rounded-full" style={{ backgroundColor: player.color ? `hsl(var(--${player.color}))` : '#888' }} />

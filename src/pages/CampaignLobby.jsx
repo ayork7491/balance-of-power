@@ -4,7 +4,7 @@
  */
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Shield, Users, Play, Loader2, AlertTriangle, RefreshCw, Settings, Bell, Check, X, Trash2, FlaskConical, Eye, User, Link as LinkIcon } from 'lucide-react';
+import { Shield, Users, Play, Loader2, AlertTriangle, RefreshCw, Settings, Bell, Check, X, Trash2, FlaskConical, Eye, User, Link as LinkIcon, TestTube } from 'lucide-react';
 import AppShell from '@/components/layout/AppShell';
 import EmptyState from '@/components/ui/EmptyState';
 import PlayerSlot from '@/components/campaigns/lobby/PlayerSlot';
@@ -26,6 +26,7 @@ export default function CampaignLobby() {
   const [starting, setStarting]     = useState(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [currentPerspective, setCurrentPerspective] = useState(null); // For admin test mode in lobby
+  const [actingAsPlayerId, setActingAsPlayerId] = useState(null); // Action delegation in lobby
 
   useEffect(() => {
     base44.auth.me().then(u => setUserId(u?.id));
@@ -72,6 +73,14 @@ export default function CampaignLobby() {
   const canStart = isAdmin && players.length >= 2 && players.every(p => p.is_ready);
   const hasTestPlayers = players?.some(p => p.is_test_player) === true;
   const showPerspectiveSelector = isAdmin && (campaign?.status === 'lobby' || hasTestPlayers);
+  
+  // Acting As available for: test campaigns, test players, or admin override
+  const isTestCampaign = campaign?.name.toLowerCase().includes('test');
+  const availableActingAsPlayers = players.filter(p => 
+    p.user_id === userId || // Own player
+    p.is_test_player || // Test players
+    isTestCampaign // All players in test campaign
+  );
 
   const handleToggleReady = async () => {
     if (!myPlayer) return;
@@ -116,9 +125,10 @@ export default function CampaignLobby() {
         <span className="font-display text-sm font-semibold tracking-wide text-foreground truncate">{campaign.name}</span>
         <div className="flex-1" />
         
-        {/* Perspective selector for admin in lobby */}
+        {/* Admin Test Mode controls (Viewing As + Acting As) */}
         {showPerspectiveSelector && players.length > 0 && (
           <div className="flex items-center gap-2 shrink-0">
+            {/* Viewing As selector */}
             <div className="flex items-center gap-1.5 bg-muted/10 border border-border px-2 py-1 rounded">
               <Eye className="w-3.5 h-3.5 text-muted-foreground" />
               <span className="text-[10px] text-muted-foreground uppercase tracking-wider hidden sm:inline">Viewing As</span>
@@ -136,6 +146,34 @@ export default function CampaignLobby() {
                     </span>
                   </SelectItem>
                   {players.map((player) => (
+                    <SelectItem key={player.id} value={player.id}>
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: player.color ? `hsl(var(--${player.color}))` : '#888' }} />
+                        {player.display_name} {player.is_test_player && ' (Test)'}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            
+            {/* Acting As selector (action delegation) */}
+            <div className="flex items-center gap-1.5 bg-status-pending/10 border border-status-pending/40 px-2 py-1 rounded">
+              <TestTube className="w-3.5 h-3.5 text-status-pending" />
+              <span className="text-[10px] text-status-pending uppercase tracking-wider hidden sm:inline">Acting As</span>
+              <Select value={actingAsPlayerId || 'admin'} onValueChange={(val) => {
+                setActingAsPlayerId(val === 'admin' ? null : val);
+              }}>
+                <SelectTrigger className="h-7 text-xs w-32 sm:w-40">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="admin">
+                    <span className="flex items-center gap-1.5">
+                      <User className="w-3 h-3" /> My Player
+                    </span>
+                  </SelectItem>
+                  {availableActingAsPlayers.map((player) => (
                     <SelectItem key={player.id} value={player.id}>
                       <span className="flex items-center gap-1.5">
                         <span className="w-2 h-2 rounded-full" style={{ backgroundColor: player.color ? `hsl(var(--${player.color}))` : '#888' }} />

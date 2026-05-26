@@ -26,12 +26,14 @@ export default function TerritoryDraftPanel({
   campaign,
   players,
   myPlayer,
+  actionPlayer, // Player to submit actions for (acting-as)
   stateById,
   mapDef,
   pendingPickId,   // territory_id the user clicked on the map (from ActiveCampaign)
   onClearPick,     // clear the map selection after pick
   onPhaseChanged,
   currentPerspective, // simulated perspective from admin mode
+  actingAsPlayerId,
 }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -41,7 +43,7 @@ export default function TerritoryDraftPanel({
   const currentIdx = campaign?.setup_current_index ?? 0;
   const currentPickerId = setupOrder[currentIdx];
   const activePlayer = currentPerspective || myPlayer; // Use simulated perspective if set
-  const isMyTurn = currentPickerId === activePlayer?.id;
+  const isMyTurn = currentPickerId === actionPlayer?.id; // Check if it's acting-as player's turn
   const picksRemaining = campaign?.draft_picks_remaining ?? 0;
 
   // Territory counts per player
@@ -61,11 +63,11 @@ export default function TerritoryDraftPanel({
   
   // Debug info for draft state
   const isInDraftPhase = campaign?.current_phase === 'territory_draft';
-  const canClaim = isMyTurn && pendingPickId && !pendingClaimed && activePlayer && isInDraftPhase;
-  const claimBlockedReason = !activePlayer
-    ? 'No player perspective selected'
+  const canClaim = isMyTurn && pendingPickId && !pendingClaimed && actionPlayer && isInDraftPhase;
+  const claimBlockedReason = !actionPlayer
+    ? 'No acting-as player selected'
     : !isMyTurn
-      ? 'Not your turn'
+      ? `Not ${actionPlayer?.display_name ?? 'player'}'s turn`
       : !pendingPickId
         ? 'No territory selected'
         : pendingClaimed
@@ -231,12 +233,22 @@ export default function TerritoryDraftPanel({
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground">Current Picker:</span>
             <span className="text-foreground">{players.find(p => p.id === currentPickerId)?.display_name ?? 'Unknown'}</span>
-            {isMyTurn && <span className="text-status-locked">✓ Your turn</span>}
+            {isMyTurn && <span className="text-status-locked">✓ Active</span>}
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-muted-foreground">Perspective:</span>
+            <span className="text-muted-foreground">Authenticated User:</span>
+            <span className="text-foreground">{myPlayer?.display_name ?? 'Unknown'}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Viewing As:</span>
             <span className="text-foreground">
               {currentPerspective ? `${currentPerspective.display_name}${currentPerspective.is_test_player ? ' (Test)' : ''}` : 'Admin / My View'}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Acting As:</span>
+            <span className="text-foreground">
+              {actionPlayer ? `${actionPlayer.display_name}${actionPlayer.is_test_player ? ' (Test)' : ''}` : 'My Player'}
             </span>
           </div>
           <div className="flex items-center gap-2">

@@ -28,6 +28,7 @@ export default function PhasePanelRouter({
   campaign,
   players,
   myPlayer,
+  actionPlayer,
   gameProfile,
   stateById,
   mapDef,
@@ -36,6 +37,7 @@ export default function PhasePanelRouter({
   onClearSelection,
   onPhaseChanged,
   currentPerspective,
+  actingAsPlayerId,
 }) {
   return useMemo(() => {
     if (!campaign || !myPlayer) {
@@ -62,12 +64,14 @@ export default function PhasePanelRouter({
           campaign={campaign}
           players={players}
           myPlayer={myPlayer}
+          actionPlayer={actionPlayer}
           stateById={stateById}
           mapDef={mapDef}
           pendingPickId={selectedTerritoryId}
           onClearPick={onClearSelection}
           onPhaseChanged={onPhaseChanged}
           currentPerspective={currentPerspective}
+          actingAsPlayerId={actingAsPlayerId}
         />
       );
     }

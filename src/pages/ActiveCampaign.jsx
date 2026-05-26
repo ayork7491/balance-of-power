@@ -21,6 +21,7 @@ import { useAttackReveals, useAttackPhase } from '@/features/campaigns/attack';
 import { useAttackArrows } from '@/features/campaigns/attack/useAttackArrows.js';
 import { useCampaign } from '@/features/campaigns';
 import { useTerritoryState, getMap, buildAdjacencyMap } from '@/features/maps';
+import { useActingAs } from '@/features/adminTestMode/useActingAs';
 import { base44 } from '@/api/base44Client';
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
@@ -32,9 +33,17 @@ export default function ActiveCampaign() {
   const [myPlayerId, setMyPlayerId]   = useState(null);
   const [gameProfile, setGameProfile] = useState(null);
   const [currentPerspective, setCurrentPerspective] = useState(null); // null = admin view
+  const [actingAsPlayerId, setActingAsPlayerId] = useState(null); // Action delegation
 
   // Campaign + players
   const { campaign, players, loading: loadingCampaign, reload: reloadCampaign } = useCampaign(id);
+
+  // Acting As hook (admin test mode action delegation)
+  const { 
+    actingAsPlayer, 
+    availableActingAsPlayers,
+    isTestCampaign 
+  } = useActingAs(id, players);
 
   // Territory state (real-time)
   const mapId = campaign?.map_id ?? 'map_v1_standard';
@@ -91,11 +100,17 @@ export default function ActiveCampaign() {
 
   const phase = campaign?.current_phase;
 
-  // Determine effective player for perspective (simulated or real)
+  // Determine effective player for VIEWING perspective (simulated or real)
   const effectivePlayer = useMemo(() => {
     if (currentPerspective) return currentPerspective; // simulated perspective
     return myPlayer; // admin view
   }, [currentPerspective, myPlayer]);
+
+  // Determine effective player for ACTIONS (acting-as delegation)
+  const actionPlayer = useMemo(() => {
+    if (actingAsPlayer) return actingAsPlayer; // delegated to test player
+    return myPlayer; // own player
+  }, [actingAsPlayer, myPlayer]);
 
   // ── Panel routing (extracted) ──────────────────────────────────────────────
 
@@ -104,6 +119,7 @@ export default function ActiveCampaign() {
       campaign={campaign}
       players={players}
       myPlayer={effectivePlayer} // Use effective player for perspective
+      actionPlayer={actionPlayer} // Use action player for submissions
       gameProfile={gameProfile}
       stateById={stateById}
       mapDef={mapDef}
@@ -112,6 +128,7 @@ export default function ActiveCampaign() {
       onClearSelection={() => setSelectedId(null)}
       onPhaseChanged={handlePhaseChanged}
       currentPerspective={currentPerspective}
+      actingAsPlayerId={actingAsPlayerId}
     />
   );
 
@@ -129,6 +146,7 @@ export default function ActiveCampaign() {
   
   // Check if campaign has test players (for showing perspective selector)
   const hasTestPlayers = players?.some(p => p.is_test_player) === true;
+  const isTestMode = isAdmin || hasTestPlayers || isTestCampaign;
 
   // Own staged attacks — only loaded during attack phase, only own player (user-scoped)
   const { attacks: myStagedAttacks } = useAttackPhase({
@@ -173,10 +191,13 @@ export default function ActiveCampaign() {
   return (
     <CampaignLayout
       campaign={displayCampaign}
-      isTestMode={isAdmin || hasTestPlayers}
+      isTestMode={isTestMode}
       players={players}
       currentPerspective={currentPerspective}
       onPerspectiveChange={setCurrentPerspective}
+      actingAsPlayerId={actingAsPlayerId}
+      onActingAsChange={setActingAsPlayerId}
+      availableActingAsPlayers={availableActingAsPlayers}
       leftDockContent={leftDockContent}
       rightDockContent={rightDockContent}
       defaultTab={activeTab}
