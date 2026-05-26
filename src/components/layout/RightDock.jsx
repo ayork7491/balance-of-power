@@ -14,7 +14,7 @@ export default function RightDock({ children, defaultCollapsed = false }) {
   return (
     <motion.div 
       className="relative flex flex-col shrink-0 bg-panel-bg border-l border-panel-border overflow-hidden h-full min-h-0"
-      animate={{ width: collapsed ? 40 : 288 }}
+      animate={{ width: collapsed ? 40 : '100%' }}
       transition={{ duration: 0.2, ease: "easeInOut" }}
       data-dock="right"
     >
@@ -33,7 +33,8 @@ export default function RightDock({ children, defaultCollapsed = false }) {
               touchAction: 'pan-y',
             }}
           >
-            <div className="p-3">
+            {/* Compact mobile spacing */}
+            <div className="p-2 sm:p-3">
               {children}
             </div>
           </motion.div>

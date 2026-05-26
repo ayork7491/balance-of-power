@@ -9,9 +9,10 @@
  * See SETUP_NOTES.md for full privacy contract.
  */
 import { useMemo } from 'react';
-import { Loader2, Lock, Check } from 'lucide-react';
+import { Loader2, Lock, Check, TestTube, User, Eye } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { useInitialDeploy, useDeployLockStatus } from '@/features/campaigns/setup';
+import { useCampaignTestContext } from '@/features/adminTestMode/CampaignTestContext';
 
 export default function InitialDeployPanel({
   campaign,
@@ -23,6 +24,13 @@ export default function InitialDeployPanel({
 }) {
   const startingTroops = campaign?.settings?.starting_troops ?? 30;
   const isAdmin = myPlayer?.is_admin;
+  
+  // Use centralized test context
+  const { actingAsPlayer, actingAsCampaignPlayerId, viewingAsPlayer } = useCampaignTestContext();
+  
+  // Determine action player (acting-as or self)
+  const actionPlayer = actingAsPlayer || myPlayer;
+  const canDelegateActions = !!actingAsPlayer;
 
   // My owned territories
   const myTerritories = useMemo(
@@ -57,7 +65,7 @@ export default function InitialDeployPanel({
   const allLocked   = lockedCount >= totalCount && totalCount > 0;
 
   const handleLockAndRefresh = async () => {
-    await handleLock(onPhaseChanged);
+    await handleLock(onPhaseChanged, actingAsCampaignPlayerId || null);
     reloadLockStatus();
   };
 
@@ -129,7 +137,9 @@ export default function InitialDeployPanel({
                   max={startingTroops}
                   value={placements[ts.territory_id] ?? 0}
                   onChange={e => handleChange(ts.territory_id, e.target.value)}
-                  className="w-16 text-right bg-input border border-border rounded px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                  // Mobile zoom prevention: 16px font-size minimum
+                  className="w-20 text-right bg-input border border-border rounded px-2 py-1.5 text-[16px] leading-relaxed text-foreground focus:outline-none focus:ring-1 focus:ring-primary touch-manipulation"
+                  style={{ fontSize: '16px' }}
                 />
               </div>
             );
@@ -149,23 +159,59 @@ export default function InitialDeployPanel({
 
       {/* Actions */}
       {!isLocked && (
-        <div className="flex gap-2">
-          <button
-            onClick={handleSave}
-            disabled={submitting || troopsRemaining < 0}
-            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded border border-primary/40 text-primary text-xs font-display tracking-wider uppercase hover:bg-primary/10 transition-colors disabled:opacity-40"
-          >
-            {submitting && !saved ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-            {saved ? '✓ Saved' : 'Save'}
-          </button>
-          <button
-            onClick={handleLockAndRefresh}
-            disabled={submitting || troopsRemaining !== 0}
-            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded bg-primary text-primary-foreground text-xs font-display tracking-wider uppercase hover:brightness-110 disabled:opacity-40"
-          >
-            {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
-            Lock In
-          </button>
+        <div className="space-y-2">
+          <div className="flex gap-2">
+            <button
+              onClick={handleSave}
+              disabled={submitting || troopsRemaining < 0}
+              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded border border-primary/40 text-primary text-xs font-display tracking-wider uppercase hover:bg-primary/10 transition-colors disabled:opacity-40"
+            >
+              {submitting && !saved ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+              {saved ? '✓ Saved' : 'Save'}
+            </button>
+            <button
+              onClick={handleLockAndRefresh}
+              disabled={submitting || troopsRemaining !== 0}
+              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded bg-primary text-primary-foreground text-xs font-display tracking-wider uppercase hover:brightness-110 disabled:opacity-40"
+            >
+              {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
+              Lock In
+            </button>
+          </div>
+          
+          {/* Acting-As Debug Panel */}
+          <div className="pt-2 border-t border-border">
+            <p className="text-[10px] font-display tracking-widest uppercase text-muted-foreground mb-2">
+              Acting-As Debug
+            </p>
+            <div className="space-y-1.5 text-[10px]">
+              <div className="flex items-center gap-2">
+                <User className="w-3 h-3 text-muted-foreground" />
+                <span className="text-muted-foreground">Authenticated:</span>
+                <span className="text-foreground">{myPlayer?.display_name ?? 'None'}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <TestTube className="w-3 h-3 text-muted-foreground" />
+                <span className="text-muted-foreground">Acting-As:</span>
+                <span className="text-foreground">{actingAsPlayer ? `${actingAsPlayer.display_name}${actingAsPlayer.is_test_player ? ' (Test)' : ''}` : '(self)'}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Eye className="w-3 h-3 text-muted-foreground" />
+                <span className="text-muted-foreground">Viewing-As:</span>
+                <span className="text-foreground">{viewingAsPlayer ? `${viewingAsPlayer.display_name}${viewingAsPlayer.is_test_player ? ' (Test)' : ''}` : 'Admin / My View'}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">Submit For:</span>
+                <span className="text-foreground font-medium">{actionPlayer?.display_name ?? 'Unknown'}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">Delegation Allowed:</span>
+                <span className={canDelegateActions ? 'text-status-locked font-semibold' : 'text-muted-foreground'}>
+                  {canDelegateActions ? '✓ Yes' : '✗ No'}
+                </span>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -225,6 +271,13 @@ export default function InitialDeployPanel({
             </div>
           )}
         </div>
+      )}
+
+      {/* Submit button text update */}
+      {!isLocked && (
+        <p className="text-[10px] text-muted-foreground text-center pt-2 border-t border-border">
+          Lock In will submit for: <span className="text-status-pending font-semibold">{actionPlayer?.display_name ?? 'Unknown'}</span>
+        </p>
       )}
     </div>
   );

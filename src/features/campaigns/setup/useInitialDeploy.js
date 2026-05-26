@@ -29,6 +29,8 @@ export function useInitialDeploy({ campaign, myPlayer, myTerritories }) {
 
   const startingTroops = campaign?.settings?.starting_troops ?? 30;
 
+  // Note: acting_as_player_id is passed directly to handleSave/handleLock calls
+
   const totalPlaced    = useMemo(
     () => Object.values(placements).reduce((s, n) => s + (parseInt(n) || 0), 0),
     [placements],
@@ -68,7 +70,7 @@ export function useInitialDeploy({ campaign, myPlayer, myTerritories }) {
     setSaved(false);
   }, []);
 
-  const handleSave = useCallback(async () => {
+  const handleSave = useCallback(async (acting_as_player_id = null) => {
     if (decision?.is_locked) return;
     setSubmitting(true);
     setError(null);
@@ -78,9 +80,10 @@ export function useInitialDeploy({ campaign, myPlayer, myTerritories }) {
         cleanPlacements[tid] = parseInt(v) || 0;
       }
       await base44.functions.invoke('initialDeploy', {
-        action:      'stageTroops',
-        campaign_id: campaign.id,
-        placements:  cleanPlacements,
+        action:                'stageTroops',
+        campaign_id:           campaign.id,
+        placements:            cleanPlacements,
+        acting_as_player_id:   acting_as_player_id || null,
       });
       setSaved(true);
       await reload();
@@ -91,13 +94,14 @@ export function useInitialDeploy({ campaign, myPlayer, myTerritories }) {
     }
   }, [decision?.is_locked, placements, campaign?.id, reload]);
 
-  const handleLock = useCallback(async (onPhaseChanged) => {
+  const handleLock = useCallback(async (onPhaseChanged, acting_as_player_id = null) => {
     setSubmitting(true);
     setError(null);
     try {
       await base44.functions.invoke('initialDeploy', {
-        action:      'lockDeploy',
-        campaign_id: campaign.id,
+        action:                'lockDeploy',
+        campaign_id:           campaign.id,
+        acting_as_player_id:   acting_as_player_id || null,
       });
       await reload();
       onPhaseChanged?.();

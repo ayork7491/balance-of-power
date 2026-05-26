@@ -28,6 +28,7 @@ function getPlayerHex(players, playerId) {
 
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 4.0;
+const TAP_THRESHOLD = 3; // px movement to distinguish tap vs drag
 
 export default function MapRenderer({
   mapDef,
@@ -41,7 +42,8 @@ export default function MapRenderer({
 }) {
   const containerRef = useRef(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
-  const drag = useRef(null); // { startX, startY, originX, originY }
+  const drag = useRef(null); // { startX, startY, originX, originY, moved }
+  const rafRef = useRef(null); // requestAnimationFrame ID
 
   // Fit map to container on mount
   useEffect(() => {
@@ -84,55 +86,81 @@ export default function MapRenderer({
     return () => el.removeEventListener('wheel', handleWheel);
   }, [handleWheel]);
 
-  // ── Pointer drag (pan) ─────────────────────────────────────────────────────
-  // Allow panning from anywhere on map surface, including territories
+  // ── Pointer drag (pan) with requestAnimationFrame ──────────────────────────
   const onPointerDown = useCallback((e) => {
     if (e.button !== 0) return;
-    // Start drag on any pointer down - will be cancelled if it's a tap/click
+    e.preventDefault();
+    
+    // Cancel any pending RAF
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    
+    // Initialize drag state
     drag.current = {
       startX: e.clientX,
       startY: e.clientY,
-      originX: 0,
-      originY: 0,
+      originX: transform.x,
+      originY: transform.y,
       moved: false,
+      lastX: e.clientX,
+      lastY: e.clientY,
     };
-    setTransform(prev => {
-      drag.current.originX = prev.x;
-      drag.current.originY = prev.y;
-      return prev;
-    });
+    
     e.currentTarget.setPointerCapture(e.pointerId);
-  }, []);
+  }, [transform.x, transform.y]);
 
   const onPointerMove = useCallback((e) => {
     if (!drag.current) return;
+    e.preventDefault();
+    
     const dx = e.clientX - drag.current.startX;
     const dy = e.clientY - drag.current.startY;
-    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) drag.current.moved = true;
-    setTransform(prev => ({
-      ...prev,
-      x: drag.current.originX + dx,
-      y: drag.current.originY + dy,
-    }));
+    
+    // Mark as moved if exceeds threshold
+    if (Math.abs(dx) > TAP_THRESHOLD || Math.abs(dy) > TAP_THRESHOLD) {
+      drag.current.moved = true;
+    }
+    
+    // Throttle pan updates via RAF for smooth performance
+    if (rafRef.current) return;
+    
+    rafRef.current = requestAnimationFrame(() => {
+      setTransform(prev => ({
+        ...prev,
+        x: drag.current.originX + dx,
+        y: drag.current.originY + dy,
+      }));
+      rafRef.current = null;
+    });
   }, []);
 
-  const onPointerUp = useCallback(() => {
+  const onPointerUp = useCallback((e) => {
+    if (!drag.current) return;
+    
+    // Cancel pending RAF
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    
     drag.current = null;
   }, []);
 
   // ── Territory click ────────────────────────────────────────────────────────
-  // Only trigger click if no drag movement detected (tap vs drag threshold)
+  // Tap-vs-drag: only select if movement stayed under threshold
   const handleTerritoryClick = useCallback((tid) => {
-    const hasMoved = drag.current?.moved ?? false;
+    if (!drag.current) return;
+    
+    const hasMoved = drag.current.moved;
+    
     if (hasMoved) {
-      // Drag detected - don't trigger click, map will pan
+      // Drag detected (> 3px) - don't trigger click
       return;
     }
-    const prevId = selectedId;
+    
+    // Tap detected (< 3px) - select territory
     const nextId = selectedId === tid ? null : tid;
-    const territoryObj = mapDef?.territories.find(t => t.territory_id === tid);
     onSelect?.(nextId);
-  }, [onSelect, selectedId, mapDef]);
+  }, [onSelect, selectedId]);
 
   // ── Region color lookup ────────────────────────────────────────────────────
   const regionColorById = {};
@@ -158,15 +186,22 @@ export default function MapRenderer({
         userSelect: 'none',
         contain: 'strict',
       }}
-      // Prevent territory elements from blocking map drag
       data-map-container="true"
     >
+      {/* Map layer with GPU-accelerated transform */}
+      <div
+        className="absolute inset-0 will-change-transform"
+        style={{
+          transform: `translate3d(${transform.x}px, ${transform.y}px, 0) scale(${transform.scale})`,
+          transformOrigin: '0 0',
+        }}
+      >
       <svg
         width="100%"
         height="100%"
         style={{ overflow: 'visible' }}
       >
-        <g transform={`translate(${transform.x},${transform.y}) scale(${transform.scale})`}>
+        <g>
           {/* Adjacency lines drawn first (below territories) */}
           <AdjacencyLines mapDef={mapDef} />
 
@@ -196,7 +231,7 @@ export default function MapRenderer({
 
           {/* Territory name labels (shown at comfortable zoom levels) */}
           {transform.scale >= 0.7 && mapDef.territories.map(territory => (
-            <motion.text
+            <text
               key={`label-${territory.territory_id}`}
               x={territory.cx}
               y={territory.cy + 22}
@@ -212,15 +247,13 @@ export default function MapRenderer({
                 userSelect: 'none',
                 textShadow: '0 1px 3px rgba(0,0,0,0.8)'
               }}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: transform.scale >= 0.7 ? 0.85 : 0 }}
-              transition={{ duration: 0.2 }}
             >
               {territory.name}
-            </motion.text>
+            </text>
           ))}
         </g>
       </svg>
+      </div>
 
       {/* Attack arrow overlay — rendered as absolute SVG sibling, same viewBox */}
       {arrowLayer}
