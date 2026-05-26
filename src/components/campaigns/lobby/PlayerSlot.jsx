@@ -4,8 +4,11 @@
 import { Crown, Check, Clock, Shield, X, FlaskConical, TestTube } from 'lucide-react';
 import { PLAYER_COLORS } from '@/config/theme';
 
-export default function PlayerSlot({ player, isMe, canKick, onKick, canAdminToggleReady, onAdminToggleReady }) {
+export default function PlayerSlot({ player, isMe, canKick, onKick, canAdminToggleReady, onAdminToggleReady, isTestPlayer: isTestPlayerProp }) {
   const color = PLAYER_COLORS.find(c => c.id === player.color);
+  
+  // Fallback safety check: treat as test player if is_test_player is true OR user_id starts with test_player_
+  const isTestPlayer = isTestPlayerProp ?? (player.is_test_player === true || (player.user_id && player.user_id.startsWith('test_player_')));
 
   return (
     <div className={`flex items-center gap-3 px-4 py-3 border-b border-border last:border-0 ${isMe ? 'bg-primary/5' : ''}`}>
@@ -29,7 +32,7 @@ export default function PlayerSlot({ player, isMe, canKick, onKick, canAdminTogg
               <Crown className="w-3 h-3" /> Admin
             </span>
           )}
-          {player.is_test_player && (
+          {isTestPlayer && (
             <span className="flex items-center gap-1 text-[10px] text-status-info px-1.5 py-0.5 rounded border border-status-info/40">
               <FlaskConical className="w-2.5 h-2.5" /> Test
             </span>
@@ -61,7 +64,7 @@ export default function PlayerSlot({ player, isMe, canKick, onKick, canAdminTogg
         )}
         
         {/* Admin ready toggle for test players only */}
-        {canAdminToggleReady && player.is_test_player && (
+        {canAdminToggleReady && isTestPlayer && (
           <button
             onClick={() => onAdminToggleReady(player)}
             className={`p-1.5 rounded text-xs transition-colors shrink-0 border ${

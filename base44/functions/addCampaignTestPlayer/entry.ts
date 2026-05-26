@@ -68,6 +68,8 @@ Deno.serve(async (req) => {
       display_name,
       color,
       is_test_player: true, // Flag to identify test players
+      test_player_created_by_user_id: user.id, // Track which admin created this test player
+      test_player_label: display_name, // Use display name as initial label
       is_admin: false,
       is_ready: false,
       faction_name: null,

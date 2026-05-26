@@ -80,6 +80,9 @@ function CampaignLobbyContent() {
 
   const isAdmin = myPlayer?.is_admin ?? false;
   const joinRequests = invites.filter(i => i.type === 'join_request' && i.status === 'pending');
+  
+  // Fallback safety check: treat player as test player if is_test_player is true OR user_id starts with test_player_
+  const isTestPlayer = (p) => p.is_test_player === true || (p.user_id && p.user_id.startsWith('test_player_'));
   const readyCount = players.filter(p => p.is_ready).length;
   const canStart = isAdmin && players.length >= 2 && players.every(p => p.is_ready);
 
@@ -268,6 +271,25 @@ function CampaignLobbyContent() {
                   </button>
                 )}
               </div>
+              
+              {/* Admin debug info */}
+              {isAdmin && (
+                <div className="px-4 py-2 bg-muted/20 border-b border-border text-[10px] font-mono text-muted-foreground">
+                  <p className="font-display tracking-wider uppercase mb-1">Player Debug</p>
+                  <div className="space-y-0.5">
+                    {players.map(p => (
+                      <div key={p.id} className="flex items-center gap-2">
+                        <span className="text-foreground">{p.display_name}</span>
+                        <span>→ id: {p.id}</span>
+                        <span>→ user_id: {p.user_id}</span>
+                        <span className={p.is_test_player ? 'text-status-info' : ''}>→ is_test_player: {p.is_test_player ? 'true' : 'false'}</span>
+                        <span className={p.is_ready ? 'text-status-locked' : 'text-status-pending'}>→ is_ready: {p.is_ready ? 'true' : 'false'}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              
               {players.length === 0 ? (
                 <EmptyState icon={Users} title="No players yet" description="Invite players using the Invites tab." />
               ) : (
@@ -280,6 +302,7 @@ function CampaignLobbyContent() {
                     onKick={handleKick}
                     canAdminToggleReady={isAdmin}
                     onAdminToggleReady={handleAdminToggleReady}
+                    isTestPlayer={isTestPlayer(p)}
                   />
                 ))
               )}

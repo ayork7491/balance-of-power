@@ -32,6 +32,19 @@
       "default": false,
       "description": "Whether the player has readied up in the lobby."
     },
+    "is_test_player": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether this is a test player (not a real user account)."
+    },
+    "test_player_created_by_user_id": {
+      "type": "string",
+      "description": "User ID of the admin who created this test player (test players only)."
+    },
+    "test_player_label": {
+      "type": "string",
+      "description": "Optional label/note for this test player (e.g. 'Bot Alpha', 'Filler 1')."
+    },
     "troop_count": {
       "type": "number",
       "default": 0,
