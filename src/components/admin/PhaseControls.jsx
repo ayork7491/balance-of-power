@@ -133,7 +133,7 @@ export default function PhaseControls({ campaign, onPhaseChanged }) {
           </p>
           <div className="flex items-center justify-between">
             <p className="text-sm font-semibold text-foreground capitalize">
-              {campaign.current_phase.replace(/_/g, ' ')}
+              {campaign.current_phase ? campaign.current_phase.replace(/_/g, ' ') : 'Unknown'}
             </p>
             <p className="text-xs text-muted-foreground">
               Round {campaign.current_round}
