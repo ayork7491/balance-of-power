@@ -78,10 +78,10 @@ export default function CampaignLobby() {
     setActionError(null);
     setStarting(true);
     try {
-      await startCampaign(campaign.id);
+      await startCampaign(campaign.id, userId, players);
       navigate(`/campaigns/${id}`);
-    } catch {
-      setActionError('Failed to start campaign. Please try again.');
+    } catch (err) {
+      setActionError(err.message || 'Failed to start campaign. Please try again.');
       setStarting(false);
     }
   };

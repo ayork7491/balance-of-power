@@ -49,8 +49,8 @@ export default function StepSettings({ form, setField }) {
 
   return (
     <div className="space-y-0 divide-y divide-border">
-      <Setting label="Max Players" hint="Maximum number of players in this campaign.">
-        <NumInput value={s.max_players} onChange={v => set('max_players', v)} min={2} max={12} />
+      <Setting label="Max Players" hint="Maximum number of players in this campaign (2–8).">
+        <NumInput value={s.max_players} onChange={v => set('max_players', v)} min={2} max={8} />
       </Setting>
 
       <Setting label="Starting Troops" hint="Troops each player receives before the initial deployment.">

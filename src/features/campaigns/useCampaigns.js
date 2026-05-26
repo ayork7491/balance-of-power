@@ -175,7 +175,28 @@ export async function respondToInvite(inviteId, accept) {
 }
 
 export async function approveJoinRequest(invite, playerSetup) {
-  // Create CampaignPlayer record
+  // Guard: invitee_user_id must exist — cannot create a player record without a known user
+  if (!invite.invitee_user_id) {
+    throw new Error('Cannot approve: invitee has not created an account yet.');
+  }
+
+  // Guard: campaign must still be in lobby
+  const campaigns = await base44.entities.Campaign.filter({ id: invite.campaign_id });
+  const campaign = campaigns[0];
+  if (!campaign) throw new Error('Campaign not found.');
+  if (campaign.status !== 'lobby') throw new Error('Campaign is no longer in the lobby phase.');
+
+  // Guard: player not already in campaign
+  const existing = await base44.entities.CampaignPlayer.filter({
+    campaign_id: invite.campaign_id,
+    user_id: invite.invitee_user_id,
+  });
+  if (existing.length > 0) throw new Error('This player is already in the campaign.');
+
+  // Guard: invite not already acted on
+  const fresh = await base44.entities.CampaignInvite.filter({ id: invite.id });
+  if (fresh[0]?.status !== 'pending') throw new Error('This invite has already been acted on.');
+
   await base44.entities.CampaignPlayer.create({
     campaign_id: invite.campaign_id,
     user_id: invite.invitee_user_id,
@@ -236,6 +257,26 @@ export async function requestToJoinByCode(inviteCode, message = '') {
 
 export async function acceptInviteAndJoin(invite, playerSetup) {
   const user = await base44.auth.me();
+
+  // Guard: invite must still be pending
+  const fresh = await base44.entities.CampaignInvite.filter({ id: invite.id });
+  if (!fresh[0] || fresh[0].status !== 'pending') {
+    throw new Error('This invite is no longer valid.');
+  }
+
+  // Guard: campaign must still be in lobby
+  const campaigns = await base44.entities.Campaign.filter({ id: invite.campaign_id });
+  const campaign = campaigns[0];
+  if (!campaign) throw new Error('Campaign not found.');
+  if (campaign.status !== 'lobby') throw new Error('This campaign is no longer accepting players.');
+
+  // Guard: not already a player
+  const existing = await base44.entities.CampaignPlayer.filter({
+    campaign_id: invite.campaign_id,
+    user_id: user.id,
+  });
+  if (existing.length > 0) throw new Error('You are already in this campaign.');
+
   await base44.entities.CampaignPlayer.create({
     campaign_id: invite.campaign_id,
     user_id: user.id,
@@ -260,7 +301,26 @@ export async function updatePlayerSetup(playerId, { display_name, color, faction
   return base44.entities.CampaignPlayer.update(playerId, { display_name, color, faction_name });
 }
 
-export async function startCampaign(campaignId) {
+export async function startCampaign(campaignId, adminUserId, players) {
+  // Guard: caller must be the campaign admin
+  const campaigns = await base44.entities.Campaign.filter({ id: campaignId });
+  const campaign = campaigns[0];
+  if (!campaign) throw new Error('Campaign not found.');
+  if (campaign.admin_user_id !== adminUserId) throw new Error('Only the campaign admin can start the campaign.');
+
+  // Guard: campaign must still be in lobby
+  if (campaign.status !== 'lobby') throw new Error('Campaign has already started or is no longer in the lobby.');
+
+  // Guard: minimum player count
+  if (!players || players.length < 2) throw new Error('At least 2 players are required to start.');
+
+  // Guard: all players must be ready
+  const notReady = players.filter(p => !p.is_ready);
+  if (notReady.length > 0) {
+    const names = notReady.map(p => p.display_name).join(', ');
+    throw new Error(`Not all players are ready. Waiting on: ${names}`);
+  }
+
   return base44.entities.Campaign.update(campaignId, {
     status: 'active',
     current_round: 1,

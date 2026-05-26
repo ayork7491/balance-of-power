@@ -4,41 +4,35 @@
  * Future: any of these can be overridden per-campaign via CampaignSettings stored in the database.
  */
 
+/**
+ * GAMEPLAY_DEFAULTS — internal engine constants used by game logic modules.
+ *
+ * These are NOT campaign-level settings (those live in CampaignSettings in
+ * features/campaigns/types.ts and are stored per-campaign on the entity).
+ *
+ * Naming: camelCase is fine here because these are internal engine constants,
+ * not database field names. Do not use these directly in UI — read from
+ * campaign.settings instead.
+ */
 export const GAMEPLAY_DEFAULTS = {
-  // Campaign setup
-  minPlayers: 2,
-  maxPlayers: 8,
-  defaultStartingTroops: 20,
-  defaultMaxAttacksPerPhase: 3,
-  defaultMaxFortificationsPerPhase: 3,  // corrected from 2
-  defaultDraftPercentage: 0.6,           // 60% of territories assigned by player choice, 40% random
+  // Draft phase
+  draftPercentage: 0.6,           // 60% of territories assigned by player choice, 40% random
 
   // Troop generation
   baseTroopsPerTurn: 3,
   minTroopsPerTurn: 3,
-  territoriesPerBonusTroop: 3, // 1 bonus troop per N territories owned
+  territoriesPerBonusTroop: 3,   // 1 bonus troop per N territories owned
 
   // Attack rules
   minTroopsToAttack: 2,
   minTroopsToLeaveInTerritory: 1,
 
   // Fortification rules
-  maxFortificationDistance: 4,  // corrected from 2 — territories away (graph distance)
   minTroopsToFortify: 1,
 
   // Battle resolution
   autoResolveDaysAfterBattle: 7,
-  forfeitPenaltyTroopLoss: 0.5, // 50% troop loss on forfeit
-
-  // Phase timing (in hours)
-  defaultDeployPhaseDuration: 48,
-  defaultAttackPhaseDuration: 48,
-  defaultBattlePhaseDuration: 168, // 7 days
-  defaultFortifyPhaseDuration: 48,
-
-  // Victory conditions
-  defaultVictoryTerritoryPercent: 0.75, // own 75% of map to win
-  eliminationVictory: true,
+  forfeitPenaltyTroopLoss: 0.5,  // 50% troop loss on forfeit
 } as const;
 
 export const REGION_BONUS = {
