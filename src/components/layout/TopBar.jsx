@@ -3,6 +3,7 @@
  * Shows: campaign name, round, phase, timer, lock status, test mode indicator.
  * In non-campaign screens, shows app branding only.
  */
+import { Link } from 'react-router-dom';
 import { Shield, Lock, FlaskConical } from 'lucide-react';
 import PhaseTag from '@/components/ui/PhaseTag';
 import CountdownTimer from '@/components/ui/CountdownTimer';
@@ -10,13 +11,13 @@ import CountdownTimer from '@/components/ui/CountdownTimer';
 export default function TopBar({ campaign = null, isTestMode = false }) {
   return (
     <header className="h-10 bg-panel-header border-b border-panel-border flex items-center px-4 gap-4 shrink-0 z-20">
-      {/* Brand / Logo */}
-      <div className="flex items-center gap-2 shrink-0">
-        <Shield className="w-4 h-4 text-primary" />
+      {/* Brand / Logo — always a home link */}
+      <Link to="/" className="flex items-center gap-2 shrink-0 group" title="Back to Dashboard">
+        <Shield className="w-4 h-4 text-primary group-hover:brightness-125 transition-all" />
         <span className="font-mono text-xs font-bold tracking-widest text-primary uppercase">
           BoP
         </span>
-      </div>
+      </Link>
 
       <div className="w-px h-5 bg-border shrink-0" />
 
