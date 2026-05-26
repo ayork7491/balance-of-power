@@ -4,13 +4,21 @@
  */
 import { useState, useEffect, useMemo } from 'react';
 import { base44 } from '@/api/base44Client';
-import { Loader2, Check, X, Castle, Hammer, ArrowRight } from 'lucide-react';
+import { Loader2, Check, X, Castle, Hammer, ArrowRight, TestTube, User, Eye } from 'lucide-react';
 import { useFortifyPhase } from '@/features/campaigns/fortify/useFortifyPhase';
 import { useFortifyLockStatus } from '@/features/campaigns/fortify/useFortifyLockStatus';
 import MovementSelector from './MovementSelector';
 import ConstructionSelector from './ConstructionSelector';
+import { useCampaignTestContext } from '@/features/adminTestMode/CampaignTestContext';
 
 export default function FortifyPanel({ campaign, players, myPlayer, stateById, mapDef, adjacencyMap, selectedTerritoryId, onClearSelection }) {
+  // Use centralized test context
+  const { actingAsPlayer, actingAsCampaignPlayerId, viewingAsPlayer } = useCampaignTestContext();
+  
+  // Determine action player (acting-as or self)
+  const actionPlayer = actingAsPlayer || myPlayer;
+  const canDelegateActions = !!actingAsPlayer;
+  const delegationBlockedReason = null; // Would be set by backend if blocked
   const [movements, setMovements] = useState([]);
   const [construction, setConstruction] = useState(null);
   const [error, setError] = useState(null);
@@ -44,6 +52,7 @@ export default function FortifyPanel({ campaign, players, myPlayer, stateById, m
         origin_territory_id: origin,
         destination_territory_id: destination,
         committed_troops: troops,
+        acting_as_player_id: actingAsCampaignPlayerId || null,
       });
       if (res.data.error) {
         setError(res.data.error);
@@ -87,6 +96,7 @@ export default function FortifyPanel({ campaign, players, myPlayer, stateById, m
         campaign_id: campaign.id,
         territory_id: territoryId,
         structure_type: structureType,
+        acting_as_player_id: actingAsCampaignPlayerId || null,
       });
       if (res.data.error) {
         setError(res.data.error);
@@ -107,6 +117,7 @@ export default function FortifyPanel({ campaign, players, myPlayer, stateById, m
       const res = await base44.functions.invoke('fortifyPhase', {
         action: 'lockFortify',
         campaign_id: campaign.id,
+        acting_as_player_id: actingAsCampaignPlayerId || null,
       });
       if (res.data.error) {
         setError(res.data.error);
@@ -238,6 +249,51 @@ export default function FortifyPanel({ campaign, players, myPlayer, stateById, m
           Fortifications Locked
         </div>
       )}
+
+      {/* Acting-As Debug Panel */}
+      <div className="pt-4 border-t border-border">
+        <p className="text-[10px] font-display tracking-widest uppercase text-muted-foreground mb-2">
+          Acting-As Debug
+        </p>
+        <div className="space-y-1.5 text-[10px]">
+          <div className="flex items-center gap-2">
+            <User className="w-3 h-3 text-muted-foreground" />
+            <span className="text-muted-foreground">Authenticated:</span>
+            <span className="text-foreground">{myPlayer?.display_name ?? 'None'}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <TestTube className="w-3 h-3 text-muted-foreground" />
+            <span className="text-muted-foreground">Acting-As:</span>
+            <span className="text-foreground">{actingAsPlayer ? `${actingAsPlayer.display_name}${actingAsPlayer.is_test_player ? ' (Test)' : ''}` : '(self)'}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Eye className="w-3 h-3 text-muted-foreground" />
+            <span className="text-muted-foreground">Viewing-As:</span>
+            <span className="text-foreground">{viewingAsPlayer ? `${viewingAsPlayer.display_name}${viewingAsPlayer.is_test_player ? ' (Test)' : ''}` : 'Admin / My View'}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Action Submit For:</span>
+            <span className="text-foreground font-medium">{actionPlayer?.display_name ?? 'Unknown'}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Delegation Allowed:</span>
+            <span className={canDelegateActions ? 'text-status-locked font-semibold' : 'text-muted-foreground'}>
+              {canDelegateActions ? '✓ Yes' : '✗ No'}
+            </span>
+          </div>
+          {delegationBlockedReason && (
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">Rejection Reason:</span>
+              <span className="text-status-danger">{delegationBlockedReason}</span>
+            </div>
+          )}
+          <div className="pt-1.5 border-t border-border/50 mt-1">
+            <p className="text-[10px] text-muted-foreground">
+              Submit button will save for: <span className="text-status-pending font-semibold">{actionPlayer?.display_name ?? 'Unknown'}</span>
+            </p>
+          </div>
+        </div>
+      </div>
 
       {/* Other Players Lock Status */}
       <div className="pt-4 border-t border-border space-y-2">

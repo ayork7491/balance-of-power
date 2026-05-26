@@ -16,6 +16,9 @@ import LeaderboardPanel from '@/components/campaigns/LeaderboardPanel';
 import HistoryLogPanel from '@/components/campaigns/HistoryLogPanel';
 import InfoPanelPlaceholder from './InfoPanelPlaceholder';
 
+// Region legend (moved out of map viewport)
+import RegionLegend from '@/components/map/RegionLegend';
+
 const SETUP_PHASES = new Set(['faction_selection', 'territory_draft', 'initial_deploy']);
 const GAMEPLAY_PHASES = new Set(['deploy', 'attack', 'battle', 'fortify']);
 
@@ -29,35 +32,38 @@ export default function RightDockRouter({
     const phase = campaign?.current_phase;
     const isSetupPhase = SETUP_PHASES.has(phase);
 
-    // During setup phases, always show setup info
-    if (isSetupPhase) {
-      return <SetupInfoPanel campaign={campaign} players={players} />;
-    }
+    return (
+      <div className="flex flex-col h-full">
+        {/* Region & Bonuses section (moved out of map viewport) */}
+        {mapDef?.regions && mapDef.regions.length > 0 && (
+          <div className="shrink-0 border-b border-border bg-muted/20">
+            <RegionLegend regions={mapDef.regions} />
+          </div>
+        )}
 
-    // During gameplay phases, show phase-specific info
-    if (GAMEPLAY_PHASES.has(phase)) {
-      if (phase === 'deploy') {
-        return <DeployInfoPanel campaign={campaign} players={players} />;
-      }
-      if (phase === 'attack') {
-        return <AttackInfoPanel campaign={campaign} players={players} mapDef={mapDef} />;
-      }
-      if (phase === 'battle') {
-        return <BattleInfoPanel campaign={campaign} players={players} />;
-      }
-      if (phase === 'fortify') {
-        return <FortifyInfoPanel campaign={campaign} players={players} />;
-      }
-    }
-
-    // Otherwise use tab-based routing
-    switch (activeTab) {
-      case 'leaderboard':
-        return <LeaderboardPanel campaign={campaign} players={players} />;
-      case 'history':
-        return <HistoryLogPanel campaign={campaign} players={players} />;
-      default:
-        return <InfoPanelPlaceholder activeTab={activeTab} />;
-    }
+        {/* Phase-specific or tab-based content */}
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          {isSetupPhase ? (
+            <SetupInfoPanel campaign={campaign} players={players} />
+          ) : GAMEPLAY_PHASES.has(phase) ? (
+            phase === 'deploy' ? (
+              <DeployInfoPanel campaign={campaign} players={players} />
+            ) : phase === 'attack' ? (
+              <AttackInfoPanel campaign={campaign} players={players} mapDef={mapDef} />
+            ) : phase === 'battle' ? (
+              <BattleInfoPanel campaign={campaign} players={players} />
+            ) : phase === 'fortify' ? (
+              <FortifyInfoPanel campaign={campaign} players={players} />
+            ) : null
+          ) : activeTab === 'leaderboard' ? (
+            <LeaderboardPanel campaign={campaign} players={players} />
+          ) : activeTab === 'history' ? (
+            <HistoryLogPanel campaign={campaign} players={players} />
+          ) : (
+            <InfoPanelPlaceholder activeTab={activeTab} />
+          )}
+        </div>
+      </div>
+    );
   }, [activeTab, campaign, players, mapDef]);
 }

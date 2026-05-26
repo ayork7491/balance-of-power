@@ -13,17 +13,16 @@ export default function LeftDock({ children, defaultCollapsed = false }) {
 
   return (
     <motion.div 
-      className="relative flex flex-col shrink-0 bg-panel-bg border-r border-panel-border overflow-hidden"
+      className="relative flex flex-col shrink-0 bg-panel-bg border-r border-panel-border overflow-hidden h-full min-h-0"
       animate={{ width: collapsed ? 40 : 256 }}
       transition={{ duration: 0.2, ease: "easeInOut" }}
-      style={{ touchAction: 'none' }}
       data-dock="left"
     >
       {/* Content wrapper with flex structure for proper scrolling */}
       <AnimatePresence>
         {!collapsed && (
           <motion.div
-            className="flex-1 overflow-y-auto dock-scroll min-w-0 min-h-0 flex flex-col"
+            className="flex-1 min-h-0 overflow-y-auto dock-scroll flex flex-col"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -31,6 +30,7 @@ export default function LeftDock({ children, defaultCollapsed = false }) {
             style={{ 
               overscrollBehavior: 'contain',
               WebkitOverflowScrolling: 'touch',
+              touchAction: 'pan-y',
             }}
           >
             <div className="p-3">

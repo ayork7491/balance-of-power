@@ -85,14 +85,14 @@ export default function CampaignLayout({
 
         {/* Main row - critical for mobile scrolling: min-h-0 enables flex child overflow */}
         <div className="flex flex-1 overflow-hidden min-h-0">
-          {/* Left dock - constrained height for scroll containment */}
+          {/* Left dock - responsive width for mobile landscape */}
           <AnimatePresence>
             <motion.div
               initial={{ x: -20, opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
               exit={{ x: -20, opacity: 0 }}
               transition={{ duration: 0.2 }}
-              className="h-full min-h-0 flex flex-col"
+              className="h-full min-h-0 flex flex-col max-w-[280px] sm:max-w-[320px]"
             >
               <LeftDock>
                 {leftDockContent}
@@ -100,19 +100,19 @@ export default function CampaignLayout({
             </motion.div>
           </AnimatePresence>
 
-          {/* Map / center content */}
-          <main className="flex-1 relative overflow-hidden bg-background tactical-grid min-h-0">
+          {/* Map / center content - ensure at least 55-65% width on mobile */}
+          <main className="flex-1 min-w-[55%] relative overflow-hidden bg-background tactical-grid min-h-0">
             {children}
           </main>
 
-          {/* Right dock - constrained height for scroll containment */}
+          {/* Right dock - responsive width for mobile landscape */}
           <AnimatePresence>
             <motion.div
               initial={{ x: 20, opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
               exit={{ x: 20, opacity: 0 }}
               transition={{ duration: 0.2 }}
-              className="h-full min-h-0 flex flex-col"
+              className="h-full min-h-0 flex flex-col max-w-[280px] sm:max-w-[320px]"
             >
               <RightDock>
                 {rightDockContent}

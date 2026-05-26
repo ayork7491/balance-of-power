@@ -85,10 +85,10 @@ export default function MapRenderer({
   }, [handleWheel]);
 
   // ── Pointer drag (pan) ─────────────────────────────────────────────────────
+  // Allow panning from anywhere on map surface, including territories
   const onPointerDown = useCallback((e) => {
     if (e.button !== 0) return;
-    // Only start drag on background, not on territories (they handle their own clicks)
-    if (e.target.tagName !== 'svg') return;
+    // Start drag on any pointer down - will be cancelled if it's a tap/click
     drag.current = {
       startX: e.clientX,
       startY: e.clientY,
@@ -121,21 +121,16 @@ export default function MapRenderer({
   }, []);
 
   // ── Territory click ────────────────────────────────────────────────────────
+  // Only trigger click if no drag movement detected (tap vs drag threshold)
   const handleTerritoryClick = useCallback((tid) => {
-    if (drag.current?.moved) {
-      console.log('[MapRenderer] Drag detected, ignoring as click');
+    const hasMoved = drag.current?.moved ?? false;
+    if (hasMoved) {
+      // Drag detected - don't trigger click, map will pan
       return;
     }
     const prevId = selectedId;
     const nextId = selectedId === tid ? null : tid;
     const territoryObj = mapDef?.territories.find(t => t.territory_id === tid);
-    console.log('[MapRenderer] Territory click:', {
-      clicked_territory_id: tid,
-      previous_selected_territory_id: prevId,
-      next_selected_territory_id: nextId,
-      territory_object_found: !!territoryObj,
-      territory_name: territoryObj?.name,
-    });
     onSelect?.(nextId);
   }, [onSelect, selectedId, mapDef]);
 
@@ -163,6 +158,8 @@ export default function MapRenderer({
         userSelect: 'none',
         contain: 'strict',
       }}
+      // Prevent territory elements from blocking map drag
+      data-map-container="true"
     >
       <svg
         width="100%"

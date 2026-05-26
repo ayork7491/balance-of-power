@@ -250,7 +250,7 @@ function ActiveCampaignContent() {
           ) : null}
           />
 
-          <RegionLegend regions={mapDef.regions} />
+          {/* RegionLegend moved to RightDockRouter to keep map viewport clear */}
 
           {/* Only show territory detail panel outside of draft phase (draft uses left dock) */}
           {phase !== 'territory_draft' && selectedTerritory && (
