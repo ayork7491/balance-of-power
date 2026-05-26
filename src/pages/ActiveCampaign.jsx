@@ -60,15 +60,15 @@ function InfoPanelPlaceholder({ activeTab }) {
 
 export default function ActiveCampaign() {
   const { id } = useParams();
-  const [activeTab, setActiveTab]       = useState('map');
-  const [selectedKey, setSelectedKey]   = useState(null);
+  const [activeTab, setActiveTab]  = useState('map');
+  const [selectedId, setSelectedId] = useState(null);
 
   // Campaign + players (real data)
   const { campaign, players, loading: loadingCampaign } = useCampaign(id);
 
   // Territory state (real data, real-time)
   const mapId = campaign?.map_id ?? 'map_v1_standard';
-  const { stateByKey, loading: loadingState } = useTerritoryState(id);
+  const { stateById, loading: loadingState } = useTerritoryState(id);
 
   // Static map definition (schema)
   const mapDef = useMemo(() => getMap(mapId), [mapId]);
@@ -81,18 +81,21 @@ export default function ActiveCampaign() {
 
   // Selected territory details
   const selectedTerritory = useMemo(
-    () => mapDef?.territories.find(t => t.key === selectedKey) ?? null,
-    [mapDef, selectedKey]
+    () => mapDef?.territories.find(t => t.territory_id === selectedId) ?? null,
+    [mapDef, selectedId]
   );
-  const selectedTState = selectedKey ? (stateByKey[selectedKey] ?? null) : null;
-  const selectedRegion = selectedTerritory
+  const selectedTState    = selectedId ? (stateById[selectedId] ?? null) : null;
+  const selectedRegion    = selectedTerritory
     ? (mapDef?.regions.find(r => r.id === selectedTerritory.region_id) ?? null)
     : null;
+  const selectedContinent = selectedTerritory
+    ? (mapDef?.continents.find(c => c.id === selectedTerritory.continent_id) ?? null)
+    : null;
   const adjacentTerritories = useMemo(() => {
-    if (!selectedKey || !mapDef) return [];
-    const keys = adjacencyMap[selectedKey] ?? new Set();
-    return mapDef.territories.filter(t => keys.has(t.key));
-  }, [selectedKey, mapDef, adjacencyMap]);
+    if (!selectedId || !mapDef) return [];
+    const ids = adjacencyMap[selectedId] ?? new Set();
+    return mapDef.territories.filter(t => ids.has(t.territory_id));
+  }, [selectedId, mapDef, adjacencyMap]);
 
   // Fallback campaign data while loading
   const displayCampaign = campaign ?? { name: 'Loading…', current_round: 0, current_phase: 'deploy', phase_deadline: null };
@@ -110,10 +113,10 @@ export default function ActiveCampaign() {
         <>
           <MapRenderer
             mapDef={mapDef}
-            stateByKey={stateByKey}
+            stateById={stateById}
             players={players}
-            selectedKey={selectedKey}
-            onSelect={setSelectedKey}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
           />
 
           <RegionLegend regions={mapDef.regions} />
@@ -123,8 +126,9 @@ export default function ActiveCampaign() {
             tState={selectedTState}
             players={players}
             regionDef={selectedRegion}
+            continentDef={selectedContinent}
             adjacentTerritories={adjacentTerritories}
-            onClose={() => setSelectedKey(null)}
+            onClose={() => setSelectedId(null)}
           />
         </>
       )}

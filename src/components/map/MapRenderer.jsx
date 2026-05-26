@@ -30,11 +30,11 @@ const MAX_ZOOM = 4.0;
 
 export default function MapRenderer({
   mapDef,
-  stateByKey = {},
+  stateById = {},
   players = [],
-  selectedKey = null,
-  highlightKeys = new Set(),
-  attackableKeys = new Set(),
+  selectedId = null,
+  highlightIds = new Set(),
+  attackableIds = new Set(),
   onSelect,
 }) {
   const containerRef = useRef(null);
@@ -117,10 +117,10 @@ export default function MapRenderer({
   }, []);
 
   // ── Territory click ────────────────────────────────────────────────────────
-  const handleTerritoryClick = useCallback((key) => {
+  const handleTerritoryClick = useCallback((tid) => {
     if (drag.current?.moved) return; // was a pan, not a click
-    onSelect?.(selectedKey === key ? null : key);
-  }, [onSelect, selectedKey]);
+    onSelect?.(selectedId === tid ? null : tid);
+  }, [onSelect, selectedId]);
 
   // ── Region color lookup ────────────────────────────────────────────────────
   const regionColorById = {};
@@ -151,7 +151,8 @@ export default function MapRenderer({
 
           {/* Territory polygons */}
           {mapDef.territories.map(territory => {
-            const tState = stateByKey[territory.key];
+            const tid    = territory.territory_id;
+            const tState = stateById[tid];
             const ownerColor = tState?.owner_player_id
               ? getPlayerHex(players, tState.owner_player_id)
               : null;
@@ -159,15 +160,15 @@ export default function MapRenderer({
 
             return (
               <TerritoryPolygon
-                key={territory.key}
+                key={tid}
                 territory={territory}
                 regionColor={regionColor}
                 ownerColor={ownerColor}
                 troopCount={tState?.troop_count ?? 0}
-                isSelected={selectedKey === territory.key}
-                isHighlighted={highlightKeys.has(territory.key)}
-                isAttackable={attackableKeys.has(territory.key)}
-                onClick={() => handleTerritoryClick(territory.key)}
+                isSelected={selectedId === tid}
+                isHighlighted={highlightIds.has(tid)}
+                isAttackable={attackableIds.has(tid)}
+                onClick={() => handleTerritoryClick(tid)}
               />
             );
           })}
@@ -175,7 +176,7 @@ export default function MapRenderer({
           {/* Territory name labels (shown at comfortable zoom levels) */}
           {transform.scale >= 0.7 && mapDef.territories.map(territory => (
             <text
-              key={`label-${territory.key}`}
+              key={`label-${territory.territory_id}`}
               x={territory.cx}
               y={territory.cy + 22}
               textAnchor="middle"

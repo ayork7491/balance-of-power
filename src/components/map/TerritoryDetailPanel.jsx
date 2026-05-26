@@ -17,12 +17,22 @@ const TERRAIN_LABELS = {
   plains:    '🌾 Plains',
 };
 
+const RESOURCE_LABELS = {
+  brick: '🧱 Brick', lumber: '🪵 Lumber', wool: '🐑 Wool', grain: '🌾 Grain', ore: '⛏ Ore',
+};
+
+function topResource(dist) {
+  if (!dist) return null;
+  return Object.entries(dist).sort(([, a], [, b]) => b - a)[0]?.[0] ?? null;
+}
+
 export default function TerritoryDetailPanel({
-  territory,     // TerritoryDef | null
-  tState,        // TerritoryState | null
-  players,       // CampaignPlayer[]
-  regionDef,     // RegionDef | null
-  adjacentTerritories, // TerritoryDef[]
+  territory,            // TerritoryDefinition | null
+  tState,               // TerritoryState | null
+  players,              // CampaignPlayer[]
+  regionDef,            // MapRegion | null
+  continentDef,         // MapContinent | null
+  adjacentTerritories,  // TerritoryDefinition[]
   onClose,
 }) {
   if (!territory) return null;
@@ -33,6 +43,7 @@ export default function TerritoryDetailPanel({
   const ownerColor = owner
     ? PLAYER_COLORS.find(c => c.id === owner.color)
     : null;
+  const primaryResource = topResource(territory.resource_distribution);
 
   return (
     <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 w-full max-w-sm px-2 pointer-events-none">
@@ -76,14 +87,31 @@ export default function TerritoryDetailPanel({
             </div>
           </div>
 
-          {/* Region */}
-          {regionDef && (
+          {/* Region + Continent */}
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            {regionDef && (
+              <div>
+                <p className="text-muted-foreground">Region</p>
+                <p className="text-foreground font-medium">{regionDef.name}
+                  {regionDef.control_bonus > 0 && <span className="ml-1 badge-info">+{regionDef.control_bonus}</span>}
+                </p>
+              </div>
+            )}
+            {continentDef && (
+              <div>
+                <p className="text-muted-foreground">Continent</p>
+                <p className="text-foreground font-medium">{continentDef.name}
+                  {continentDef.control_bonus > 0 && <span className="ml-1 badge-info">+{continentDef.control_bonus}</span>}
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Primary resource */}
+          {primaryResource && (
             <div className="flex items-center justify-between text-xs">
-              <span className="text-muted-foreground">Region</span>
-              <span className="text-foreground font-medium flex items-center gap-1">
-                {regionDef.name}
-                <span className="badge-info">{regionDef.control_bonus > 0 ? `+${regionDef.control_bonus}` : '—'}</span>
-              </span>
+              <span className="text-muted-foreground">Primary Resource</span>
+              <span className="text-foreground">{RESOURCE_LABELS[primaryResource] ?? primaryResource}</span>
             </div>
           )}
 
@@ -107,7 +135,7 @@ export default function TerritoryDetailPanel({
               </p>
               <div className="flex flex-wrap gap-1">
                 {adjacentTerritories.map(t => (
-                  <span key={t.key} className="px-1.5 py-0.5 rounded bg-muted text-muted-foreground text-xs">
+                  <span key={t.territory_id} className="px-1.5 py-0.5 rounded bg-muted text-muted-foreground text-xs">
                     {t.name}
                   </span>
                 ))}

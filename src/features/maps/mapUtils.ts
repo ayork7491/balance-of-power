@@ -3,13 +3,15 @@
  *
  * Pure utility functions for map/territory operations.
  * No React, no side effects.
+ *
+ * Canonical identifier: territory_id
  */
-import type { MapDef, TerritoryDef } from './mapData';
+import type { MapDefinition } from './types';
 
-/** Build an adjacency lookup: { key: Set<key> } */
-export function buildAdjacencyMap(mapDef: MapDef): Record<string, Set<string>> {
+/** Build adjacency lookup: { territory_id → Set<territory_id> } */
+export function buildAdjacencyMap(mapDef: MapDefinition): Record<string, Set<string>> {
   const adj: Record<string, Set<string>> = {};
-  for (const t of mapDef.territories) adj[t.key] = new Set();
+  for (const t of mapDef.territories) adj[t.territory_id] = new Set();
   for (const [a, b] of mapDef.adjacency) {
     adj[a]?.add(b);
     adj[b]?.add(a);
@@ -17,31 +19,40 @@ export function buildAdjacencyMap(mapDef: MapDef): Record<string, Set<string>> {
   return adj;
 }
 
-/** Get all territory keys adjacent to a given territory */
-export function getNeighbors(key: string, adj: Record<string, Set<string>>): string[] {
-  return Array.from(adj[key] ?? []);
+/** Get all territory_ids adjacent to a given territory */
+export function getNeighbors(territoryId: string, adj: Record<string, Set<string>>): string[] {
+  return Array.from(adj[territoryId] ?? []);
 }
 
-/** BFS to find all reachable territories within `maxDist` steps owned by the same player */
+/** Check if two territories are directly adjacent */
+export function areAdjacent(
+  a: string,
+  b: string,
+  adj: Record<string, Set<string>>,
+): boolean {
+  return adj[a]?.has(b) ?? false;
+}
+
+/** BFS: find all territories reachable within maxDist steps owned by the same player */
 export function getFortifiableTargets(
-  originKey: string,
+  originId: string,
   ownerPlayerId: string,
-  stateByKey: Record<string, { owner_player_id?: string | null }>,
+  stateById: Record<string, { owner_player_id?: string | null }>,
   adj: Record<string, Set<string>>,
   maxDist: number,
 ): string[] {
-  const visited = new Set<string>([originKey]);
-  const queue: [string, number][] = [[originKey, 0]];
+  const visited = new Set<string>([originId]);
+  const queue: [string, number][] = [[originId, 0]];
   const result: string[] = [];
 
   while (queue.length > 0) {
     const [current, dist] = queue.shift()!;
-    if (dist > 0 && stateByKey[current]?.owner_player_id === ownerPlayerId) {
+    if (dist > 0 && stateById[current]?.owner_player_id === ownerPlayerId) {
       result.push(current);
     }
     if (dist < maxDist) {
       for (const neighbor of (adj[current] ?? [])) {
-        if (!visited.has(neighbor) && stateByKey[neighbor]?.owner_player_id === ownerPlayerId) {
+        if (!visited.has(neighbor) && stateById[neighbor]?.owner_player_id === ownerPlayerId) {
           visited.add(neighbor);
           queue.push([neighbor, dist + 1]);
         }
@@ -50,6 +61,54 @@ export function getFortifiableTargets(
   }
 
   return result;
+}
+
+/** Count territories owned by a player in a given region */
+export function countOwnedInRegion(
+  regionId: string,
+  playerId: string,
+  mapDef: MapDefinition,
+  stateById: Record<string, { owner_player_id?: string | null }>,
+): number {
+  return mapDef.territories.filter(
+    t => t.region_id === regionId && stateById[t.territory_id]?.owner_player_id === playerId
+  ).length;
+}
+
+/** Count territories owned by a player in a given continent */
+export function countOwnedInContinent(
+  continentId: string,
+  playerId: string,
+  mapDef: MapDefinition,
+  stateById: Record<string, { owner_player_id?: string | null }>,
+): number {
+  return mapDef.territories.filter(
+    t => t.continent_id === continentId && stateById[t.territory_id]?.owner_player_id === playerId
+  ).length;
+}
+
+/** Check if a player controls an entire region */
+export function controlsRegion(
+  regionId: string,
+  playerId: string,
+  mapDef: MapDefinition,
+  stateById: Record<string, { owner_player_id?: string | null }>,
+): boolean {
+  const inRegion = mapDef.territories.filter(t => t.region_id === regionId);
+  return inRegion.length > 0 &&
+    inRegion.every(t => stateById[t.territory_id]?.owner_player_id === playerId);
+}
+
+/** Check if a player controls an entire continent */
+export function controlsContinent(
+  continentId: string,
+  playerId: string,
+  mapDef: MapDefinition,
+  stateById: Record<string, { owner_player_id?: string | null }>,
+): boolean {
+  const inContinent = mapDef.territories.filter(t => t.continent_id === continentId);
+  return inContinent.length > 0 &&
+    inContinent.every(t => stateById[t.territory_id]?.owner_player_id === playerId);
 }
 
 /** Parse "x1,y1 x2,y2 ..." polygon points string into coordinate pairs */

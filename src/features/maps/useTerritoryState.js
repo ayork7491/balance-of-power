@@ -2,20 +2,21 @@
  * features/maps/useTerritoryState.js
  *
  * Loads and subscribes to TerritoryState records for a campaign.
- * Returns a keyed map: { [territory_key]: TerritoryState }
- * so the renderer can look up state by territory key in O(1).
+ * Returns a keyed map: { [territory_id]: TerritoryState }
  *
- * TerritoryState is SEPARATE from the map schema (mapData.ts).
- * Schema = shape/position/adjacency (static, per map).
- * State = owner/troops/structures (dynamic, per campaign instance).
+ * Canonical identifier: territory_id (matches TerritoryDefinition.territory_id)
+ *
+ * TerritoryState is SEPARATE from the static map schema (mapData.ts).
+ *   Schema = shape/position/adjacency/resources (static, per map definition)
+ *   State  = owner/troops/structures (dynamic, per campaign instance)
  */
 import { useState, useEffect, useCallback } from 'react';
 import { base44 } from '@/api/base44Client';
 
 export function useTerritoryState(campaignId) {
-  const [stateByKey, setStateByKey] = useState({}); // { [territory_key]: TerritoryState }
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [stateById, setStateById] = useState({}); // { [territory_id]: TerritoryState }
+  const [loading, setLoading]     = useState(true);
+  const [error, setError]         = useState(null);
 
   const load = useCallback(async () => {
     if (!campaignId) return;
@@ -24,8 +25,8 @@ export function useTerritoryState(campaignId) {
     try {
       const records = await base44.entities.TerritoryState.filter({ campaign_id: campaignId });
       const keyed = {};
-      for (const r of records) keyed[r.territory_key] = r;
-      setStateByKey(keyed);
+      for (const r of records) keyed[r.territory_id] = r;
+      setStateById(keyed);
     } catch {
       setError('Failed to load territory state.');
     } finally {
@@ -40,18 +41,19 @@ export function useTerritoryState(campaignId) {
     if (!campaignId) return;
     const unsub = base44.entities.TerritoryState.subscribe((event) => {
       if (event.data?.campaign_id !== campaignId) return;
-      setStateByKey(prev => {
-        const key = event.data?.territory_key ?? event.id;
+      setStateById(prev => {
+        const tid = event.data?.territory_id;
+        if (!tid) return prev;
         if (event.type === 'delete') {
           const next = { ...prev };
-          delete next[key];
+          delete next[tid];
           return next;
         }
-        return { ...prev, [key]: event.data };
+        return { ...prev, [tid]: event.data };
       });
     });
     return unsub;
   }, [campaignId]);
 
-  return { stateByKey, loading, error, reload: load };
+  return { stateById, loading, error, reload: load };
 }

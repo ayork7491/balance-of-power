@@ -4,24 +4,24 @@
   "properties": {
     "campaign_id": {
       "type": "string",
-      "description": "Foreign key to Campaign.id."
+      "description": "FK \u2192 Campaign.id. Scope all queries by campaign_id."
     },
     "map_id": {
       "type": "string",
-      "description": "Foreign key to MapDefinition.id."
+      "description": "FK \u2192 MapDefinition.id. Which map this state belongs to."
     },
-    "territory_key": {
+    "territory_id": {
       "type": "string",
-      "description": "Stable identifier matching TerritoryDefinition.key (e.g. 'iron_ridge'). Not the entity id."
+      "description": "Canonical FK \u2192 TerritoryDefinition.territory_id. This is the ONLY identifier. Never use 'key' or 'territory_key'."
     },
     "owner_player_id": {
       "type": "string",
-      "description": "CampaignPlayer.id of the current owner. Null = unoccupied."
+      "description": "CampaignPlayer.id of the current owner. Null means unoccupied."
     },
     "troop_count": {
       "type": "number",
       "default": 0,
-      "description": "Current troop count on this territory."
+      "description": "Current troop count. Set to 0 when unoccupied."
     },
     "structures": {
       "type": "array",
@@ -29,12 +29,12 @@
         "type": "string"
       },
       "default": [],
-      "description": "List of structure type keys built on this territory."
+      "description": "StructureType keys built on this territory: 'castle', 'barracks', 'stables'."
     }
   },
   "required": [
     "campaign_id",
     "map_id",
-    "territory_key"
+    "territory_id"
   ]
 }

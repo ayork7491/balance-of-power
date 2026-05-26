@@ -5,16 +5,16 @@
  */
 
 export default function AdjacencyLines({ mapDef }) {
-  const centroidByKey = {};
+  const centroidById = {};
   for (const t of mapDef.territories) {
-    centroidByKey[t.key] = [t.cx, t.cy];
+    centroidById[t.territory_id] = [t.cx, t.cy];
   }
 
   return (
     <g opacity={0.18}>
       {mapDef.adjacency.map(([a, b], i) => {
-        const ca = centroidByKey[a];
-        const cb = centroidByKey[b];
+        const ca = centroidById[a];
+        const cb = centroidById[b];
         if (!ca || !cb) return null;
         return (
           <line
