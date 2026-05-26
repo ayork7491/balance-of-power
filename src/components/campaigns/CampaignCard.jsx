@@ -1,44 +1,34 @@
 /**
  * CampaignCard — a campaign summary card shown on the Home dashboard.
  * Admin-only: shows an overflow menu with Delete/Archive action.
+ * Refactored to use reusable components.
  */
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { Shield, ChevronRight, Crown, MoreVertical, Trash2, Archive } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Shield, ChevronRight, Crown, MoreVertical } from 'lucide-react';
 import { CAMPAIGN_STATUS, PHASE_COLORS } from '@/config/theme';
 import ConfirmCleanupModal from './ConfirmCleanupModal';
 import { cleanupCampaign } from '@/features/campaigns';
-import { base44 } from '@/api/base44Client';
+import AdminMenu from './AdminMenu';
+import StatusPill from './StatusPill';
+import ActionBadge from './ActionBadge';
 
 export default function CampaignCard({ campaign, myPlayer, onRemoved }) {
-  const navigate = useNavigate();
-  const [menuOpen, setMenuOpen]     = useState(false);
-  const [showModal, setShowModal]   = useState(false);
-  const [userId, setUserId]         = useState(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [showModal, setShowModal] = useState(false);
 
-  const status      = CAMPAIGN_STATUS[campaign.status] ?? CAMPAIGN_STATUS.lobby;
+  const status = CAMPAIGN_STATUS[campaign.status] ?? CAMPAIGN_STATUS.lobby;
   const phaseConfig = campaign.current_phase ? PHASE_COLORS[campaign.current_phase] : null;
-  const isAdmin     = myPlayer?.is_admin;
-  const isReady     = myPlayer?.is_ready;
+  const isAdmin = myPlayer?.is_admin;
+  const isReady = myPlayer?.is_ready;
   const needsAction = campaign.status === 'lobby' && !isReady;
 
   const href = campaign.status === 'lobby'
     ? `/campaigns/${campaign.id}/lobby`
     : `/campaigns/${campaign.id}`;
 
-  const handleMenuOpen = async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!userId) {
-      const u = await base44.auth.me();
-      setUserId(u?.id);
-    }
-    setMenuOpen(v => !v);
-  };
-
-  const handleCleanupConfirm = async () => {
-    const u = userId || (await base44.auth.me().then(u => u?.id));
-    await cleanupCampaign(campaign.id, u);
+  const handleCleanup = async (campaignId, userId) => {
+    await cleanupCampaign(campaignId, userId);
     setShowModal(false);
     onRemoved?.();
   };
@@ -60,32 +50,16 @@ export default function CampaignCard({ campaign, myPlayer, onRemoved }) {
         <Link to={href} className="flex-1 p-4 min-w-0">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-2 flex-wrap mb-1">
                 <h3 className="font-display font-semibold text-sm tracking-wider text-foreground truncate">
                   {campaign.name}
                 </h3>
                 {isAdmin && <Crown className="w-3 h-3 text-status-pending shrink-0" title="You are the admin" />}
               </div>
-              <div className="flex items-center gap-2 mt-1 flex-wrap">
-                <span className={`text-xs ${status.color}`}>{status.label}</span>
-                {phaseConfig && (
-                  <>
-                    <span className="text-muted-foreground/40">·</span>
-                    <span className={`text-xs ${phaseConfig.text}`}>{phaseConfig.label}</span>
-                  </>
-                )}
-                {campaign.game_profile_name && (
-                  <>
-                    <span className="text-muted-foreground/40">·</span>
-                    <span className="text-xs text-muted-foreground flex items-center gap-1">
-                      <Shield className="w-2.5 h-2.5" />{campaign.game_profile_name}
-                    </span>
-                  </>
-                )}
-              </div>
+              <StatusPill status={status} phase={phaseConfig} gameProfile={{ name: campaign.game_profile_name, icon: Shield }} />
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              {needsAction && <span className="badge-pending text-xs">Action needed</span>}
+              <ActionBadge show={needsAction} />
               <ChevronRight className="w-4 h-4 text-muted-foreground" />
             </div>
           </div>
@@ -95,30 +69,19 @@ export default function CampaignCard({ campaign, myPlayer, onRemoved }) {
         {isAdmin && (
           <div className="relative shrink-0 pr-3">
             <button
-              onClick={handleMenuOpen}
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setMenuOpen(v => !v); }}
               className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
               title="Campaign options"
             >
               <MoreVertical className="w-4 h-4" />
             </button>
 
-            {menuOpen && (
-              <>
-                {/* Backdrop to close */}
-                <div className="fixed inset-0 z-30" onClick={() => setMenuOpen(false)} />
-                <div className="absolute right-0 top-8 z-40 min-w-44 panel border shadow-lg">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setMenuOpen(false); setShowModal(true); }}
-                    className="w-full flex items-center gap-2 px-4 py-2.5 text-xs font-display tracking-wider uppercase text-destructive hover:bg-destructive/10 transition-colors"
-                  >
-                    {campaign.status === 'lobby'
-                      ? <><Trash2 className="w-3.5 h-3.5" /> Delete Campaign</>
-                      : <><Archive className="w-3.5 h-3.5" /> Archive Campaign</>
-                    }
-                  </button>
-                </div>
-              </>
-            )}
+            <AdminMenu
+              campaign={campaign}
+              onCleanup={handleCleanup}
+              isOpen={menuOpen}
+              onOpenChange={setMenuOpen}
+            />
           </div>
         )}
       </div>
@@ -126,7 +89,7 @@ export default function CampaignCard({ campaign, myPlayer, onRemoved }) {
       {showModal && (
         <ConfirmCleanupModal
           campaign={campaign}
-          onConfirm={handleCleanupConfirm}
+          onConfirm={() => handleCleanup(campaign.id, null)}
           onCancel={() => setShowModal(false)}
         />
       )}
