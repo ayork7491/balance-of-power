@@ -91,6 +91,9 @@ export default function Home() {
           <h2 className="font-display text-xs tracking-widest uppercase text-muted-foreground mb-3 flex items-center gap-2">
             <Swords className="w-3.5 h-3.5" /> Your Campaigns
           </h2>
+          <p className="text-[10px] text-muted-foreground -mt-2 mb-3">
+            Showing active campaigns only. Archived campaigns are hidden.
+          </p>
           {loadingCampaigns ? (
             <div className="panel flex items-center justify-center py-10 gap-2 text-muted-foreground text-xs">
               <Loader2 className="w-4 h-4 animate-spin" /> Loading campaigns…

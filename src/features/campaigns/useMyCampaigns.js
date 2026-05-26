@@ -20,7 +20,9 @@ export function useMyCampaigns() {
       const res = await base44.functions.invoke('getMyCampaigns', {});
       const { campaigns: userCampaigns, players: playerRecords } = res.data;
 
-      setCampaigns(userCampaigns ?? []);
+      // Filter out archived campaigns client-side as well
+      const activeCampaigns = (userCampaigns ?? []).filter(c => c.status !== 'archived');
+      setCampaigns(activeCampaigns);
       setPlayers(playerRecords ?? []);
       setLoading(false);
     } catch (err) {
