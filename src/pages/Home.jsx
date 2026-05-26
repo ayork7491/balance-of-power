@@ -7,8 +7,12 @@ import AppShell from '@/components/layout/AppShell';
 import EmptyState from '@/components/ui/EmptyState';
 import { Link } from 'react-router-dom';
 import { Plus, LogIn, Shield, Bell, Swords } from 'lucide-react';
+import { useUserProfile } from '@/features/auth/useUserProfile';
 
 export default function Home() {
+  const { user } = useUserProfile();
+  const name = user?.display_name || user?.full_name || 'Commander';
+
   return (
     <AppShell>
       <div className="max-w-5xl mx-auto px-4 py-6 space-y-8">
@@ -19,7 +23,9 @@ export default function Home() {
             <h1 className="font-display text-2xl font-bold tracking-widest uppercase text-foreground">
               Command Center
             </h1>
-            <p className="text-xs text-muted-foreground mt-0.5">Your active campaigns and pending actions</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Welcome back, <span className="text-foreground font-medium">{name}</span>
+            </p>
           </div>
           <div className="flex gap-2">
             <Link
