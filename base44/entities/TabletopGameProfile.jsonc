@@ -1,0 +1,78 @@
+{
+  "name": "TabletopGameProfile",
+  "type": "object",
+  "properties": {
+    "owner_user_id": {
+      "type": "string",
+      "description": "The ID of the user who owns this profile."
+    },
+    "game_name": {
+      "type": "string",
+      "description": "The name of the tabletop game system (e.g. Warhammer 40K)."
+    },
+    "troop_currency_name": {
+      "type": "string",
+      "description": "What troops/armies are called in this game (e.g. Points, Power Level, Units).",
+      "default": "Troops"
+    },
+    "average_battle_size": {
+      "type": "number",
+      "description": "Average number of troops per side in a standard tabletop battle. Used for scaling.",
+      "default": 1000
+    },
+    "factions": {
+      "type": "array",
+      "description": "List of faction/army types available in this game.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          }
+        }
+      },
+      "default": []
+    },
+    "terminology": {
+      "type": "object",
+      "description": "Optional overrides for BoP terminology to match the tabletop game's language.",
+      "properties": {
+        "deploy_phase": {
+          "type": "string"
+        },
+        "attack_phase": {
+          "type": "string"
+        },
+        "fortify_phase": {
+          "type": "string"
+        },
+        "territory": {
+          "type": "string"
+        },
+        "troop": {
+          "type": "string"
+        },
+        "battle": {
+          "type": "string"
+        },
+        "campaign": {
+          "type": "string"
+        }
+      },
+      "default": {}
+    },
+    "notes": {
+      "type": "string",
+      "description": "Optional free-text notes about this profile."
+    }
+  },
+  "required": [
+    "game_name"
+  ]
+}
