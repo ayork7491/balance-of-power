@@ -2,27 +2,58 @@
  * deployPhase — backend handler for the standard deploy phase (Round 1+).
  *
  * Actions:
- *   startDeploy     — called by admin at deploy phase start:
- *                     calculates income, creates DeployIncome records,
- *                     creates PhaseDecision stubs, writes phase_start snapshot.
+ *   startDeploy     — admin: calculates income + resources, creates PhaseDecision stubs,
+ *                     writes phase_start snapshot.
  *   stageTroops     — player saves staged placements (private, editable until locked).
  *   lockDeploy      — player locks; auto-fills remaining troops if any.
  *   processPhaseEnd — admin: auto-submits missing players, applies all placements,
- *                     writes phase_end snapshot + logs, advances to attack phase.
+ *                     writes phase_end snapshot + public log, advances to attack phase.
  *
- * Privacy:
- *   - stageTroops / lockDeploy only touch the calling player's own PhaseDecision.
- *   - processPhaseEnd uses asServiceRole and is admin-only.
- *   - DeployIncome records are PUBLIC (income amounts are visible to all players).
- *   - PhaseDecision.data (placements) is PRIVATE until processPhaseEnd reveals them.
+ * ─── PRIVACY MODEL ────────────────────────────────────────────────────────────
+ *   - stageTroops / lockDeploy: user-scoped SDK — only touches own PhaseDecision.
+ *   - processPhaseEnd: asServiceRole + admin-only guard.
+ *   - DeployIncome: PUBLIC — income amounts are visible to all players.
+ *   - PhaseDecision.data (placements): PRIVATE until processPhaseEnd reveals them
+ *     by writing results to TerritoryState.
+ *   - getDeployLockStatus returns is_locked only — data field is stripped server-side.
  *
- * All income formulas live in services/rules-engine/deploy/ — none are inlined here.
+ * ─── MAP DATA SOURCE ─────────────────────────────────────────────────────────
+ *   Region/continent membership and resource_distribution come from
+ *   services/maps/mapMetadata.js (backend-safe pure JS mirror of mapData.ts).
+ *   Local imports are prohibited in Deno deploy, so all helpers are inlined below.
+ *   See services/maps/mapMetadata.js for the documented approach and rationale.
+ *
+ * ─── TABLETOP PROFILE ────────────────────────────────────────────────────────
+ *   average_battle_size is loaded from TabletopGameProfile via campaign.game_profile_id.
+ *   Falls back to DEFAULT_AVG_BATTLE_SIZE (1000) if profile is not found.
+ *   All income formulas use this value for scaling so they work across game systems.
+ *
+ * ─── INCOME FORMULA ──────────────────────────────────────────────────────────
+ *   territory_bonus = max(minTroops, floor((territories / perTroop) * (avgBattleSize / 1000)))
+ *   troop_bonus     = floor((totalTroops / 2000) * avgBattleSize)  [disabled by default V1]
+ *   region_bonus    = sum(region.control_bonus) for fully-controlled regions
+ *   continent_bonus = sum(continent.control_bonus) for fully-controlled continents
+ *   total           = territory_bonus + troop_bonus + region_bonus + continent_bonus
+ *
+ * ─── RESOURCE GENERATION ─────────────────────────────────────────────────────
+ *   Each owned territory generates 1 resource per round.
+ *   Type is determined by weighted random roll (terrain-biased preset weights).
+ *   Seed = `${campaignId}_${playerId}_${territory_id}_r${round}` — deterministic.
+ *   V1 resources: brick, lumber, wool, grain, ore.
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-// ─── Inline pure helpers (no local imports allowed in Deno deploy) ────────────
+// ─── Constants ────────────────────────────────────────────────────────────────
 
-// Seedable RNG (FNV-1a variant)
+const DEFAULT_AVG_BATTLE_SIZE  = 1000;
+const DEFAULT_PER_TROOP        = 3;
+const DEFAULT_MIN_TROOPS       = 3;
+const DEFAULT_TROOP_DIVISOR    = 2000;
+const DEFAULT_TROOP_BONUS_ON   = false;
+
+// ─── Inline: Seedable RNG ─────────────────────────────────────────────────────
+// (Local imports prohibited in Deno deploy — inlined from resourceGeneration.js)
+
 function seededRandom(seed) {
   let h = 2166136261;
   for (let i = 0; i < seed.length; i++) {
@@ -35,7 +66,165 @@ function seededRandom(seed) {
   };
 }
 
-// Auto-distribute remaining troops randomly across owned territory IDs
+// ─── Inline: Map Metadata ─────────────────────────────────────────────────────
+// (Inlined from services/maps/mapMetadata.js — backend-safe mirror of mapData.ts)
+// Region/continent membership and resource_distribution for V1 map.
+// If you update mapData.ts, update these to match.
+
+const RES = {
+  mountains: { brick: 10, lumber: 5,  wool: 5,  grain: 10, ore: 70 },
+  forest:    { brick: 5,  lumber: 60, wool: 15, grain: 10, ore: 10 },
+  swamp:     { brick: 15, lumber: 20, wool: 30, grain: 25, ore: 10 },
+  tundra:    { brick: 20, lumber: 10, wool: 15, grain: 15, ore: 40 },
+  coastal:   { brick: 10, lumber: 10, wool: 35, grain: 30, ore: 15 },
+  desert:    { brick: 30, lumber: 5,  wool: 10, grain: 15, ore: 40 },
+  urban:     { brick: 25, lumber: 15, wool: 15, grain: 15, ore: 30 },
+  plains:    { brick: 10, lumber: 15, wool: 20, grain: 50, ore: 5  },
+};
+
+const V1_MAP_META = {
+  continents: [
+    { id: 'northlands', control_bonus: 7 },
+    { id: 'southlands', control_bonus: 9 },
+  ],
+  regions: [
+    { id: 'north_coast',  continent_id: 'northlands', control_bonus: 2 },
+    { id: 'west_reach',   continent_id: 'northlands', control_bonus: 2 },
+    { id: 'heartland',    continent_id: 'northlands', control_bonus: 3 },
+    { id: 'east_shore',   continent_id: 'northlands', control_bonus: 2 },
+    { id: 'south_plains', continent_id: 'southlands', control_bonus: 3 },
+    { id: 'far_south',    continent_id: 'southlands', control_bonus: 2 },
+  ],
+  territories: {
+    frost_peak:    { region_id: 'north_coast',  continent_id: 'northlands', rd: RES.mountains },
+    irongate:      { region_id: 'north_coast',  continent_id: 'northlands', rd: RES.urban     },
+    tundra_flats:  { region_id: 'north_coast',  continent_id: 'northlands', rd: RES.tundra   },
+    glacier_pass:  { region_id: 'north_coast',  continent_id: 'northlands', rd: RES.tundra   },
+    stormwatch:    { region_id: 'north_coast',  continent_id: 'northlands', rd: RES.coastal  },
+    crow_harbor:   { region_id: 'north_coast',  continent_id: 'northlands', rd: RES.coastal  },
+    pale_cliffs:   { region_id: 'north_coast',  continent_id: 'northlands', rd: RES.coastal  },
+    veil_crossing: { region_id: 'north_coast',  continent_id: 'northlands', rd: RES.plains   },
+    ashwood:          { region_id: 'west_reach', continent_id: 'northlands', rd: RES.forest    },
+    redstone_ridge:   { region_id: 'west_reach', continent_id: 'northlands', rd: RES.mountains },
+    dustmarsh:        { region_id: 'west_reach', continent_id: 'northlands', rd: RES.swamp     },
+    saltfen:          { region_id: 'west_reach', continent_id: 'northlands', rd: RES.swamp     },
+    verdant_vale:     { region_id: 'west_reach', continent_id: 'northlands', rd: RES.plains    },
+    greywood:         { region_id: 'west_reach', continent_id: 'northlands', rd: RES.forest    },
+    heartlands:       { region_id: 'heartland',  continent_id: 'northlands', rd: RES.plains    },
+    golden_citadel:   { region_id: 'heartland',  continent_id: 'northlands', rd: RES.urban     },
+    iron_ridge:       { region_id: 'heartland',  continent_id: 'northlands', rd: RES.mountains },
+    stonefield:       { region_id: 'heartland',  continent_id: 'northlands', rd: RES.plains    },
+    the_crossing:     { region_id: 'heartland',  continent_id: 'northlands', rd: RES.plains    },
+    ember_vale:       { region_id: 'heartland',  continent_id: 'northlands', rd: RES.plains    },
+    deepstone:        { region_id: 'heartland',  continent_id: 'northlands', rd: RES.mountains },
+    ember_coast:      { region_id: 'east_shore', continent_id: 'northlands', rd: RES.coastal   },
+    blackstone:       { region_id: 'east_shore', continent_id: 'northlands', rd: RES.mountains },
+    iron_coast:       { region_id: 'east_shore', continent_id: 'northlands', rd: RES.coastal   },
+    scalewood:        { region_id: 'east_shore', continent_id: 'northlands', rd: RES.forest    },
+    the_bastion:      { region_id: 'east_shore', continent_id: 'northlands', rd: RES.urban     },
+    ashfen_coast:     { region_id: 'east_shore', continent_id: 'northlands', rd: RES.coastal   },
+    ridgeline:        { region_id: 'east_shore', continent_id: 'northlands', rd: RES.mountains },
+    sunken_delta:     { region_id: 'south_plains', continent_id: 'southlands', rd: RES.swamp  },
+    dustplains:       { region_id: 'south_plains', continent_id: 'southlands', rd: RES.desert },
+    amber_fields:     { region_id: 'south_plains', continent_id: 'southlands', rd: RES.plains },
+    sunspire:         { region_id: 'south_plains', continent_id: 'southlands', rd: RES.desert },
+    verdant_basin:    { region_id: 'south_plains', continent_id: 'southlands', rd: RES.plains },
+    sea_gate:         { region_id: 'far_south', continent_id: 'southlands', rd: RES.coastal },
+    crimson_shore:    { region_id: 'far_south', continent_id: 'southlands', rd: RES.coastal },
+    southern_reach:   { region_id: 'far_south', continent_id: 'southlands', rd: RES.plains  },
+  },
+};
+
+// Build array form for calc functions
+function getV1MapTerritories() {
+  return Object.entries(V1_MAP_META.territories).map(([tid, d]) => ({
+    territory_id: tid, region_id: d.region_id, continent_id: d.continent_id,
+    resource_distribution: d.rd,
+  }));
+}
+
+function getMetaForMapId(mapId) {
+  if (mapId === 'map_v1_standard' || !mapId) return V1_MAP_META;
+  // Future maps: add cases here or fetch from MapDefinition entity
+  console.warn(`[deployPhase] Unknown mapId: ${mapId}, falling back to V1 map metadata`);
+  return V1_MAP_META;
+}
+
+// ─── Inline: Income Calc ──────────────────────────────────────────────────────
+
+function calcTerritoryBonus(territoriesOwned, settings, avgBattleSize) {
+  const perTroop  = settings?.territories_per_bonus_troop ?? DEFAULT_PER_TROOP;
+  const minTroops = settings?.min_troops_per_turn ?? DEFAULT_MIN_TROOPS;
+  const raw       = Math.floor((territoriesOwned / perTroop) * (avgBattleSize / 1000));
+  return Math.max(minTroops, raw);
+}
+
+function calcTroopBonus(totalTroops, settings, avgBattleSize) {
+  const enabled = settings?.troop_bonus_enabled ?? DEFAULT_TROOP_BONUS_ON;
+  if (!enabled) return 0;
+  const divisor = settings?.troop_bonus_divisor ?? DEFAULT_TROOP_DIVISOR;
+  return Math.floor((totalTroops / divisor) * avgBattleSize);
+}
+
+function calcRegionBonus(playerId, allStates, mapTerritories, regions) {
+  let bonus = 0;
+  for (const region of (regions ?? [])) {
+    const regionTerrs = mapTerritories.filter(t => t.region_id === region.id);
+    if (!regionTerrs.length) continue;
+    const allOwned = regionTerrs.every(t => {
+      const s = allStates.find(st => st.territory_id === t.territory_id);
+      return s?.owner_player_id === playerId;
+    });
+    if (allOwned) bonus += region.control_bonus ?? 0;
+  }
+  return bonus;
+}
+
+function calcContinentBonus(playerId, allStates, mapTerritories, continents) {
+  let bonus = 0;
+  for (const continent of (continents ?? [])) {
+    const contTerrs = mapTerritories.filter(t => t.continent_id === continent.id);
+    if (!contTerrs.length) continue;
+    const allOwned = contTerrs.every(t => {
+      const s = allStates.find(st => st.territory_id === t.territory_id);
+      return s?.owner_player_id === playerId;
+    });
+    if (allOwned) bonus += continent.control_bonus ?? 0;
+  }
+  return bonus;
+}
+
+// ─── Inline: Resource Generation ─────────────────────────────────────────────
+
+function rollWeightedResource(dist, roll) {
+  const roll100  = roll * 100;
+  let cumulative = 0;
+  for (const [resource, weight] of Object.entries(dist)) {
+    cumulative += weight;
+    if (roll100 < cumulative) return resource;
+  }
+  return Object.keys(dist).at(-1);
+}
+
+function generateResourcesForPlayer(playerId, round, allStates, mapTerritories, campaignId) {
+  const ownedStates = allStates.filter(s => s.owner_player_id === playerId);
+  const totals = { brick: 0, lumber: 0, wool: 0, grain: 0, ore: 0 };
+  for (const ts of ownedStates) {
+    const def = mapTerritories.find(t => t.territory_id === ts.territory_id);
+    if (!def?.resource_distribution) {
+      console.warn(`[deployPhase] no resource_distribution for ${ts.territory_id}`);
+      continue;
+    }
+    const seed     = `${campaignId}_${playerId}_${ts.territory_id}_r${round}`;
+    const rng      = seededRandom(seed);
+    const resource = rollWeightedResource(def.resource_distribution, rng());
+    totals[resource] = (totals[resource] || 0) + 1;
+  }
+  return totals;
+}
+
+// ─── Inline: Auto-placement ───────────────────────────────────────────────────
+
 function autoRandomizePlacements(ownedIds, remaining, seed) {
   if (!ownedIds.length || remaining <= 0) return {};
   const rng = seededRandom(seed);
@@ -58,68 +247,8 @@ function mergePlacements(base, additions) {
   return result;
 }
 
-// Territory bonus: max(minTroops, floor(owned / perTroop))
-function calcTerritoryBonus(ownedCount, settings) {
-  const perTroop  = settings?.territories_per_bonus_troop ?? 3;
-  const minTroops = settings?.min_troops_per_turn ?? 3;
-  return Math.max(minTroops, Math.floor(ownedCount / perTroop));
-}
+// ─── Inline: Phase snapshot builder ──────────────────────────────────────────
 
-// Region bonus: sum control_bonus for fully-owned regions
-function calcRegionBonus(playerId, allStates, mapTerritories, regions) {
-  let bonus = 0;
-  for (const region of (regions ?? [])) {
-    const regionTerrs = mapTerritories.filter(t => t.region_id === region.id);
-    if (!regionTerrs.length) continue;
-    const allOwned = regionTerrs.every(t => {
-      const s = allStates.find(st => st.territory_id === t.territory_id);
-      return s?.owner_player_id === playerId;
-    });
-    if (allOwned) bonus += region.control_bonus ?? 0;
-  }
-  return bonus;
-}
-
-// Continent bonus: sum control_bonus for fully-owned continents
-function calcContinentBonus(playerId, allStates, mapTerritories, continents) {
-  let bonus = 0;
-  for (const continent of (continents ?? [])) {
-    const contTerrs = mapTerritories.filter(t => t.continent_id === continent.id);
-    if (!contTerrs.length) continue;
-    const allOwned = contTerrs.every(t => {
-      const s = allStates.find(st => st.territory_id === t.territory_id);
-      return s?.owner_player_id === playerId;
-    });
-    if (allOwned) bonus += continent.control_bonus ?? 0;
-  }
-  return bonus;
-}
-
-// Resource roll: weighted distribution → resource type
-function rollResource(dist, roll) {
-  const roll100 = roll * 100;
-  let cumulative = 0;
-  for (const [resource, weight] of Object.entries(dist)) {
-    cumulative += weight;
-    if (roll100 < cumulative) return resource;
-  }
-  return Object.keys(dist).at(-1);
-}
-
-function generateResourcesForPlayer(playerId, round, allStates, mapTerritories, campaignId) {
-  const owned = allStates.filter(s => s.owner_player_id === playerId);
-  const totals = { brick: 0, lumber: 0, wool: 0, grain: 0, ore: 0 };
-  for (const ts of owned) {
-    const def = mapTerritories.find(t => t.territory_id === ts.territory_id);
-    if (!def?.resource_distribution) continue;
-    const rng = seededRandom(`${campaignId}_${playerId}_${ts.territory_id}_r${round}`);
-    const resource = rollResource(def.resource_distribution, rng());
-    totals[resource] = (totals[resource] || 0) + 1;
-  }
-  return totals;
-}
-
-// Build phase snapshot object
 function buildSnapshot({ campaignId, round, phase, snapshotType, territoryStates, activePlayers, deployIncomes }) {
   return {
     campaign_id: campaignId,
@@ -148,7 +277,8 @@ function buildSnapshot({ campaignId, round, phase, snapshotType, territoryStates
   };
 }
 
-// Campaign log helper
+// ─── Inline: Campaign log helper ─────────────────────────────────────────────
+
 async function log(base44, campaignId, round, phase, eventType, playerId, payload, isPublic = true) {
   await base44.asServiceRole.entities.SetupLog.create({
     campaign_id: campaignId,
@@ -161,12 +291,24 @@ async function log(base44, campaignId, round, phase, eventType, playerId, payloa
   });
 }
 
-// ─── MAP DATA (inline minimal schema for income calc — avoids local import) ──
+// ─── Validate deploy placements ───────────────────────────────────────────────
 
-// V1 Standard Map regions / continents / territories
-// Only region_id, continent_id, territory_id, resource_distribution needed server-side.
-// We fetch actual territory list from TerritoryState records to avoid duplicating full map.
-// For bonus calcs we need the full region/continent membership — fetch from MapDefinition entity.
+function validateDeployPlacements(placements, ownedIds, allowedTroops) {
+  let totalPlaced = 0;
+  for (const [tid, count] of Object.entries(placements)) {
+    if (!ownedIds.has(tid)) {
+      return { valid: false, error: `Territory ${tid} is not owned by you` };
+    }
+    if (typeof count !== 'number' || count < 0 || !Number.isInteger(count)) {
+      return { valid: false, error: `Invalid troop count for ${tid}: must be a non-negative integer` };
+    }
+    totalPlaced += count;
+  }
+  if (totalPlaced > allowedTroops) {
+    return { valid: false, error: `Total placements (${totalPlaced}) exceed your income (${allowedTroops})` };
+  }
+  return { valid: true, totalPlaced };
+}
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
@@ -194,8 +336,8 @@ Deno.serve(async (req) => {
   const myPlayer = players.find(p => p.user_id === user.id);
   if (!myPlayer) return Response.json({ error: 'Not a player in this campaign' }, { status: 403 });
 
-  const round  = campaign.current_round ?? 1;
-  const phase  = 'deploy';
+  const round = campaign.current_round ?? 1;
+  const phase = 'deploy';
 
   // ── ACTION: startDeploy ───────────────────────────────────────────────────────
   if (action === 'startDeploy') {
@@ -206,7 +348,7 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Campaign is not in deploy phase' }, { status: 400 });
     }
 
-    // Check not already started (idempotency guard)
+    // Idempotency guard
     const existingDecisions = await base44.asServiceRole.entities.PhaseDecision.filter({
       campaign_id, phase: 'deploy', round,
     });
@@ -214,76 +356,61 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Deploy phase already started for this round' }, { status: 400 });
     }
 
+    // Load territory states
     const allTerritoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
 
-    // Fetch map definition for region/continent membership data
-    const mapDefs = await base44.asServiceRole.entities.MapDefinition.filter({ id: campaign.map_id });
-    const mapDef  = mapDefs[0];
-    const mapRegions    = mapDef?.regions    ?? [];
-    const mapContinents = mapDef?.continents ?? [];
-    // Build lightweight territory list for bonus calcs from territory states + map def
-    // We use territory IDs from state; region/continent from MapDefinition.territories field (if stored)
-    // Since MapDefinition may not store territories inline, we use a static lookup for V1
-    // The territory states have territory_id; we need region_id/continent_id for bonus calc.
-    // Strategy: load TerritoryDefinition records if they exist, else skip region/continent bonus.
-    // For V1, region/continent membership is stored in the static map schema, not the DB.
-    // We encode the V1 region/continent membership inline as a minimal lookup.
-    const V1_TERRITORY_REGIONS = {
-      frost_peak:'north_coast',irongate:'north_coast',tundra_flats:'north_coast',glacier_pass:'north_coast',stormwatch:'north_coast',crow_harbor:'north_coast',pale_cliffs:'north_coast',veil_crossing:'north_coast',
-      ashwood:'west_reach',redstone_ridge:'west_reach',dustmarsh:'west_reach',saltfen:'west_reach',verdant_vale:'west_reach',greywood:'west_reach',
-      heartlands:'heartland',golden_citadel:'heartland',iron_ridge:'heartland',stonefield:'heartland',the_crossing:'heartland',ember_vale:'heartland',deepstone:'heartland',
-      ember_coast:'east_shore',blackstone:'east_shore',iron_coast:'east_shore',scalewood:'east_shore',the_bastion:'east_shore',ashfen_coast:'east_shore',ridgeline:'east_shore',
-      sunken_delta:'south_plains',dustplains:'south_plains',amber_fields:'south_plains',sunspire:'south_plains',verdant_basin:'south_plains',
-      sea_gate:'far_south',crimson_shore:'far_south',southern_reach:'far_south',
-    };
-    const V1_TERRITORY_CONTINENTS = {
-      frost_peak:'northlands',irongate:'northlands',tundra_flats:'northlands',glacier_pass:'northlands',stormwatch:'northlands',crow_harbor:'northlands',pale_cliffs:'northlands',veil_crossing:'northlands',
-      ashwood:'northlands',redstone_ridge:'northlands',dustmarsh:'northlands',saltfen:'northlands',verdant_vale:'northlands',greywood:'northlands',
-      heartlands:'northlands',golden_citadel:'northlands',iron_ridge:'northlands',stonefield:'northlands',the_crossing:'northlands',ember_vale:'northlands',deepstone:'northlands',
-      ember_coast:'northlands',blackstone:'northlands',iron_coast:'northlands',scalewood:'northlands',the_bastion:'northlands',ashfen_coast:'northlands',ridgeline:'northlands',
-      sunken_delta:'southlands',dustplains:'southlands',amber_fields:'southlands',sunspire:'southlands',verdant_basin:'southlands',
-      sea_gate:'southlands',crimson_shore:'southlands',southern_reach:'southlands',
-    };
+    // Load map metadata (region/continent/resource_distribution)
+    const mapMeta        = getMetaForMapId(campaign.map_id);
+    const mapTerritories = getV1MapTerritories(); // array form for calc functions
+    const mapRegions     = mapMeta.regions;
+    const mapContinents  = mapMeta.continents;
 
-    // Fake map territories list for calc functions (just needs territory_id + region_id + continent_id)
-    const mapTerritories = allTerritoryStates.map(ts => ({
-      territory_id:  ts.territory_id,
-      region_id:     V1_TERRITORY_REGIONS[ts.territory_id] ?? null,
-      continent_id:  V1_TERRITORY_CONTINENTS[ts.territory_id] ?? null,
-    }));
+    // Load TabletopGameProfile for avgBattleSize scaling
+    let avgBattleSize = DEFAULT_AVG_BATTLE_SIZE;
+    if (campaign.game_profile_id) {
+      const profiles = await base44.asServiceRole.entities.TabletopGameProfile.filter({
+        id: campaign.game_profile_id,
+      });
+      if (profiles[0]?.average_battle_size) {
+        avgBattleSize = profiles[0].average_battle_size;
+      }
+    }
 
-    const activePlayers  = players.filter(p => !p.is_eliminated);
-    const deployIncomes  = {};
+    const activePlayers = players.filter(p => !p.is_eliminated);
+    const deployIncomes = {};
 
-    // Calculate income + resources + create PhaseDecision + DeployIncome for each active player
     for (const p of activePlayers) {
-      const ownedCount     = allTerritoryStates.filter(s => s.owner_player_id === p.id).length;
-      const territoryBonus = calcTerritoryBonus(ownedCount, campaign.settings);
-      const regionBonus    = calcRegionBonus(p.id, allTerritoryStates, mapTerritories, mapRegions);
-      const continentBonus = calcContinentBonus(p.id, allTerritoryStates, mapTerritories, mapContinents);
-      const total          = territoryBonus + regionBonus + continentBonus;
-      const resources      = generateResourcesForPlayer(p.id, round, allTerritoryStates, mapTerritories.map(t => ({
-        ...t,
-        // resource_distribution not in states; skip resource gen for bonus-only territories
-        resource_distribution: null,
-      })), campaign_id);
+      const ownedStates      = allTerritoryStates.filter(s => s.owner_player_id === p.id);
+      const territoriesOwned = ownedStates.length;
+      const totalTroops      = ownedStates.reduce((sum, s) => sum + (s.troop_count || 0), 0);
 
-      deployIncomes[p.id] = { territory_bonus: territoryBonus, region_bonus: regionBonus, continent_bonus: continentBonus, total };
+      const territory_bonus = calcTerritoryBonus(territoriesOwned, campaign.settings, avgBattleSize);
+      const troop_bonus     = calcTroopBonus(totalTroops, campaign.settings, avgBattleSize);
+      const region_bonus    = calcRegionBonus(p.id, allTerritoryStates, mapTerritories, mapRegions);
+      const continent_bonus = calcContinentBonus(p.id, allTerritoryStates, mapTerritories, mapContinents);
+      const total           = territory_bonus + troop_bonus + region_bonus + continent_bonus;
 
-      // Public income record
+      // Generate V1 resources (1 per owned territory, weighted by terrain)
+      const resources_generated = generateResourcesForPlayer(
+        p.id, round, allTerritoryStates, mapTerritories, campaign_id,
+      );
+
+      deployIncomes[p.id] = { territory_bonus, troop_bonus, region_bonus, continent_bonus, total };
+
+      // Public income record (visible to all players)
       await base44.asServiceRole.entities.DeployIncome.create({
         campaign_id,
         round,
-        player_id:       p.id,
-        territory_bonus: territoryBonus,
-        troop_bonus:     0,
-        region_bonus:    regionBonus,
-        continent_bonus: continentBonus,
+        player_id:        p.id,
+        territory_bonus,
+        troop_bonus,
+        region_bonus,
+        continent_bonus,
         total,
-        resources_generated: resources,
+        resources_generated,
       });
 
-      // Private staged decision stub
+      // Private staged decision stub (placements hidden until reveal)
       await base44.asServiceRole.entities.PhaseDecision.create({
         campaign_id,
         player_id: p.id,
@@ -302,12 +429,11 @@ Deno.serve(async (req) => {
     await base44.asServiceRole.entities.PhaseSnapshot.create(snapshot);
 
     await log(base44, campaign_id, round, phase, 'phase_started', null, {
-      player_incomes: Object.entries(deployIncomes).map(([pid, inc]) => ({
-        player_id: pid, ...inc,
-      })),
+      avg_battle_size: avgBattleSize,
+      player_incomes: Object.entries(deployIncomes).map(([pid, inc]) => ({ player_id: pid, ...inc })),
     }, true);
 
-    return Response.json({ success: true, incomes: deployIncomes });
+    return Response.json({ success: true, incomes: deployIncomes, avg_battle_size: avgBattleSize });
   }
 
   // ── ACTION: stageTroops ───────────────────────────────────────────────────────
@@ -319,7 +445,7 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'placements must be an object { territory_id: number }' }, { status: 400 });
     }
 
-    // Load my decision (user-scoped — only my record)
+    // Load own decision only (user-scoped — privacy enforced)
     const decisions = await base44.entities.PhaseDecision.filter({
       campaign_id, player_id: myPlayer.id, phase: 'deploy', round,
     });
@@ -333,39 +459,26 @@ Deno.serve(async (req) => {
     });
     const income = incomeRecords[0];
     if (!income) return Response.json({ error: 'Income record not found' }, { status: 404 });
-    const allowedTroops = income.total;
 
-    // Validate owned territories
+    // Validate ownership and totals
     const ownedStates = await base44.asServiceRole.entities.TerritoryState.filter({
       campaign_id, owner_player_id: myPlayer.id,
     });
     const ownedIds = new Set(ownedStates.map(t => t.territory_id));
 
-    let totalPlaced = 0;
-    for (const [tid, count] of Object.entries(placements)) {
-      if (!ownedIds.has(tid)) {
-        return Response.json({ error: `Territory ${tid} is not owned by you` }, { status: 400 });
-      }
-      if (typeof count !== 'number' || count < 0 || !Number.isInteger(count)) {
-        return Response.json({ error: `Invalid troop count for ${tid}` }, { status: 400 });
-      }
-      totalPlaced += count;
+    const validation = validateDeployPlacements(placements, ownedIds, income.total);
+    if (!validation.valid) {
+      return Response.json({ error: validation.error }, { status: 400 });
     }
 
-    if (totalPlaced > allowedTroops) {
-      return Response.json({
-        error: `Total placements (${totalPlaced}) exceed your income (${allowedTroops})`,
-      }, { status: 400 });
-    }
-
-    const troopsRemaining = allowedTroops - totalPlaced;
+    const troopsRemaining = income.total - validation.totalPlaced;
     await base44.entities.PhaseDecision.update(decision.id, {
       data: { placements, troops_remaining: troopsRemaining },
     });
 
-    // Private log — placement data not public until reveal
+    // Private log — placement data NOT public until reveal
     await log(base44, campaign_id, round, phase, 'troop_staged', myPlayer.id, {
-      troops_placed: totalPlaced, troops_remaining: troopsRemaining,
+      troops_placed: validation.totalPlaced, troops_remaining: troopsRemaining,
     }, false);
 
     return Response.json({ success: true, troops_remaining: troopsRemaining });
@@ -390,11 +503,12 @@ Deno.serve(async (req) => {
     const allowedTroops = incomeRecords[0]?.total ?? 0;
 
     const currentPlacements = decision.data?.placements ?? {};
-    const totalPlaced = Object.values(currentPlacements).reduce((s, n) => s + n, 0);
-    let remaining = allowedTroops - totalPlaced;
+    const totalPlaced       = Object.values(currentPlacements).reduce((s, n) => s + n, 0);
+    let remaining           = allowedTroops - totalPlaced;
 
     let finalPlacements = { ...currentPlacements };
     if (remaining > 0) {
+      // Auto-distribute remaining troops (seeded — deterministic)
       const ownedStates = await base44.asServiceRole.entities.TerritoryState.filter({
         campaign_id, owner_player_id: myPlayer.id,
       });
@@ -412,7 +526,7 @@ Deno.serve(async (req) => {
       data:      { placements: finalPlacements, troops_remaining: 0 },
     });
 
-    // Public log: player locked (no placement data)
+    // Public lock log — no placement data
     await log(base44, campaign_id, round, phase, 'player_locked', myPlayer.id, {
       display_name: myPlayer.display_name,
     }, true);
@@ -430,20 +544,18 @@ Deno.serve(async (req) => {
     }
 
     const activePlayers = players.filter(p => !p.is_eliminated);
-
-    // Load all decisions
-    const allDecisions = await base44.asServiceRole.entities.PhaseDecision.filter({
+    const allDecisions  = await base44.asServiceRole.entities.PhaseDecision.filter({
       campaign_id, phase: 'deploy', round,
     });
 
-    // Auto-submit any unlocked players
+    // Auto-submit any players who did not lock
     for (const p of activePlayers) {
       const dec = allDecisions.find(d => d.player_id === p.id);
       if (!dec || !dec.is_locked) {
         const incomeRecords = await base44.asServiceRole.entities.DeployIncome.filter({
           campaign_id, player_id: p.id, round,
         });
-        const allowedTroops = incomeRecords[0]?.total ?? 3;
+        const allowedTroops = incomeRecords[0]?.total ?? DEFAULT_MIN_TROOPS;
 
         const ownedStates = await base44.asServiceRole.entities.TerritoryState.filter({
           campaign_id, owner_player_id: p.id,
@@ -451,10 +563,10 @@ Deno.serve(async (req) => {
         const ownedIds = ownedStates.map(t => t.territory_id);
 
         const existingPlacements = dec?.data?.placements ?? {};
-        const alreadyPlaced = Object.values(existingPlacements).reduce((s, n) => s + n, 0);
-        const remaining = allowedTroops - alreadyPlaced;
+        const alreadyPlaced      = Object.values(existingPlacements).reduce((s, n) => s + n, 0);
+        const remaining          = allowedTroops - alreadyPlaced;
 
-        const additions = autoRandomizePlacements(
+        const additions     = autoRandomizePlacements(
           ownedIds, remaining,
           `${campaign_id}_${p.id}_r${round}_auto_phase_end`,
         );
@@ -473,7 +585,7 @@ Deno.serve(async (req) => {
           });
         }
 
-        // Private auto-submit log
+        // Private auto-submit log (hidden until reveal)
         await log(base44, campaign_id, round, phase, 'auto_submitted', p.id, {
           display_name: p.display_name, troops_auto_placed: remaining,
         }, false);
@@ -485,7 +597,7 @@ Deno.serve(async (req) => {
       campaign_id, phase: 'deploy', round,
     });
 
-    // Apply all troop placements to TerritoryState
+    // REVEAL: Apply all troop placements to TerritoryState (becomes public via troop counts)
     for (const dec of finalDecisions) {
       const decPlacements = dec.data?.placements ?? {};
       for (const [tid, count] of Object.entries(decPlacements)) {
@@ -501,30 +613,31 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Reload territory states for snapshot
+    // Reload final territory states for snapshot
     const finalTerritoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
 
-    // Load deploy incomes for snapshot
+    // Build deployIncomes map for snapshot
     const incomeRecords = await base44.asServiceRole.entities.DeployIncome.filter({ campaign_id, round });
     const deployIncomes = {};
     for (const inc of incomeRecords) deployIncomes[inc.player_id] = inc;
 
-    // Phase-end snapshot
+    // Phase-end snapshot (territory states now include revealed troop additions)
     const snapshot = buildSnapshot({
       campaignId: campaign_id, round, phase, snapshotType: 'phase_end',
       territoryStates: finalTerritoryStates, activePlayers, deployIncomes,
     });
     await base44.asServiceRole.entities.PhaseSnapshot.create(snapshot);
 
-    // Public reveal log (no placement data, just that reveal occurred)
+    // Public reveal log — confirms reveal occurred, no raw placement data
     await log(base44, campaign_id, round, phase, 'phase_advanced', null, {
-      next_phase: 'attack', round,
+      next_phase: 'attack',
+      round,
       players_auto_submitted: activePlayers
         .filter(p => finalDecisions.find(d => d.player_id === p.id)?.is_auto_submitted)
         .map(p => p.display_name),
     }, true);
 
-    // Advance to attack phase
+    // Advance campaign phase
     await base44.asServiceRole.entities.Campaign.update(campaign_id, {
       current_phase: 'attack',
     });
