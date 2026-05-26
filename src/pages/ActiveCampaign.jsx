@@ -91,6 +91,12 @@ export default function ActiveCampaign() {
 
   const phase = campaign?.current_phase;
 
+  // Determine effective player for perspective (simulated or real)
+  const effectivePlayer = useMemo(() => {
+    if (currentPerspective) return currentPerspective; // simulated perspective
+    return myPlayer; // admin view
+  }, [currentPerspective, myPlayer]);
+
   // ── Panel routing (extracted) ──────────────────────────────────────────────
 
   const leftDockContent = (
@@ -120,12 +126,6 @@ export default function ActiveCampaign() {
 
   const displayCampaign = campaign ?? { name: 'Loading…', current_round: 0, current_phase: 'faction_selection', phase_deadline: null };
   const isAdmin = myPlayer?.is_admin;
-  
-  // Determine effective player for perspective (simulated or real)
-  const effectivePlayer = useMemo(() => {
-    if (currentPerspective) return currentPerspective; // simulated perspective
-    return myPlayer; // admin view
-  }, [currentPerspective, myPlayer]);
   
   // Check if campaign has test players (for showing perspective selector)
   const hasTestPlayers = players?.some(p => p.is_test_player) === true;
