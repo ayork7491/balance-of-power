@@ -124,8 +124,7 @@ export default function AttackArrowLayer({
 
   return (
     <svg
-      className="absolute inset-0 pointer-events-none"
-      style={{ width: '100%', height: '100%' }}
+      style={{ width: '100%', height: '100%', position: 'absolute', inset: 0 }}
       viewBox={viewBox}
       preserveAspectRatio="xMidYMid meet"
     >

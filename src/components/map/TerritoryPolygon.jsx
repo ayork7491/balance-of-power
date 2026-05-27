@@ -1,9 +1,12 @@
 /**
- * TerritoryPolygon — renders a single territory as an SVG polygon.
- * All visual state (color, opacity, highlight) is derived from props.
- * No business logic lives here.
+ * TerritoryPolygon — renders a single territory as an SVG group.
+ *
+ * No onClick — all pointer handling is delegated to the MapRenderer container
+ * via event delegation (getTerritoryIdFromTarget walks up to data-tid).
+ *
+ * Every interactive element carries data-tid so the container can identify
+ * which territory was tapped even if the hit element is a circle or text.
  */
-import { motion } from 'framer-motion';
 import { PLAYER_COLORS } from '@/config/theme';
 
 const TERRAIN_PATTERNS = {
@@ -25,13 +28,13 @@ export default function TerritoryPolygon({
   isSelected,      // bool
   isHighlighted,   // bool — e.g. valid attack/fortify target
   isAttackable,    // bool
-  onClick,
+  // onClick intentionally removed — handled by MapRenderer container delegation
 }) {
-  const { points, cx, cy, terrain, name } = territory;
+  const { points, cx, cy, terrain, name, territory_id } = territory;
   const terrain_cfg = TERRAIN_PATTERNS[terrain ?? 'plains'] ?? TERRAIN_PATTERNS.plains;
 
   // Fill: owned → player color tinted, unowned → region color dimmed
-  const baseFill  = ownerColor ?? regionColor;
+  const baseFill    = ownerColor ?? regionColor;
   const fillOpacity = ownerColor
     ? (isSelected ? 0.95 : 0.65)
     : (isSelected ? 0.50 : 0.25);
@@ -42,32 +45,30 @@ export default function TerritoryPolygon({
   let strokeOpacity = isSelected ? 1.0 : 0.5;
 
   if (isHighlighted) {
-    strokeColor   = '#facc15'; // yellow pulse target
+    strokeColor   = '#facc15';
     strokeWidth   = 2.5;
     strokeOpacity = 1;
   }
   if (isAttackable) {
-    strokeColor   = '#ef4444'; // red hostile border
+    strokeColor   = '#ef4444';
     strokeWidth   = 2;
     strokeOpacity = 0.9;
   }
 
+  // Selection glow filter
+  const filterStyle = isSelected
+    ? { filter: 'drop-shadow(0 0 4px rgba(251, 191, 36, 0.5))' }
+    : {};
+
   return (
-    <motion.g
-      onClick={onClick}
-      // Allow pointer events to pass through to map container for drag handling
-      // Territory selection happens via onClick, not onPointerDown
-      className="cursor-pointer touch-manipulation"
-      role="button"
-      aria-label={name}
-      whileHover={{ scale: 1.02 }}
-      whileTap={{ scale: 0.98 }}
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.2 }}
-      style={{ pointerEvents: 'all', touchAction: 'none' }}
+    // data-tid on the <g> is the primary anchor for event delegation.
+    // cursor-pointer gives visual affordance.
+    <g
+      data-tid={territory_id}
+      style={{ cursor: 'pointer', ...filterStyle }}
     >
-      <motion.polygon
+      <polygon
+        data-tid={territory_id}
         points={points}
         fill={baseFill}
         fillOpacity={fillOpacity * terrain_cfg.extraOpacity}
@@ -75,18 +76,13 @@ export default function TerritoryPolygon({
         strokeWidth={strokeWidth}
         strokeOpacity={strokeOpacity}
         strokeDasharray={terrain_cfg.strokeDash ?? undefined}
-        animate={{
-          fillOpacity: fillOpacity * terrain_cfg.extraOpacity,
-          strokeWidth: strokeWidth
-        }}
-        transition={{ duration: 0.15 }}
-        style={{ filter: isSelected ? 'drop-shadow(0 0 4px rgba(251, 191, 36, 0.4))' : 'none' }}
       />
 
       {/* Troop count label — only when owned */}
       {troopCount > 0 && (
         <>
           <circle
+            data-tid={territory_id}
             cx={cx}
             cy={cy}
             r={12}
@@ -95,6 +91,8 @@ export default function TerritoryPolygon({
             strokeWidth={1}
           />
           <text
+            cx={cx}
+            cy={cy}
             x={cx}
             y={cy + 4}
             textAnchor="middle"
@@ -108,6 +106,6 @@ export default function TerritoryPolygon({
           </text>
         </>
       )}
-    </motion.g>
+    </g>
   );
 }

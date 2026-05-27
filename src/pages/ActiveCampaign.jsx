@@ -308,32 +308,33 @@ function ActiveCampaignContent() {
         {mapDef && (
         <>
           <MapRenderer
-          mapDef={mapDef}
-          stateById={stateById}
-          players={players}
-          selectedId={selectedTerritoryId}
-          highlightIds={highlightIds}
-          attackableIds={attackableIds}
-          onSelect={setSelectedTerritoryId}
-          currentPhase={phase}
-          actingPlayer={actionPlayer}
-          onAttackOriginSelect={handleAttackOriginSelect}
-          onAttackTargetSelect={handleAttackTargetSelect}
-          onFortifyOriginSelect={handleFortifyOriginSelect}
-          onFortifyDestinationSelect={handleFortifyDestinationSelect}
-          onBuildTerritorySelect={handleBuildTerritorySelect}
-          onDraftTerritorySelect={handleDraftTerritorySelect}
-          onDeployTerritorySelect={handleDeployTerritorySelect}
-          arrowLayer={arrowAttacks.length > 0 ? (
-            <AttackArrowLayer
-              attacks={arrowAttacks}
-              mapDef={mapDef}
-              players={players}
-              myPlayerId={effectivePlayer?.id}
-              viewBox={`0 0 ${mapDef.width} ${mapDef.height}`}
-              revealed={phase !== 'attack'}
-            />
-          ) : null}
+            mapDef={mapDef}
+            stateById={stateById}
+            players={players}
+            selectedId={selectedTerritoryId}
+            highlightIds={highlightIds}
+            attackableIds={attackableIds}
+            onSelect={setSelectedTerritoryId}
+            currentPhase={phase}
+            actingPlayer={actionPlayer}
+            onAttackOriginSelect={handleAttackOriginSelect}
+            onAttackTargetSelect={handleAttackTargetSelect}
+            onFortifyOriginSelect={handleFortifyOriginSelect}
+            onFortifyDestinationSelect={handleFortifyDestinationSelect}
+            onBuildTerritorySelect={handleBuildTerritorySelect}
+            onDraftTerritorySelect={handleDraftTerritorySelect}
+            onDeployTerritorySelect={handleDeployTerritorySelect}
+            debugMode={isTestMode}
+            arrowLayer={arrowAttacks.length > 0 ? (
+              <AttackArrowLayer
+                attacks={arrowAttacks}
+                mapDef={mapDef}
+                players={players}
+                myPlayerId={effectivePlayer?.id}
+                viewBox={`0 0 ${mapDef.width} ${mapDef.height}`}
+                revealed={phase !== 'attack'}
+              />
+            ) : null}
           />
 
           {/* RegionLegend moved to RightDockRouter to keep map viewport clear */}

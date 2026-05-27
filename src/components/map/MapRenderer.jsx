@@ -1,16 +1,20 @@
 /**
  * MapRenderer — schema-driven SVG map.
  *
- * Accepts:
- *   mapDef       — static MapDef (shape, adjacency, regions)
- *   stateByKey   — { [territory_key]: TerritoryState } (dynamic campaign state)
- *   players      — CampaignPlayer[] (for color lookup)
- *   selectedKey  — currently selected territory key
- *   highlightKeys — Set<string> of keys to highlight (fortify targets, etc.)
- *   attackableKeys — Set<string> of enemy-owned neighbors
- *   onSelect     — (key: string | null) => void
+ * Pointer event architecture (fixes territory click regression):
  *
- * Zoom/pan via pointer events + wheel. No external library needed.
+ *   pointerdown on container  → record start position + capture pointer
+ *   pointermove on container  → track drag distance, pan if moved
+ *   pointerup on container    → if NOT dragged (< TAP_THRESHOLD px), check if
+ *                               the event target has data-tid and fire territory
+ *                               selection. drag.current is still live here.
+ *
+ * Key fix: territory selection fires in onPointerUp (NOT via child onClick).
+ * This keeps drag.current live at decision time and avoids the child onClick
+ * firing AFTER drag.current was nulled out.
+ *
+ * TerritoryPolygon no longer has an onClick prop — all clicks are handled here
+ * via event delegation on the container.
  */
 import { useRef, useState, useCallback, useEffect } from 'react';
 import { motion } from 'framer-motion';
@@ -29,7 +33,20 @@ function getPlayerHex(players, playerId) {
 
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 4.0;
-const TAP_THRESHOLD = 3; // px movement to distinguish tap vs drag
+const TAP_THRESHOLD = 6; // px — slightly larger for touch
+
+// Walk up the DOM from event.target to find the nearest [data-tid] attribute.
+function getTerritoryIdFromTarget(target) {
+  let el = target;
+  let depth = 0;
+  while (el && depth < 8) {
+    const tid = el.dataset?.tid;
+    if (tid) return tid;
+    el = el.parentElement;
+    depth++;
+  }
+  return null;
+}
 
 export default function MapRenderer({
   mapDef,
@@ -50,11 +67,17 @@ export default function MapRenderer({
   onBuildTerritorySelect = null,
   onDraftTerritorySelect = null,
   onDeployTerritorySelect = null,
+  // Debug
+  debugMode = false,
 }) {
   const containerRef = useRef(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
-  const drag = useRef(null); // { startX, startY, originX, originY, moved }
-  const rafRef = useRef(null); // requestAnimationFrame ID
+  // drag.current is nulled AFTER territory selection in onPointerUp
+  const drag = useRef(null);
+  const rafRef = useRef(null);
+
+  // Debug state
+  const [debugInfo, setDebugInfo] = useState(null);
 
   // Use canonical map interaction controller
   const {
@@ -62,12 +85,6 @@ export default function MapRenderer({
     attackOriginId,
     fortifyOriginId,
     handleTerritoryClick,
-    clearInteraction,
-    isOwnedByActingPlayer,
-    areAdjacent,
-    getValidAttackTargets,
-    getValidFortifyDestinations,
-    getValidBuildTerritories,
   } = useMapInteraction({
     currentPhase,
     selectedTerritoryId: selectedId,
@@ -126,48 +143,48 @@ export default function MapRenderer({
     return () => el.removeEventListener('wheel', handleWheel);
   }, [handleWheel]);
 
-  // ── Pointer drag (pan) with requestAnimationFrame ──────────────────────────
+  // ── Pointer handlers ───────────────────────────────────────────────────────
   const onPointerDown = useCallback((e) => {
     if (e.button !== 0) return;
     e.preventDefault();
-    
-    // Cancel any pending RAF
+
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    
-    // Initialize drag state
+
     drag.current = {
       startX: e.clientX,
       startY: e.clientY,
       originX: transform.x,
       originY: transform.y,
       moved: false,
-      lastX: e.clientX,
-      lastY: e.clientY,
+      downTarget: e.target, // save target at pointerdown for tid lookup
     };
-    
+
     e.currentTarget.setPointerCapture(e.pointerId);
   }, [transform.x, transform.y]);
 
   const onPointerMove = useCallback((e) => {
     if (!drag.current) return;
     e.preventDefault();
-    
+
     const dx = e.clientX - drag.current.startX;
     const dy = e.clientY - drag.current.startY;
-    
-    // Mark as moved if exceeds threshold
+
     if (Math.abs(dx) > TAP_THRESHOLD || Math.abs(dy) > TAP_THRESHOLD) {
       drag.current.moved = true;
     }
-    
-    // Throttle pan updates via RAF for smooth performance
+
+    if (!drag.current.moved) return; // don't pan until threshold exceeded
+
     if (rafRef.current) return;
-    
+    const captureDx = dx;
+    const captureDy = dy;
+
     rafRef.current = requestAnimationFrame(() => {
+      if (!drag.current) return;
       setTransform(prev => ({
         ...prev,
-        x: drag.current.originX + dx,
-        y: drag.current.originY + dy,
+        x: drag.current.originX + captureDx,
+        y: drag.current.originY + captureDy,
       }));
       rafRef.current = null;
     });
@@ -175,31 +192,51 @@ export default function MapRenderer({
 
   const onPointerUp = useCallback((e) => {
     if (!drag.current) return;
-    
-    // Cancel pending RAF
+
     if (rafRef.current) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
-    
-    drag.current = null;
-  }, []);
 
-  // ── Territory click wrapper ────────────────────────────────────────────────
-  // Wrap the controller's handler with tap-vs-drag detection
-  const handleTap = useCallback((tid) => {
-    if (!drag.current) return;
-    
-    const hasMoved = drag.current.moved;
-    
-    if (hasMoved) {
-      // Drag detected (> 3px) - don't trigger click
-      return;
+    const wasDrag = drag.current.moved;
+    const downTarget = drag.current.downTarget;
+
+    // ── CRITICAL: resolve territory BEFORE nulling drag.current ──────────────
+    if (!wasDrag) {
+      // It was a tap — find territory id from the element tapped
+      // Use the pointerup target first, fall back to pointerdown target
+      const tid = getTerritoryIdFromTarget(e.target) ?? getTerritoryIdFromTarget(downTarget);
+
+      if (debugMode) {
+        setDebugInfo({
+          classification: 'tap',
+          upTarget: e.target?.tagName,
+          downTarget: downTarget?.tagName,
+          territoryId: tid ?? 'none',
+          phase: currentPhase,
+          selectedBefore: selectedId,
+          interactionMode,
+          timestamp: new Date().toISOString(),
+        });
+        console.log('[MapRenderer] TAP', { tid, phase: currentPhase, target: e.target });
+      }
+
+      if (tid) {
+        handleTerritoryClick(tid);
+      }
+    } else {
+      if (debugMode) {
+        setDebugInfo(prev => ({
+          ...(prev ?? {}),
+          classification: 'drag',
+          timestamp: new Date().toISOString(),
+        }));
+      }
     }
-    
-    // Tap detected (< 3px) - route through interaction controller
-    handleTerritoryClick(tid);
-  }, [handleTerritoryClick]);
+
+    // Null AFTER selection fires
+    drag.current = null;
+  }, [handleTerritoryClick, debugMode, currentPhase, selectedId, interactionMode]);
 
   // ── Region color lookup ────────────────────────────────────────────────────
   const regionColorById = {};
@@ -217,13 +254,12 @@ export default function MapRenderer({
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerLeave={onPointerUp}
-      style={{ 
-        cursor: drag.current ? 'grabbing' : 'grab', 
+      style={{
+        cursor: 'grab',
         touchAction: 'none',
         WebkitTouchCallout: 'none',
         WebkitUserSelect: 'none',
         userSelect: 'none',
-        contain: 'strict',
       }}
       data-map-container="true"
     >
@@ -235,90 +271,104 @@ export default function MapRenderer({
           transformOrigin: '0 0',
         }}
       >
-      <svg
-        width="100%"
-        height="100%"
-        style={{ overflow: 'visible' }}
-      >
-        <g>
-          {/* Adjacency lines drawn first (below territories) */}
-          <AdjacencyLines mapDef={mapDef} />
+        <svg
+          width={mapDef.width}
+          height={mapDef.height}
+          style={{ overflow: 'visible', display: 'block' }}
+        >
+          <g>
+            {/* Adjacency lines — non-interactive */}
+            <AdjacencyLines mapDef={mapDef} />
 
-          {/* Territory polygons */}
-          {mapDef.territories.map(territory => {
-            const tid    = territory.territory_id;
-            const tState = stateById[tid];
-            const ownerColor = tState?.owner_player_id
-              ? getPlayerHex(players, tState.owner_player_id)
-              : null;
-            const regionColor = regionColorById[territory.region_id] ?? '#334155';
+            {/* Territory polygons — interactive via data-tid, no onClick prop */}
+            {mapDef.territories.map(territory => {
+              const tid = territory.territory_id;
+              const tState = stateById[tid];
+              const ownerColor = tState?.owner_player_id
+                ? getPlayerHex(players, tState.owner_player_id)
+                : null;
+              const regionColor = regionColorById[territory.region_id] ?? '#334155';
 
-            return (
-              <TerritoryPolygon
-                key={tid}
-                territory={territory}
-                regionColor={regionColor}
-                ownerColor={ownerColor}
-                troopCount={tState?.troop_count ?? 0}
-                isSelected={selectedId === tid}
-                isHighlighted={highlightIds.has(tid)}
-                isAttackable={attackableIds.has(tid)}
-                onClick={() => handleTap(tid)}
-              />
-            );
-          })}
+              return (
+                <TerritoryPolygon
+                  key={tid}
+                  territory={territory}
+                  regionColor={regionColor}
+                  ownerColor={ownerColor}
+                  troopCount={tState?.troop_count ?? 0}
+                  isSelected={selectedId === tid}
+                  isHighlighted={highlightIds.has(tid)}
+                  isAttackable={attackableIds.has(tid)}
+                />
+              );
+            })}
 
-          {/* Territory name labels (shown at comfortable zoom levels) */}
-          {transform.scale >= 0.7 && mapDef.territories.map(territory => (
-            <text
-              key={`label-${territory.territory_id}`}
-              x={territory.cx}
-              y={territory.cy + 22}
-              textAnchor="middle"
-              fontSize={Math.max(7, 10 / transform.scale * 0.85)}
-              fontFamily="'Rajdhani', sans-serif"
-              fontWeight="600"
-              fill="rgba(255,255,255,0.85)"
-              stroke="rgba(0,0,0,0.7)"
-              strokeWidth={0.7}
-              style={{ 
-                pointerEvents: 'none', 
-                userSelect: 'none',
-                textShadow: '0 1px 3px rgba(0,0,0,0.8)'
-              }}
-            >
-              {territory.name}
-            </text>
-          ))}
-        </g>
-      </svg>
+            {/* Territory name labels — non-interactive */}
+            {transform.scale >= 0.7 && mapDef.territories.map(territory => (
+              <text
+                key={`label-${territory.territory_id}`}
+                x={territory.cx}
+                y={territory.cy + 22}
+                textAnchor="middle"
+                fontSize={Math.max(7, 10 / transform.scale * 0.85)}
+                fontFamily="'Rajdhani', sans-serif"
+                fontWeight="600"
+                fill="rgba(255,255,255,0.85)"
+                stroke="rgba(0,0,0,0.7)"
+                strokeWidth={0.7}
+                style={{
+                  pointerEvents: 'none',
+                  userSelect: 'none',
+                }}
+              >
+                {territory.name}
+              </text>
+            ))}
+          </g>
+        </svg>
       </div>
 
-      {/* Attack arrow overlay — rendered as absolute SVG sibling, same viewBox */}
-      {arrowLayer}
+      {/* Attack arrow overlay — non-interactive overlay */}
+      <div style={{ pointerEvents: 'none', position: 'absolute', inset: 0 }}>
+        {arrowLayer}
+      </div>
+
+      {/* Debug overlay */}
+      {debugMode && debugInfo && (
+        <div className="absolute top-2 left-2 z-50 bg-black/80 text-green-400 text-[10px] font-mono p-2 rounded max-w-[220px] space-y-0.5 pointer-events-none">
+          <div className="font-bold text-yellow-400 uppercase tracking-wider mb-1">Map Interaction Debug</div>
+          <div>Classification: <span className={debugInfo.classification === 'tap' ? 'text-green-300' : 'text-orange-300'}>{debugInfo.classification}</span></div>
+          <div>Territory: {debugInfo.territoryId ?? '—'}</div>
+          <div>Phase: {debugInfo.phase ?? '—'}</div>
+          <div>Mode: {debugInfo.interactionMode ?? '—'}</div>
+          <div>Selected before: {debugInfo.selectedBefore ?? '—'}</div>
+          <div>Up target: {debugInfo.upTarget ?? '—'}</div>
+          <div className="text-muted-foreground">{debugInfo.timestamp?.split('T')[1]?.slice(0,8)}</div>
+        </div>
+      )}
 
       {/* Zoom controls */}
-      <motion.div 
+      <motion.div
         className="absolute bottom-4 right-4 flex flex-col gap-1.5 z-10"
         initial={{ y: 20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ duration: 0.3, delay: 0.3 }}
+        style={{ pointerEvents: 'auto' }}
       >
         <motion.button
+          onPointerDown={e => e.stopPropagation()}
           onClick={() => setTransform(t => ({ ...t, scale: Math.min(MAX_ZOOM, t.scale * 1.25) }))}
           className="w-9 h-9 rounded-lg bg-panel-header border border-panel-border text-foreground text-lg font-light flex items-center justify-center hover:bg-secondary hover:border-primary/50 active:scale-95 transition-all shadow-lg touch-manipulation"
           aria-label="Zoom in"
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
         >+</motion.button>
         <motion.button
+          onPointerDown={e => e.stopPropagation()}
           onClick={() => setTransform(t => ({ ...t, scale: Math.max(MIN_ZOOM, t.scale / 1.25) }))}
           className="w-9 h-9 rounded-lg bg-panel-header border border-panel-border text-foreground text-lg font-light flex items-center justify-center hover:bg-secondary hover:border-primary/50 active:scale-95 transition-all shadow-lg touch-manipulation"
           aria-label="Zoom out"
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
         >−</motion.button>
         <motion.button
+          onPointerDown={e => e.stopPropagation()}
           onClick={() => {
             const el = containerRef.current;
             if (!el || !mapDef) return;
@@ -329,8 +379,6 @@ export default function MapRenderer({
           className="w-9 h-9 rounded-lg bg-panel-header border border-panel-border text-foreground text-sm flex items-center justify-center hover:bg-secondary hover:border-primary/50 active:scale-95 transition-all shadow-lg touch-manipulation"
           aria-label="Reset zoom"
           title="Reset view"
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
         >⊡</motion.button>
       </motion.div>
     </div>
