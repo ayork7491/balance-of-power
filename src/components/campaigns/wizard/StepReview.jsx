@@ -1,7 +1,8 @@
 /**
  * StepReview — Summary of all campaign settings before creation.
  */
-import { Shield, Users, Settings, Calendar } from 'lucide-react';
+import { Shield, Users, Settings } from 'lucide-react';
+import { AVAILABLE_MAPS } from '@/features/maps/mapData';
 
 function Row({ label, value }) {
   return (
@@ -26,6 +27,9 @@ function Section({ icon: Icon, title, children }) {
 
 export default function StepReview({ form }) {
   const s = form.settings;
+  const selectedMap = AVAILABLE_MAPS.find(m => m.id === form.map_id);
+  const mapDisplayName = selectedMap ? selectedMap.name : (form.map_id || '—');
+
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted-foreground">Review your campaign settings before creating. You can change most settings in the lobby.</p>
@@ -37,8 +41,25 @@ export default function StepReview({ form }) {
 
       <Section icon={Shield} title="Game">
         <Row label="Profile" value={form.game_profile_name || 'None selected'} />
-        <Row label="Map" value={form.map_id === 'map_v1_standard' ? 'Standard Map (V1)' : form.map_id} />
+        <Row label="Map" value={mapDisplayName} />
+        {selectedMap && (
+          <Row label="Territories" value={`${selectedMap.territories.length} · ${selectedMap.min_players}–${selectedMap.max_players} players`} />
+        )}
       </Section>
+
+      {/* Debug block — map selection verification */}
+      <div className="rounded border border-border bg-muted/30 p-3 space-y-1">
+        <p className="text-[10px] font-mono font-bold text-muted-foreground uppercase tracking-widest mb-1">Debug — Map</p>
+        <p className="text-[10px] font-mono text-muted-foreground">
+          Available IDs: <span className="text-foreground">{AVAILABLE_MAPS.map(m => m.id).join(', ')}</span>
+        </p>
+        <p className="text-[10px] font-mono text-muted-foreground">
+          Selected map_id: <span className={form.map_id === 'shattered_crown_v1' ? 'text-green-400' : 'text-status-pending'}>{form.map_id || '(none)'}</span>
+        </p>
+        <p className="text-[10px] font-mono text-muted-foreground">
+          Will save: <span className="text-foreground font-semibold">map_id: "{form.map_id || 'shattered_crown_v1'}"</span>
+        </p>
+      </div>
 
       <Section icon={Settings} title="Settings">
         <Row label="Max Players" value={s.max_players} />

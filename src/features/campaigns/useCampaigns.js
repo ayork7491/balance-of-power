@@ -112,7 +112,7 @@ export async function createCampaign(formData) {
     status: 'lobby',
     game_profile_id: formData.game_profile_id,
     game_profile_name: formData.game_profile_name,
-    map_id: formData.map_id || 'map_v1_standard',
+    map_id: formData.map_id || 'shattered_crown_v1',
     invite_code,
     current_round: 0,
     settings: { ...DEFAULT_CAMPAIGN_SETTINGS, ...formData.settings },

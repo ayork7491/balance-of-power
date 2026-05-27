@@ -27,7 +27,7 @@ export type {
 } from './types';
 
 // Static map definitions
-export { MAP_V1_STANDARD, MAP_REGISTRY, getMap } from './mapData';
+export { MAP_V1_STANDARD, MAP_REGISTRY, getMap, AVAILABLE_MAPS } from './mapData';
 
 // Validation
 export { validateMap, assertMapValid } from './mapValidation';
