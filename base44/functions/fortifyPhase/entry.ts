@@ -299,12 +299,12 @@ Deno.serve(async (req) => {
       }, { status: 400 });
     }
 
-    // Load own decision
-    const decisions = await base44.entities.PhaseDecision.filter({
-      campaign_id, player_id: myPlayer.id, phase: 'fortify', round,
+    // Load acting player's decision (may differ from myPlayer when admin acts as test player)
+    const decisions = await base44.asServiceRole.entities.PhaseDecision.filter({
+      campaign_id, player_id: actingPlayer.id, phase: 'fortify', round,
     });
     let decision = decisions[0];
-    if (!decision) return Response.json({ error: 'No fortify decision found' }, { status: 404 });
+    if (!decision) return Response.json({ error: `No fortify decision found for player ${actingPlayer.display_name}. Phase may not have started yet.` }, { status: 404 });
     if (decision.is_locked) return Response.json({ error: 'You have already locked your fortifications' }, { status: 400 });
 
     const currentMovements = decision.data?.movements ?? [];
@@ -339,7 +339,7 @@ Deno.serve(async (req) => {
       ? currentMovements.map((m, i) => i === existingIdx ? newMovement : m)
       : [...currentMovements, newMovement];
 
-    await base44.entities.PhaseDecision.update(decision.id, {
+    await base44.asServiceRole.entities.PhaseDecision.update(decision.id, {
       data: { movements: updatedMovements, construction: decision.data?.construction ?? null },
     });
 
@@ -358,7 +358,7 @@ Deno.serve(async (req) => {
     const { movement_id } = body;
     if (!movement_id) return Response.json({ error: 'movement_id is required' }, { status: 400 });
 
-    const decisions = await base44.entities.PhaseDecision.filter({
+    const decisions = await base44.asServiceRole.entities.PhaseDecision.filter({
       campaign_id, player_id: actingPlayer.id, phase: 'fortify', round,
     });
     const decision = decisions[0];
@@ -366,7 +366,7 @@ Deno.serve(async (req) => {
     if (decision.is_locked) return Response.json({ error: 'Already locked' }, { status: 400 });
 
     const updatedMovements = (decision.data?.movements ?? []).filter(m => m.id !== movement_id);
-    await base44.entities.PhaseDecision.update(decision.id, {
+    await base44.asServiceRole.entities.PhaseDecision.update(decision.id, {
       data: { movements: updatedMovements, construction: decision.data?.construction ?? null },
     });
 
@@ -405,12 +405,12 @@ Deno.serve(async (req) => {
       return Response.json({ error: `Territory ${territory_id} already has a structure` }, { status: 400 });
     }
 
-    // Load acting player's decision
-    const decisions = await base44.entities.PhaseDecision.filter({
+    // Load acting player's decision (use asServiceRole to work for both self and test players)
+    const decisions = await base44.asServiceRole.entities.PhaseDecision.filter({
       campaign_id, player_id: actingPlayer.id, phase: 'fortify', round,
     });
     let decision = decisions[0];
-    if (!decision) return Response.json({ error: 'No fortify decision found' }, { status: 404 });
+    if (!decision) return Response.json({ error: `No fortify decision found for player ${actingPlayer.display_name}. Phase may not have started yet.` }, { status: 404 });
     if (decision.is_locked) return Response.json({ error: 'You have already locked your fortifications' }, { status: 400 });
     if (decision.data?.construction) {
       return Response.json({ error: 'Construction project already started this phase' }, { status: 400 });
@@ -421,7 +421,7 @@ Deno.serve(async (req) => {
     // This allows players to stage construction privately without revealing resources
     
     // Store construction choice privately in PhaseDecision (no ConstructionProject yet)
-    await base44.entities.PhaseDecision.update(decision.id, {
+    await base44.asServiceRole.entities.PhaseDecision.update(decision.id, {
       data: { 
         movements: decision.data?.movements ?? [], 
         construction: { 
@@ -446,21 +446,21 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Not in fortify phase' }, { status: 400 });
     }
 
-    const decisions = await base44.entities.PhaseDecision.filter({
+    const decisions = await base44.asServiceRole.entities.PhaseDecision.filter({
       campaign_id, player_id: actingPlayer.id, phase: 'fortify', round,
     });
     let decision = decisions[0];
 
     if (!decision) {
       // Create empty locked decision
-      await base44.entities.PhaseDecision.create({
+      await base44.asServiceRole.entities.PhaseDecision.create({
         campaign_id, player_id: actingPlayer.id, phase: 'fortify', round,
         is_locked: true,
         locked_at: new Date().toISOString(),
         data: { movements: [], construction: null },
       });
     } else if (!decision.is_locked) {
-      await base44.entities.PhaseDecision.update(decision.id, {
+      await base44.asServiceRole.entities.PhaseDecision.update(decision.id, {
         is_locked: true,
         locked_at: new Date().toISOString(),
       });

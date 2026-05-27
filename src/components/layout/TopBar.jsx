@@ -1,14 +1,17 @@
 /**
- * TopBar — Campaign screen top status bar.
+ * TopBar — Campaign screen top status bar (Landscape / Desktop).
  * Shows: campaign name, round, phase, timer, lock status, test mode indicator.
  * In non-campaign screens, shows app branding only.
+ *
+ * Admin test mode now uses a single unified "Perspective" selector
+ * (replaces separate View As / Act As controls).
  */
 import { Link, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Shield, Lock, FlaskConical, Settings, Eye, User, TestTube } from 'lucide-react';
+import { Shield, Lock, FlaskConical, Settings } from 'lucide-react';
 import PhaseTag from '@/components/ui/PhaseTag';
 import CountdownTimer from '@/components/ui/CountdownTimer';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import PerspectiveSelector from './PerspectiveSelector';
 import { useCampaignTestContext } from '@/features/adminTestMode/CampaignTestContext';
 
 export default function TopBar({ 
@@ -16,17 +19,9 @@ export default function TopBar({
   players = [],
   isAdmin = false,
 }) {
-  // Use centralized test context
-  const {
-    viewingAsCampaignPlayerId,
-    actingAsCampaignPlayerId,
-    setViewingAsCampaignPlayerId,
-    setActingAsCampaignPlayerId,
-    availableActingAsPlayers,
-    availableViewingAsPlayers,
-    isTestMode,
-  } = useCampaignTestContext();
+  const { isTestMode } = useCampaignTestContext();
   const { id } = useParams();
+
   return (
     <motion.header 
       className="h-11 bg-panel-header border-b border-panel-border flex items-center px-3 sm:px-4 gap-3 sm:gap-4 shrink-0 z-20"
@@ -51,7 +46,7 @@ export default function TopBar({
 
       {campaign ? (
         <>
-          {/* Campaign name — better truncation */}
+          {/* Campaign name */}
           <motion.span 
             className="font-display text-sm font-semibold tracking-wide text-foreground truncate max-w-[8rem] sm:max-w-[12rem]"
             initial={{ opacity: 0, x: -10 }}
@@ -62,7 +57,7 @@ export default function TopBar({
             {campaign.name}
           </motion.span>
 
-          {/* Round — compact on mobile */}
+          {/* Round */}
           <motion.span 
             className="text-xs text-muted-foreground shrink-0 hidden sm:inline"
             initial={{ opacity: 0 }}
@@ -83,7 +78,7 @@ export default function TopBar({
             </motion.div>
           )}
 
-          {/* Timer — hide on very small screens */}
+          {/* Timer */}
           {campaign.phase_deadline && (
             <motion.div
               className="hidden xs:block"
@@ -98,7 +93,7 @@ export default function TopBar({
           {/* Spacer */}
           <div className="flex-1" />
 
-          {/* Lock status — simplified on mobile */}
+          {/* Lock status */}
           <motion.div 
             className="flex items-center gap-1 text-xs text-muted-foreground shrink-0"
             initial={{ opacity: 0 }}
@@ -119,82 +114,28 @@ export default function TopBar({
         </motion.span>
       )}
 
-      {/* Admin Test Mode controls — only for campaign admins, only self + test players in lists */}
-      {isAdmin && isTestMode && campaign?.id && availableActingAsPlayers?.length > 0 && (
+      {/* Admin Test Mode controls */}
+      {isAdmin && campaign?.id && (
         <div className="flex items-center gap-2 shrink-0">
-          {/* Viewing As selector — self + test players only */}
-          {availableViewingAsPlayers.length > 1 && (
-            <div className="flex items-center gap-1.5 bg-muted/10 border border-border px-2 py-1 rounded">
-              <Eye className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wider hidden sm:inline">View As</span>
-              <Select value={viewingAsCampaignPlayerId || 'self'} onValueChange={(val) => {
-                setViewingAsCampaignPlayerId(val === 'self' ? null : val);
-              }}>
-                <SelectTrigger className="h-7 text-xs w-32 sm:w-36">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="self">
-                    <span className="flex items-center gap-1.5">
-                      <User className="w-3 h-3" /> My View
-                    </span>
-                  </SelectItem>
-                  {availableViewingAsPlayers.filter(p => p.is_test_player).map((player) => (
-                    <SelectItem key={player.id} value={player.id}>
-                      <span className="flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: player.color ? `hsl(var(--${player.color}))` : '#888' }} />
-                        {player.display_name} (Test)
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
+          {/* Unified Perspective selector (only shown in test mode with test players) */}
+          <PerspectiveSelector />
 
-          {/* Acting As selector — self + test players only */}
-          {availableActingAsPlayers.length > 1 && (
-            <div className="flex items-center gap-1.5 bg-status-pending/10 border border-status-pending/40 px-2 py-1 rounded">
-              <TestTube className="w-3.5 h-3.5 text-status-pending" />
-              <span className="text-[10px] text-status-pending uppercase tracking-wider hidden sm:inline">Act As</span>
-              <Select value={actingAsCampaignPlayerId || 'self'} onValueChange={(val) => {
-                setActingAsCampaignPlayerId(val === 'self' ? null : val);
-              }}>
-                <SelectTrigger className="h-7 text-xs w-32 sm:w-36">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="self">
-                    <span className="flex items-center gap-1.5">
-                      <User className="w-3 h-3" /> My Player
-                    </span>
-                  </SelectItem>
-                  {availableActingAsPlayers.filter(p => p.is_test_player).map((player) => (
-                    <SelectItem key={player.id} value={player.id}>
-                      <span className="flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: player.color ? `hsl(var(--${player.color}))` : '#888' }} />
-                        {player.display_name} (Test)
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          {/* Admin link */}
+          {isTestMode && (
+            <Link
+              to={`/campaigns/${id}/admin`}
+              className="flex items-center gap-1 bg-status-pending/20 border border-status-pending/40 text-status-pending px-2 py-0.5 rounded text-xs font-display tracking-wider uppercase shrink-0 hover:brightness-125 transition-all"
+              title="Open Admin Test Mode"
+            >
+              <Settings className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Admin</span>
+            </Link>
           )}
-
-          <Link
-            to={`/campaigns/${id}/admin`}
-            className="flex items-center gap-1 bg-status-pending/20 border border-status-pending/40 text-status-pending px-2 py-0.5 rounded text-xs font-display tracking-wider uppercase shrink-0 hover:brightness-125 transition-all"
-            title="Open Admin Test Mode"
-          >
-            <Settings className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Admin</span>
-          </Link>
         </div>
       )}
 
       {/* Test Mode indicator (fallback when no players) */}
-      {isTestMode && campaign?.id && (players?.length === 0 || !players) && (
+      {isTestMode && campaign?.id && (!players || players.length === 0) && (
         <Link
           to={`/campaigns/${id}/admin`}
           className="flex items-center gap-1 bg-status-pending/20 border border-status-pending/40 text-status-pending px-2 py-0.5 rounded text-xs font-display tracking-wider uppercase shrink-0 hover:brightness-125 transition-all"

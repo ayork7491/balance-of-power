@@ -1,68 +1,110 @@
 /**
- * FortifyPanel — left dock panel for the fortify phase.
+ * FortifyPanel — left dock panel for the fortify & build phase.
  * Allows players to stage troop movements and start construction projects.
+ *
+ * Perspective: uses unified actingAsCampaignPlayerId from CampaignTestContext.
+ * Both fortification staging and construction staging submit for the acting player.
+ *
+ * Admin controls:
+ *  - AdminAdvancePhase appears when all players are locked and user is admin.
+ *  - Debug panel shows payload details in test mode.
  */
 import { useState, useEffect, useMemo } from 'react';
 import { base44 } from '@/api/base44Client';
-import { Loader2, Check, X, Castle, Hammer, ArrowRight, TestTube, User, Eye } from 'lucide-react';
+import { Loader2, Check, X, ArrowRight, TestTube, User } from 'lucide-react';
 import { useFortifyPhase } from '@/features/campaigns/fortify/useFortifyPhase';
 import { useFortifyLockStatus } from '@/features/campaigns/fortify/useFortifyLockStatus';
 import MovementSelector from './MovementSelector';
 import ConstructionSelector from './ConstructionSelector';
+import AdminAdvancePhase from '@/components/admin/AdminAdvancePhase';
 import { useCampaignTestContext } from '@/features/adminTestMode/CampaignTestContext';
 
-export default function FortifyPanel({ campaign, players, myPlayer, stateById, mapDef, adjacencyMap, selectedTerritoryId, onClearSelection }) {
-  // Use centralized test context
-  const { actingAsPlayer, actingAsCampaignPlayerId, viewingAsPlayer } = useCampaignTestContext();
-  
-  // Determine action player (acting-as or self)
-  const actionPlayer = actingAsPlayer || myPlayer;
-  const canDelegateActions = !!actingAsPlayer;
-  const delegationBlockedReason = null; // Would be set by backend if blocked
+export default function FortifyPanel({
+  campaign,
+  players,
+  myPlayer,
+  stateById,
+  mapDef,
+  adjacencyMap,
+  selectedTerritoryId,
+  onClearSelection,
+  onPhaseChanged,
+}) {
+  // Unified perspective from centralized context
+  const {
+    actingAsPlayer,
+    actingAsCampaignPlayerId,
+    effectiveActingPlayer,
+    isTestMode,
+    isAdmin,
+  } = useCampaignTestContext();
+
+  // Action player: if admin has set acting-as perspective, use that; else use myPlayer
+  const actionPlayer = effectiveActingPlayer ?? myPlayer;
+
   const [movements, setMovements] = useState([]);
   const [construction, setConstruction] = useState(null);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
-  const { 
-    stagedMovements, 
-    stagedConstruction, 
-    isLoading, 
-    reload 
-  } = useFortifyPhase({ campaign, myPlayer });
-  
+  const { stagedMovements, stagedConstruction, isLoading, reload } = useFortifyPhase({
+    campaign,
+    myPlayer,
+  });
+
   const { allLockStatus, isLoading: loadingLocks } = useFortifyLockStatus({ campaign });
 
-  const maxFortifications = campaign.settings?.max_fortifications_per_phase ?? 3;
-  const maxDistance = campaign.settings?.max_fortification_distance ?? 4;
+  const maxFortifications = campaign?.settings?.max_fortifications_per_phase ?? 3;
+  const maxDistance = campaign?.settings?.max_fortification_distance ?? 4;
 
-  // Sync with backend on mount
+  // Sync staged data from backend
   useEffect(() => {
     if (stagedMovements) setMovements(stagedMovements);
     if (stagedConstruction) setConstruction(stagedConstruction);
   }, [stagedMovements, stagedConstruction]);
 
+  // Determine lock status for the ACTION player (acting-as or self)
+  const isLocked = useMemo(() => {
+    const targetId = actionPlayer?.id ?? myPlayer?.id;
+    return allLockStatus?.find(l => l.player_id === targetId)?.is_locked ?? false;
+  }, [allLockStatus, actionPlayer, myPlayer]);
+
+  // All players locked?
+  const allPlayersLocked = useMemo(() => {
+    const activePlayers = players?.filter(p => !p.is_eliminated) ?? [];
+    if (activePlayers.length === 0) return false;
+    const lockedCount = allLockStatus.filter(l => l.is_locked).length;
+    return lockedCount >= activePlayers.length;
+  }, [players, allLockStatus]);
+
+  // Build acting_as_player_id payload field
+  const actingPayload = () => ({
+    acting_as_player_id: actingAsCampaignPlayerId ?? null,
+  });
+
   const handleStageMovement = async (origin, destination, troops) => {
     setError(null);
     setSuccess(null);
+    const payload = {
+      action: 'stageMovement',
+      campaign_id: campaign.id,
+      origin_territory_id: origin,
+      destination_territory_id: destination,
+      committed_troops: troops,
+      ...actingPayload(),
+    };
+    if (isTestMode) console.log('[FortifyPanel] stageMovement payload', payload);
     try {
-      const res = await base44.functions.invoke('fortifyPhase', {
-        action: 'stageMovement',
-        campaign_id: campaign.id,
-        origin_territory_id: origin,
-        destination_territory_id: destination,
-        committed_troops: troops,
-        acting_as_player_id: actingAsCampaignPlayerId || null,
-      });
+      const res = await base44.functions.invoke('fortifyPhase', payload);
       if (res.data.error) {
-        setError(res.data.error);
+        setError(`stageMovement failed: ${res.data.error}`);
       } else {
         setMovements(res.data.movements);
         setSuccess('Movement staged');
         reload();
       }
     } catch (err) {
-      setError(err.message);
+      setError(`stageMovement error (fn: fortifyPhase): ${err.message}`);
     }
   };
 
@@ -74,6 +116,7 @@ export default function FortifyPanel({ campaign, players, myPlayer, stateById, m
         action: 'deleteMovement',
         campaign_id: campaign.id,
         movement_id: movementId,
+        ...actingPayload(),
       });
       if (res.data.error) {
         setError(res.data.error);
@@ -83,30 +126,32 @@ export default function FortifyPanel({ campaign, players, myPlayer, stateById, m
         reload();
       }
     } catch (err) {
-      setError(err.message);
+      setError(`deleteMovement error: ${err.message}`);
     }
   };
 
   const handleStartConstruction = async (territoryId, structureType) => {
     setError(null);
     setSuccess(null);
+    const payload = {
+      action: 'startConstruction',
+      campaign_id: campaign.id,
+      territory_id: territoryId,
+      structure_type: structureType,
+      ...actingPayload(),
+    };
+    if (isTestMode) console.log('[FortifyPanel] startConstruction payload', payload);
     try {
-      const res = await base44.functions.invoke('fortifyPhase', {
-        action: 'startConstruction',
-        campaign_id: campaign.id,
-        territory_id: territoryId,
-        structure_type: structureType,
-        acting_as_player_id: actingAsCampaignPlayerId || null,
-      });
+      const res = await base44.functions.invoke('fortifyPhase', payload);
       if (res.data.error) {
-        setError(res.data.error);
+        setError(`startConstruction failed: ${res.data.error}`);
       } else {
-        setConstruction({ project_id: res.data.project_id });
-        setSuccess('Construction started');
+        setConstruction({ territory_id: territoryId, structure_type: structureType });
+        setSuccess('Construction staged');
         reload();
       }
     } catch (err) {
-      setError(err.message);
+      setError(`startConstruction error (fn: fortifyPhase): ${err.message}`);
     }
   };
 
@@ -117,7 +162,7 @@ export default function FortifyPanel({ campaign, players, myPlayer, stateById, m
       const res = await base44.functions.invoke('fortifyPhase', {
         action: 'lockFortify',
         campaign_id: campaign.id,
-        acting_as_player_id: actingAsCampaignPlayerId || null,
+        ...actingPayload(),
       });
       if (res.data.error) {
         setError(res.data.error);
@@ -126,11 +171,9 @@ export default function FortifyPanel({ campaign, players, myPlayer, stateById, m
         reload();
       }
     } catch (err) {
-      setError(err.message);
+      setError(`lockFortify error: ${err.message}`);
     }
   };
-
-  const isLocked = allLockStatus?.find(l => l.player_id === myPlayer.id)?.is_locked ?? false;
 
   return (
     <div className="p-4 space-y-4">
@@ -138,28 +181,31 @@ export default function FortifyPanel({ campaign, players, myPlayer, stateById, m
         <p className="font-display text-xs tracking-widest uppercase text-status-pending">
           Fortify & Build Phase
         </p>
+        {actionPlayer && actionPlayer.id !== myPlayer?.id && (
+          <p className="text-[10px] text-status-pending mt-0.5">
+            Acting as: {actionPlayer.display_name}
+          </p>
+        )}
       </div>
 
-      {/* Error/Success messages */}
+      {/* Error / Success */}
       {error && (
-        <div className="p-3 rounded border border-destructive/30 bg-destructive/10 text-xs text-destructive">
-          {error}
+        <div className="p-3 rounded border border-destructive/30 bg-destructive/10 text-xs text-destructive break-words">
+          ⚠ {error}
         </div>
       )}
       {success && (
         <div className="p-3 rounded border border-status-locked/30 bg-status-locked/10 text-xs text-status-locked">
-          {success}
+          ✓ {success}
         </div>
       )}
 
       {/* Staged Movements */}
       <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <p className="text-xs font-display tracking-wider uppercase text-muted-foreground">
-            Troop Movements ({movements.length}/{maxFortifications})
-          </p>
-        </div>
-        
+        <p className="text-xs font-display tracking-wider uppercase text-muted-foreground">
+          Troop Movements ({movements.length}/{maxFortifications})
+        </p>
+
         {movements.length === 0 ? (
           <p className="text-xs text-muted-foreground">No movements staged yet</p>
         ) : (
@@ -169,7 +215,7 @@ export default function FortifyPanel({ campaign, players, myPlayer, stateById, m
               const destName = mapDef?.territories.find(t => t.territory_id === mov.destination_territory_id)?.name ?? mov.destination_territory_id;
               return (
                 <div key={idx} className="flex items-center gap-2 text-xs px-2 py-1.5 rounded border border-border bg-muted/10">
-                  <ArrowRight className="w-3 h-3 text-muted-foreground" />
+                  <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />
                   <span className="flex-1 truncate">{originName}</span>
                   <span className="font-mono text-foreground">{mov.committed_troops}</span>
                   <span className="flex-1 truncate">{destName}</span>
@@ -191,7 +237,7 @@ export default function FortifyPanel({ campaign, players, myPlayer, stateById, m
         {!isLocked && movements.length < maxFortifications && (
           <MovementSelector
             campaign={campaign}
-            myPlayer={myPlayer}
+            myPlayer={actionPlayer}
             stateById={stateById}
             mapDef={mapDef}
             adjacencyMap={adjacencyMap}
@@ -206,22 +252,23 @@ export default function FortifyPanel({ campaign, players, myPlayer, stateById, m
 
       {/* Construction Project */}
       <div className="space-y-2 pt-4 border-t border-border">
-        <div className="flex items-center justify-between">
-          <p className="text-xs font-display tracking-wider uppercase text-muted-foreground">
-            Construction
-          </p>
-        </div>
+        <p className="text-xs font-display tracking-wider uppercase text-muted-foreground">
+          Construction
+        </p>
 
         {construction ? (
           <div className="p-3 rounded border border-border bg-muted/10 text-xs">
-            <p className="text-muted-foreground">Active project</p>
-            <p className="text-foreground font-medium mt-1">Loading project details...</p>
+            <p className="text-status-locked font-medium">
+              ✓ Construction staged: {construction.structure_type} in {
+                mapDef?.territories.find(t => t.territory_id === construction.territory_id)?.name ?? construction.territory_id
+              }
+            </p>
           </div>
         ) : (
           !isLocked && (
             <ConstructionSelector
               campaign={campaign}
-              myPlayer={myPlayer}
+              myPlayer={actionPlayer}
               stateById={stateById}
               mapDef={mapDef}
               selectedTerritoryId={selectedTerritoryId}
@@ -233,7 +280,7 @@ export default function FortifyPanel({ campaign, players, myPlayer, stateById, m
       </div>
 
       {/* Lock Button */}
-      {!isLocked && (
+      {!isLocked ? (
         <button
           onClick={handleLock}
           className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded bg-primary text-primary-foreground text-xs font-display tracking-widest uppercase hover:brightness-110 transition-all mt-4"
@@ -241,61 +288,14 @@ export default function FortifyPanel({ campaign, players, myPlayer, stateById, m
           <Check className="w-4 h-4" />
           Lock Fortifications
         </button>
-      )}
-
-      {isLocked && (
+      ) : (
         <div className="p-3 rounded border border-status-locked/30 bg-status-locked/10 text-xs text-status-locked flex items-center gap-2">
           <Check className="w-4 h-4" />
           Fortifications Locked
         </div>
       )}
 
-      {/* Acting-As Debug Panel */}
-      <div className="pt-4 border-t border-border">
-        <p className="text-[10px] font-display tracking-widest uppercase text-muted-foreground mb-2">
-          Acting-As Debug
-        </p>
-        <div className="space-y-1.5 text-[10px]">
-          <div className="flex items-center gap-2">
-            <User className="w-3 h-3 text-muted-foreground" />
-            <span className="text-muted-foreground">Authenticated:</span>
-            <span className="text-foreground">{myPlayer?.display_name ?? 'None'}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <TestTube className="w-3 h-3 text-muted-foreground" />
-            <span className="text-muted-foreground">Acting-As:</span>
-            <span className="text-foreground">{actingAsPlayer ? `${actingAsPlayer.display_name}${actingAsPlayer.is_test_player ? ' (Test)' : ''}` : '(self)'}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Eye className="w-3 h-3 text-muted-foreground" />
-            <span className="text-muted-foreground">Viewing-As:</span>
-            <span className="text-foreground">{viewingAsPlayer ? `${viewingAsPlayer.display_name}${viewingAsPlayer.is_test_player ? ' (Test)' : ''}` : 'Admin / My View'}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-muted-foreground">Action Submit For:</span>
-            <span className="text-foreground font-medium">{actionPlayer?.display_name ?? 'Unknown'}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-muted-foreground">Delegation Allowed:</span>
-            <span className={canDelegateActions ? 'text-status-locked font-semibold' : 'text-muted-foreground'}>
-              {canDelegateActions ? '✓ Yes' : '✗ No'}
-            </span>
-          </div>
-          {delegationBlockedReason && (
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground">Rejection Reason:</span>
-              <span className="text-status-danger">{delegationBlockedReason}</span>
-            </div>
-          )}
-          <div className="pt-1.5 border-t border-border/50 mt-1">
-            <p className="text-[10px] text-muted-foreground">
-              Submit button will save for: <span className="text-status-pending font-semibold">{actionPlayer?.display_name ?? 'Unknown'}</span>
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Other Players Lock Status */}
+      {/* Player Lock Status */}
       <div className="pt-4 border-t border-border space-y-2">
         <p className="text-xs font-display tracking-wider uppercase text-muted-foreground">
           Player Status
@@ -306,7 +306,7 @@ export default function FortifyPanel({ campaign, players, myPlayer, stateById, m
           </div>
         ) : (
           <div className="space-y-1">
-            {players.filter(p => !p.is_eliminated).map(player => {
+            {players?.filter(p => !p.is_eliminated).map(player => {
               const lockStatus = allLockStatus?.find(l => l.player_id === player.id);
               const isPlayerLocked = lockStatus?.is_locked ?? false;
               return (
@@ -325,6 +325,70 @@ export default function FortifyPanel({ campaign, players, myPlayer, stateById, m
           </div>
         )}
       </div>
+
+      {/* Admin Advance Phase — visible when all locked and user is admin */}
+      {isAdmin && (
+        <div className="pt-4 border-t border-border">
+          <AdminAdvancePhase
+            campaign={campaign}
+            players={players}
+            myPlayer={myPlayer}
+            allLockStatus={allLockStatus}
+            onPhaseChanged={onPhaseChanged}
+          />
+        </div>
+      )}
+
+      {/* Debug panel (test mode only) */}
+      {isTestMode && (
+        <div className="pt-4 border-t border-border">
+          <p className="text-[10px] font-display tracking-widest uppercase text-muted-foreground mb-2">
+            Debug — Perspective
+          </p>
+          <div className="space-y-1 text-[10px]">
+            <div className="flex gap-2">
+              <User className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
+              <span className="text-muted-foreground">Auth player:</span>
+              <span className="text-foreground">{myPlayer?.display_name ?? '—'}</span>
+            </div>
+            <div className="flex gap-2">
+              <TestTube className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
+              <span className="text-muted-foreground">Acting as:</span>
+              <span className="text-foreground">{actingAsPlayer ? `${actingAsPlayer.display_name} (Test)` : '(self)'}</span>
+            </div>
+            <div className="flex gap-2">
+              <span className="text-muted-foreground">Submit player:</span>
+              <span className="text-status-pending font-semibold">{actionPlayer?.display_name ?? '—'}</span>
+            </div>
+            <div className="flex gap-2">
+              <span className="text-muted-foreground">acting_as_player_id:</span>
+              <span className="text-foreground font-mono">{actingAsCampaignPlayerId ?? 'null'}</span>
+            </div>
+            <div className="flex gap-2">
+              <span className="text-muted-foreground">Function:</span>
+              <span className="text-foreground font-mono">fortifyPhase</span>
+            </div>
+            <div className="flex gap-2">
+              <span className="text-muted-foreground">My lock:</span>
+              <span className={isLocked ? 'text-status-locked' : 'text-status-pending'}>
+                {isLocked ? '✓ Locked' : '⊙ Pending'}
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <span className="text-muted-foreground">All locked:</span>
+              <span className={allPlayersLocked ? 'text-status-locked' : 'text-status-pending'}>
+                {allPlayersLocked ? '✓ Yes' : '✗ No'}
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <span className="text-muted-foreground">Admin advance:</span>
+              <span className={isAdmin && allPlayersLocked ? 'text-status-locked' : 'text-muted-foreground'}>
+                {isAdmin ? (allPlayersLocked ? '✓ Available' : '✗ Waiting for locks') : '✗ Not admin'}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

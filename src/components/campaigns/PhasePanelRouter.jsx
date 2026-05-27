@@ -140,6 +140,7 @@ export default function PhasePanelRouter({
           selectedTerritoryId={selectedTerritoryId}
           onClearSelection={onClearSelection}
           onPhaseChanged={onPhaseChanged}
+          isAdmin={myPlayer?.is_admin ?? false}
         />
       );
     }

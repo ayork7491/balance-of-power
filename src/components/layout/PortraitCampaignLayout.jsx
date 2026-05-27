@@ -64,7 +64,7 @@ export default function PortraitCampaignLayout({
   return (
     <div className="fixed inset-0 bg-background flex flex-col overflow-hidden">
       {/* Compact top bar */}
-      <PortraitTopBar campaign={campaign} isAdmin={isAdmin} isTestMode={isTestMode} />
+      <PortraitTopBar campaign={campaign} isAdmin={isAdmin} />
 
       {/* Map — takes all available space */}
       <main

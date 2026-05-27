@@ -1,185 +1,172 @@
-# Responsive Layout Architecture — Balance of Power
-
-## Philosophy
-
-**Portrait-supported / landscape-optimized.**
-
-Balance of Power works on both portrait and landscape orientations. Landscape is the preferred "command center" experience with permanent side docks. Portrait is a first-class mode with a map-dominant view and on-demand slide-over panels.
-
----
+# Responsive Layout Notes — Balance of Power
 
 ## Layout Modes
 
-Detected via `hooks/useLayoutMode.js` using `ResizeObserver` + `orientationchange`:
+Detected by `hooks/useLayoutMode.js` via ResizeObserver + orientationchange:
 
-| Mode | Trigger | Layout |
-|------|---------|--------|
-| `landscape` | `w ≥ 1024` OR `w > h AND w ≥ 640` | Full command center with side docks |
-| `compactLandscape` | `w > h AND h < 420` | Landscape layout, docks default-collapsed |
-| `portrait` | `h ≥ w OR w < 640` | Map-dominant + bottom sheets |
+| Mode | Condition | Layout Component |
+|---|---|---|
+| `portrait` | width < 600px OR orientation = portrait | `PortraitCampaignLayout` |
+| `compactLandscape` | 600–900px landscape | `LandscapeCampaignLayout` (compact=true) |
+| `landscape` | width ≥ 900px landscape | `LandscapeCampaignLayout` |
 
----
-
-## Component Architecture
-
-```
-CampaignLayout (router)
-  ├── useLayoutMode()
-  ├── → PortraitCampaignLayout    (portrait mode)
-  └── → LandscapeCampaignLayout   (landscape / compactLandscape)
-```
-
-### Landscape Layout (`LandscapeCampaignLayout`)
-
-```
-┌─────────────────────────────────────────────────────┐
-│                    TopBar (44px)                    │
-├───────────────┬─────────────────────┬───────────────┤
-│   LeftDock    │      Map (flex-1)   │   RightDock   │
-│  (Phase Panel)│                     │  (Info Panels)│
-│  collapsible  │                     │  collapsible  │
-├───────────────┴─────────────────────┴───────────────┤
-│                   BottomRail (48px)                 │
-└─────────────────────────────────────────────────────┘
-```
-
-- LeftDock: Phase action panel (deploy sliders, attack staging, etc.)
-- RightDock: Tab-driven info panels (leaderboard, history, region info)
-- Both docks collapse to 40px icon strip
-- BottomRail tabs control RightDock content
-- Map always visible in center
-
-### Portrait Layout (`PortraitCampaignLayout`)
-
-```
-┌─────────────────────┐
-│  PortraitTopBar     │  ~40px compact
-├─────────────────────┤
-│                     │
-│   Map (flex-1)      │  Takes all remaining space
-│   full width        │
-│                     │
-├─────────────────────┤
-│  PortraitBottomNav  │  ~52px + safe area
-└─────────────────────┘
-       ↕ (on-demand)
-┌─────────────────────┐
-│  PortraitBottomSheet│  Slides up from bottom (75vh max)
-│  ─── Phase Actions  │  ← "Phase" tab
-│  ─── Standings      │  ← "Standings" tab
-│  ─── History        │  ← "History" tab
-│  etc.               │
-└─────────────────────┘
-```
-
-- Map tab: sheet closed, full-map view
-- Any other tab: sheet opens with relevant content
-- Sheet closes on backdrop tap or map tab selection
-- Sheet max-height: 75vh (stays above keyboard)
+`CampaignLayout` is a pure router — it reads `useLayoutMode()` and delegates to the correct layout component.
 
 ---
 
-## Panel Routing (shared components)
+## Portrait Top Bar
 
-No panel components are duplicated. Both layouts use:
+File: `components/layout/PortraitTopBar.jsx`
 
-- `PhasePanelRouter` → `leftDockContent` (phase actions)
-- `RightDockRouter` → `rightDockContent` (info panels)
+Height: **40px** (10 Tailwind units)
 
-In portrait, these are rendered inside `PortraitBottomSheet`.
-In landscape, they're rendered inside `LeftDock` / `RightDock`.
+### Always present
+- **BoP Shield + "BoP" text** → `<Link to="/">` — navigates to Home Dashboard in ALL layout modes. Never relies on browser back. Works in portrait, landscape, and compact-landscape.
+
+### Campaign info (when campaign prop is set)
+- Campaign name (truncated)
+- Phase tag (compact variant)
+- Countdown timer (compact variant, hidden if no deadline)
+- Round number (R1, R2, …)
+
+### Admin controls (when `isAdmin = true`)
+- **Perspective selector** (compact variant) — only shown when test players exist in the campaign
+- **Admin Mode link** (TestTube icon) — always visible to campaign admins, links to `/campaigns/:id/admin`
 
 ---
 
-## Region Bonuses
+## Single Perspective Selector (Merged View As / Act As)
 
-**Not on the map.** Region bonuses are surfaced in:
-- **Standings** tab (landscape right dock + portrait sheet)
-- **Territories** tab (landscape right dock + portrait sheet)
+File: `components/layout/PerspectiveSelector.jsx`
 
-This keeps the map viewport unobstructed in both orientations.
+Replaces the old separate "View As" and "Act As" dropdowns with one unified "Perspective" selector.
+
+### Behavior
+- **Normal players**: selector never rendered. They always act/view as themselves.
+- **Campaign admins in test mode**: dropdown shows `Self` + all test players in the campaign.
+- **Selecting a perspective**: sets BOTH `actingAsCampaignPlayerId` AND `viewingAsCampaignPlayerId` to the same player.
+- **Selecting "Self"**: resets both to `null` (act and view as authenticated user).
+- Admins can NEVER select other real human players — only test players.
+
+### Compact variant (portrait)
+- Minimal width, no label text, TestTube icon prefix
+- Fits in 40px portrait top bar
+
+### Full variant (landscape)
+- "Perspective" label, wider select trigger
 
 ---
 
-## Mobile Input Fixes
+## Portrait Panel Architecture
 
-In `index.css`:
-```css
-@media (max-width: 768px) {
-  input[type="number"], input[type="text"], ... {
-    font-size: 16px !important;
-  }
+No permanent sidebars in portrait mode.
+
+| Tab | Sheet Content |
+|---|---|
+| Map | No sheet (full-screen map) |
+| Phase | `leftDockContent` (phase action panel) via `PortraitBottomSheet` |
+| Battles | `rightDockContent` (battle info) via `PortraitBottomSheet` |
+| Standings | `rightDockContent` (leaderboard + region bonuses) |
+| Zones | `rightDockContent` (territory info + region bonuses) |
+| History | `rightDockContent` (history log) |
+
+Sheet max-height: **75vh** to prevent keyboard overlap.
+
+---
+
+## Fortification Staging Endpoint
+
+Function: `fortifyPhase` (Deno backend)
+Invoked via: `base44.functions.invoke('fortifyPhase', payload)`
+
+### Actions
+
+| Action | Description |
+|---|---|
+| `stageMovement` | Stage a troop movement between owned territories |
+| `deleteMovement` | Remove a staged movement |
+| `startConstruction` | Stage a construction project for a territory |
+| `lockFortify` | Lock all decisions for the acting player |
+| `processPhaseEnd` | Admin only — apply all movements, create ConstructionProjects, advance to next round |
+
+### Payload
+```js
+{
+  action: 'stageMovement',           // or 'startConstruction', 'lockFortify', etc.
+  campaign_id: string,
+  origin_territory_id: string,       // stageMovement only
+  destination_territory_id: string,  // stageMovement only
+  committed_troops: number,          // stageMovement only
+  territory_id: string,              // startConstruction only
+  structure_type: 'castle'|'barracks'|'stables', // startConstruction only
+  acting_as_player_id: string|null,  // null = act as self; test player ID for admin delegation
 }
 ```
 
-- Prevents iOS Safari auto-zoom on input focus
-- `PortraitBottomSheet` uses `max-h-[75vh]` so content stays above soft keyboard
-- All troop inputs remain reachable when keyboard is open
+### Acting-as permission model (backend)
+- `acting_as_player_id: null` → acts as the authenticated user's own CampaignPlayer
+- `acting_as_player_id: <testPlayerId>` → allowed only if requester is campaign admin AND target is a test player
+- Other real human players: **blocked**
+
+### PhaseDecision lookup fix (v2)
+All PhaseDecision reads and writes now use `asServiceRole` so admin can read/write test player decisions. Previously used user-scoped `base44.entities.PhaseDecision` which only returned records owned by the authenticated user — causing 404 when acting as test player.
 
 ---
 
-## Portrait Bottom Tabs
+## Construction Staging Endpoint
 
-| Tab | Content in Portrait Sheet |
-|-----|--------------------------|
-| Map | — (sheet closed, full map) |
-| Phase | Phase action panel (deploy, attack, etc.) |
-| Battles | Battle history |
-| Standings | Leaderboard + Region bonuses |
-| Zones | Territory list + Region bonuses |
-| History | Campaign history log |
+Same function: `fortifyPhase`, action: `startConstruction`.
+
+Construction is staged privately in `PhaseDecision.data.construction`. No `ConstructionProject` entity is created until `processPhaseEnd` reveals and validates all staged choices.
+
+Resource validation happens at reveal time (not staging time) to preserve privacy.
 
 ---
 
-## Map Interaction (Portrait)
+## Admin Phase Advance Button
 
-Map interaction is identical in both orientations:
-- Tap territories → handled by `MapRenderer` pointer events
-- Pan → pointer drag on `MapRenderer`
-- Territory detail panel → `TerritoryDetailPanel` overlays map
-- Action panel → opens via "Phase" tab bottom sheet
+Component: `AdminAdvancePhase`
+Location in fortify: Bottom of `FortifyPanel`, inside the Phase bottom sheet (portrait) or LeftDock (landscape).
 
-The map uses `useLayoutMode`-agnostic pointer events — no orientation assumptions.
+### Visibility conditions
+- Current user is campaign admin (`myPlayer.is_admin === true`)
+- Campaign is not archived
+- All active (non-eliminated) players are locked for current phase
+
+### What it calls
+Each phase has a dedicated backend processor, not just a status update:
+
+| Phase | Processor |
+|---|---|
+| `faction_selection` | `setupPhase` |
+| `territory_draft` | `setupPhase` |
+| `initial_deploy` | `initialDeploy` |
+| `deploy` | `deployPhase` |
+| `attack` | `attackPhase` |
+| `battle` | `battlePhase` |
+| `fortify` | `fortifyPhase` (processPhaseEnd) |
+
+Debug info always visible in the button panel (lock counts, processor name, can-advance status).
+
+---
+
+## Portrait Admin Mode Access
+
+Campaign admins always see the **TestTube icon** in the portrait top bar (right side), which links to `/campaigns/:id/admin`.
+
+This is NOT gated behind `isTestMode` — it's always visible to admins so they can access test tools without needing to be in a specifically-named test campaign.
 
 ---
 
 ## Mobile Testing Checklist
 
-### Portrait (Phone)
-- [ ] Map visible on load (no sidebars blocking)
-- [ ] Phase tab → bottom sheet opens with phase actions
-- [ ] Troop inputs reachable above keyboard (sheet stays at 75vh)
-- [ ] Troop inputs don't trigger zoom (font-size ≥ 16px)
-- [ ] Map pan works behind open sheet (backdrop closes sheet first)
-- [ ] Territory tap works → detail panel shows over map
-- [ ] All 6 bottom tabs navigate correctly
-- [ ] Standings tab shows region bonuses
-- [ ] Safe area padding on bottom nav (iOS home indicator)
-- [ ] Back to map by tapping "Map" tab or backdrop
-
-### Landscape (Phone landscape / Tablet)
-- [ ] Side docks visible (landscape mode)
-- [ ] compactLandscape: docks start collapsed
-- [ ] Map center column fills at least 40% width
-- [ ] Bottom rail tab labels visible
-- [ ] Collapse/expand docks with chevron buttons
-
-### Desktop
-- [ ] Full landscape layout
-- [ ] Both docks expanded by default
-- [ ] All tabs in bottom rail work
-
----
-
-## Files
-
-| File | Role |
-|------|------|
-| `hooks/useLayoutMode.js` | Detects landscape / portrait / compactLandscape |
-| `components/layout/CampaignLayout.jsx` | Responsive router |
-| `components/layout/LandscapeCampaignLayout.jsx` | Landscape command center |
-| `components/layout/PortraitCampaignLayout.jsx` | Portrait map-dominant layout |
-| `components/layout/PortraitTopBar.jsx` | Compact portrait top bar |
-| `components/layout/PortraitBottomNav.jsx` | Portrait bottom tab nav |
-| `components/layout/PortraitBottomSheet.jsx` | Slide-up panel for portrait |
-| `index.css` | Mobile input zoom fix, safe area utilities |
+- [ ] BoP logo navigates to `/` in portrait
+- [ ] BoP logo navigates to `/` in landscape
+- [ ] Perspective selector visible in portrait top bar when test players exist
+- [ ] Perspective selector syncs View As and Act As to same player
+- [ ] Fortification staging does not 404 when acting as test player
+- [ ] Construction staging does not 404 when acting as test player
+- [ ] Admin advance button appears in Phase bottom sheet when all locked
+- [ ] Admin Mode link (TestTube icon) visible in portrait top bar
+- [ ] Phase bottom sheet scrollable for long FortifyPanel content
+- [ ] Map occupies full viewport when sheet is closed
