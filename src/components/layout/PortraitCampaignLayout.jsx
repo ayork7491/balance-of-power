@@ -1,25 +1,21 @@
 /**
  * PortraitCampaignLayout — Map-dominant layout for portrait / mobile portrait mode.
  *
- * Structure:
- *   PortraitTopBar (compact, ~40px)
- *   Map (flex-1, takes almost all vertical space)
- *   PortraitBottomNav (tabs, ~52px + safe area)
+ * Hierarchy (spec-compliant):
+ *   App root:      fixed inset-0, flex flex-col, overflow-hidden
+ *   PortraitTopBar: shrink-0, z-[1000], pointer-events-auto, NO transforms
+ *   Content area:  flex-1, min-h-0, relative, overflow-hidden (map lives here)
+ *   Bottom nav:    shrink-0, z-[900], pointer-events-auto
+ *   Bottom sheet:  fixed overlay, z-[800] — never inside map container
  *
- * Panel behavior:
- *   - "Phase" tab → opens PortraitBottomSheet with leftDockContent (phase actions)
- *   - All other tabs (Battles, Standings, Territories, History) →
- *       opens PortraitBottomSheet with rightDockContent (info panels)
- *   - "Map" tab → closes any open sheet, showing map full-screen
- *
- * No permanent sidebars. All panels are on-demand via bottom sheet.
+ * The top bar is a direct flex child — never inside the map container,
+ * never inside a gesture handler, never inside an overflow-clipped panel.
  */
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import PortraitTopBar from './PortraitTopBar';
 import PortraitBottomNav from './PortraitBottomNav';
 import PortraitBottomSheet from './PortraitBottomSheet';
 
-// Tab → sheet title mapping
 const TAB_TITLES = {
   phase:       'Phase Actions',
   battles:     'Battles',
@@ -33,54 +29,60 @@ export default function PortraitCampaignLayout({
   isTestMode = false,
   players = [],
   isAdmin = false,
-  leftDockContent = null,   // Phase action panel
-  rightDockContent = null,  // Info panels (leaderboard, history, etc.)
-  children,                 // Map
+  leftDockContent = null,
+  rightDockContent = null,
+  children,
   defaultTab = 'map',
   onTabChange,
 }) {
   const [activeTab, setActiveTab] = useState(defaultTab);
   const [sheetOpen, setSheetOpen] = useState(false);
-  const topBarRef = useRef(null);
 
   const handleTabChange = (tab) => {
     setActiveTab(tab);
     onTabChange?.(tab);
-    if (tab === 'map') {
-      setSheetOpen(false);
-    } else {
-      setSheetOpen(true);
-    }
+    setSheetOpen(tab !== 'map');
   };
 
-  // Close sheet if tab switches back to map externally
   useEffect(() => {
     if (activeTab === 'map') setSheetOpen(false);
   }, [activeTab]);
 
   const sheetTitle = TAB_TITLES[activeTab] ?? 'Info';
-  // Phase tab uses left dock (action panel); all others use right dock (info)
   const sheetContent = activeTab === 'phase' ? leftDockContent : rightDockContent;
 
   return (
-    <div className="fixed inset-0 bg-background flex flex-col overflow-hidden">
-      {/* Compact top bar — shrink-0 keeps it in flow above map */}
-      <div ref={topBarRef} style={{ position: 'relative', zIndex: 100, pointerEvents: 'auto', flexShrink: 0 }}>
-        <PortraitTopBar campaign={campaign} isAdmin={isAdmin} />
-      </div>
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        background: 'hsl(var(--background))',
+      }}
+    >
+      {/* ── Top bar — direct flex child, isolated from map gestures ── */}
+      <PortraitTopBar campaign={campaign} isAdmin={isAdmin} />
 
-      {/* Map — takes all available space. z-index: 0 keeps it below top bar (z:100) and bottom nav (z:50). touchAction is handled by MapRenderer itself, not here. */}
+      {/* ── Map content area — pan/gesture handlers live ONLY here ── */}
       <main
-        className="flex-1 min-h-0 relative overflow-hidden bg-background tactical-grid"
-        style={{ zIndex: 0 }}
+        style={{
+          flex: 1,
+          minHeight: 0,
+          position: 'relative',
+          overflow: 'hidden',
+          zIndex: 0,
+        }}
+        className="bg-background tactical-grid"
       >
         {children}
       </main>
 
-      {/* Bottom nav */}
+      {/* ── Bottom nav — direct flex child, isolated from map ── */}
       <PortraitBottomNav activeTab={activeTab} onTabChange={handleTabChange} />
 
-      {/* Bottom sheet — overlays map for non-map tabs */}
+      {/* ── Bottom sheet — fixed overlay, outside all containers ── */}
       <PortraitBottomSheet
         isOpen={sheetOpen}
         onClose={() => {
@@ -93,8 +95,6 @@ export default function PortraitCampaignLayout({
       >
         {sheetContent}
       </PortraitBottomSheet>
-
-
     </div>
   );
 }

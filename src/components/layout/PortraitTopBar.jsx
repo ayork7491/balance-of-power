@@ -1,97 +1,383 @@
 /**
- * PortraitTopBar — Compact top bar for portrait layout mode.
+ * PortraitTopBar — Isolated mobile header for portrait layout.
  *
- * Shows: BoP logo (home link), campaign name, phase tag, round, timer.
- * Admin extras: Perspective selector (compact), Admin Mode link.
+ * ISOLATION RULES:
+ *  - No framer-motion (no transform stacking context)
+ *  - No Radix portals or complex dropdowns
+ *  - Direct onClick/onPointerUp handlers only
+ *  - Perspective and Admin use simple inline modals
  *
- * The BoP logo is ALWAYS a <Link to="/"> so it navigates to the Home Dashboard
- * in portrait, landscape, and compact-landscape modes without relying on browser back.
- *
- * Admin test mode:
- *  - Unified Perspective selector (compact variant) visible when admin + test players present.
- *  - Admin Mode link always visible to campaign admins (TestTube icon, portrait-friendly).
+ * Lives as a direct child of the portrait shell's flex column.
+ * Never nested inside map gesture containers or overflow-clipped panels.
  */
-import { Link, useParams } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import { Shield, TestTube } from 'lucide-react';
+import { useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { Shield, TestTube, User, Check, X } from 'lucide-react';
 import PhaseTag from '@/components/ui/PhaseTag';
 import CountdownTimer from '@/components/ui/CountdownTimer';
-import PortraitPerspectivePicker from './PortraitPerspectivePicker';
 import { useCampaignTestContext } from '@/features/adminTestMode/CampaignTestContext';
 
 export default function PortraitTopBar({ campaign = null, isAdmin = false }) {
-  const { id } = useParams();
-  const { isTestMode } = useCampaignTestContext();
+  const navigate = useNavigate();
+  const { id: campaignId } = useParams();
+  const [perspectiveOpen, setPerspectiveOpen] = useState(false);
+
+  const {
+    isTestMode,
+    availableActingAsPlayers,
+    actingAsCampaignPlayerId,
+    setActingAsCampaignPlayerId,
+    setViewingAsCampaignPlayerId,
+  } = useCampaignTestContext();
+
+  const testPlayers = availableActingAsPlayers.filter(p => p.is_test_player);
+  const showPerspective = isAdmin && isTestMode && testPlayers.length > 0;
+
+  const currentValue = actingAsCampaignPlayerId ?? 'self';
+  const currentLabel = currentValue === 'self'
+    ? 'View'
+    : testPlayers.find(p => p.id === currentValue)?.display_name ?? 'View';
+
+  function handleHome(e) {
+    e.stopPropagation();
+    console.log('[PortraitTopBar] Home clicked');
+    navigate('/');
+  }
+
+  function handlePerspective(e) {
+    e.stopPropagation();
+    console.log('[PortraitTopBar] Perspective clicked');
+    setPerspectiveOpen(true);
+  }
+
+  function handleAdmin(e) {
+    e.stopPropagation();
+    console.log('[PortraitTopBar] Admin clicked');
+    navigate(`/campaigns/${campaignId}/admin`);
+  }
+
+  function handleSelectPerspective(val) {
+    console.log('[PortraitTopBar] Perspective selected:', val);
+    if (val === 'self') {
+      setActingAsCampaignPlayerId(null);
+      setViewingAsCampaignPlayerId(null);
+    } else {
+      setActingAsCampaignPlayerId(val);
+      setViewingAsCampaignPlayerId(val);
+    }
+    setPerspectiveOpen(false);
+  }
 
   return (
-    <motion.header
-      className="h-10 bg-panel-header border-b border-panel-border flex items-center px-2 gap-1.5 shrink-0"
-      initial={{ y: -20, opacity: 0 }}
-      animate={{ y: 0, opacity: 1 }}
-      transition={{ duration: 0.2 }}
-    >
-      {/* Logo — always navigates to Home Dashboard */}
-      <Link
-        to="/"
-        className="flex items-center gap-1 shrink-0 touch-manipulation active:scale-95 transition-transform"
-        title="Back to Dashboard"
+    <>
+      {/* ── Top bar ────────────────────────────────────────────────── */}
+      <header
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          height: '40px',
+          flexShrink: 0,
+          position: 'relative',
+          zIndex: 1000,
+          pointerEvents: 'auto',
+          backgroundColor: 'hsl(var(--panel-header))',
+          borderBottom: '1px solid hsl(var(--panel-border))',
+          padding: '0 8px',
+          gap: '6px',
+          WebkitUserSelect: 'none',
+          userSelect: 'none',
+        }}
       >
-        <Shield className="w-3.5 h-3.5 text-primary" />
-        <span className="font-mono text-[10px] font-bold tracking-widest text-primary uppercase">BoP</span>
-      </Link>
+        {/* Home button */}
+        <button
+          type="button"
+          onClick={handleHome}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px',
+            flexShrink: 0,
+            padding: '4px',
+            borderRadius: '4px',
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            WebkitTapHighlightColor: 'transparent',
+            touchAction: 'manipulation',
+          }}
+          aria-label="Home"
+        >
+          <Shield style={{ width: '14px', height: '14px', color: 'hsl(var(--primary))' }} />
+          <span style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: '10px',
+            fontWeight: 700,
+            letterSpacing: '0.12em',
+            color: 'hsl(var(--primary))',
+            textTransform: 'uppercase',
+          }}>BoP</span>
+        </button>
 
-      <div className="w-px h-4 bg-border shrink-0" />
+        {/* Divider */}
+        <div style={{ width: '1px', height: '16px', background: 'hsl(var(--border))', flexShrink: 0 }} />
 
-      {campaign ? (
-        <>
-          {/* Campaign name */}
-          <span
-            className="font-display text-xs font-semibold tracking-wide text-foreground truncate max-w-[72px]"
-            title={campaign.name}
-          >
-            {campaign.name}
-          </span>
+        {/* Campaign info */}
+        {campaign ? (
+          <>
+            <span style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: '12px',
+              fontWeight: 600,
+              letterSpacing: '0.04em',
+              color: 'hsl(var(--foreground))',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              maxWidth: '72px',
+              flexShrink: 1,
+            }} title={campaign.name}>
+              {campaign.name}
+            </span>
 
-          {/* Phase badge */}
-          {campaign.current_phase && (
-            <PhaseTag phase={campaign.current_phase} compact />
-          )}
+            {campaign.current_phase && (
+              <PhaseTag phase={campaign.current_phase} compact />
+            )}
 
-          {/* Spacer */}
-          <div className="flex-1 min-w-0" />
+            {/* Spacer */}
+            <div style={{ flex: 1, minWidth: 0 }} />
 
-          {/* Timer */}
-          {campaign.phase_deadline && (
-            <CountdownTimer deadline={campaign.phase_deadline} compact />
-          )}
+            {campaign.phase_deadline && (
+              <CountdownTimer deadline={campaign.phase_deadline} compact />
+            )}
 
-          {/* Round */}
-          <span className="text-[10px] text-muted-foreground shrink-0">
-            R{campaign.current_round || 1}
-          </span>
-        </>
-      ) : (
-        <span className="font-display text-xs tracking-widest text-muted-foreground uppercase flex-1 truncate">
-          Balance of Power
-        </span>
+            <span style={{
+              fontSize: '10px',
+              color: 'hsl(var(--muted-foreground))',
+              flexShrink: 0,
+            }}>
+              R{campaign.current_round || 1}
+            </span>
+          </>
+        ) : (
+          <>
+            <span style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: '11px',
+              letterSpacing: '0.1em',
+              color: 'hsl(var(--muted-foreground))',
+              textTransform: 'uppercase',
+              flex: 1,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}>
+              Balance of Power
+            </span>
+          </>
+        )}
+
+        {/* Admin controls */}
+        {isAdmin && campaignId && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0, marginLeft: '4px' }}>
+            {showPerspective && (
+              <button
+                type="button"
+                onClick={handlePerspective}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '3px',
+                  padding: '2px 6px',
+                  borderRadius: '4px',
+                  background: 'hsl(var(--status-pending) / 0.1)',
+                  border: '1px solid hsl(var(--status-pending) / 0.4)',
+                  cursor: 'pointer',
+                  WebkitTapHighlightColor: 'transparent',
+                  touchAction: 'manipulation',
+                }}
+                aria-label="Switch perspective"
+              >
+                <TestTube style={{ width: '12px', height: '12px', color: 'hsl(var(--status-pending))' }} />
+                <span style={{
+                  fontSize: '10px',
+                  color: 'hsl(var(--status-pending))',
+                  fontFamily: 'var(--font-display)',
+                  letterSpacing: '0.04em',
+                  maxWidth: '52px',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}>
+                  {currentLabel}
+                </span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={handleAdmin}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '28px',
+                height: '28px',
+                borderRadius: '4px',
+                background: 'hsl(var(--status-pending) / 0.15)',
+                border: '1px solid hsl(var(--status-pending) / 0.4)',
+                cursor: 'pointer',
+                WebkitTapHighlightColor: 'transparent',
+                touchAction: 'manipulation',
+              }}
+              aria-label="Admin Mode"
+              title="Admin Mode"
+            >
+              <TestTube style={{ width: '12px', height: '12px', color: 'hsl(var(--status-pending))' }} />
+            </button>
+          </div>
+        )}
+      </header>
+
+      {/* ── Perspective picker modal ────────────────────────────────── */}
+      {perspectiveOpen && (
+        <PerspectiveModal
+          testPlayers={testPlayers}
+          currentValue={currentValue}
+          onSelect={handleSelectPerspective}
+          onClose={() => setPerspectiveOpen(false)}
+        />
       )}
+    </>
+  );
+}
 
-      {/* Admin controls (only for campaign admins) */}
-      {isAdmin && campaign?.id && (
-        <div className="flex items-center gap-1 shrink-0 ml-1">
-          {/* Portrait-safe perspective picker (bottom sheet, no Radix portal issues) */}
-          <PortraitPerspectivePicker />
+// ── Perspective modal — fixed, no portals, no Radix ──────────────────────────
 
-          {/* Admin Mode link — always visible to campaign admins in portrait */}
-          <Link
-            to={`/campaigns/${id}/admin`}
-            className="flex items-center justify-center w-7 h-7 rounded bg-status-pending/20 border border-status-pending/40 shrink-0 hover:brightness-125 transition-all touch-manipulation"
-            title="Admin Mode"
-          >
-            <TestTube className="w-3 h-3 text-status-pending" />
-          </Link>
+function PerspectiveModal({ testPlayers, currentValue, onSelect, onClose }) {
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 2000,
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'flex-end',
+      }}
+    >
+      {/* Backdrop */}
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          background: 'rgba(0,0,0,0.55)',
+        }}
+        onClick={onClose}
+      />
+
+      {/* Sheet */}
+      <div
+        style={{
+          position: 'relative',
+          zIndex: 1,
+          background: 'hsl(var(--panel-bg))',
+          borderTop: '1px solid hsl(var(--panel-border))',
+          borderRadius: '12px 12px 0 0',
+          paddingBottom: 'max(24px, env(safe-area-inset-bottom))',
+        }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Handle */}
+        <div style={{ display: 'flex', justifyContent: 'center', padding: '12px 0 8px' }}>
+          <div style={{ width: '40px', height: '4px', borderRadius: '2px', background: 'hsl(var(--border))' }} />
         </div>
-      )}
-    </motion.header>
+
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 16px 12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <TestTube style={{ width: '16px', height: '16px', color: 'hsl(var(--status-pending))' }} />
+            <span style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: '14px',
+              fontWeight: 600,
+              letterSpacing: '0.08em',
+              textTransform: 'uppercase',
+              color: 'hsl(var(--foreground))',
+            }}>
+              Switch Perspective
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              padding: '4px',
+              color: 'hsl(var(--muted-foreground))',
+              touchAction: 'manipulation',
+            }}
+          >
+            <X style={{ width: '16px', height: '16px' }} />
+          </button>
+        </div>
+
+        {/* Options */}
+        <div style={{ padding: '0 12px 8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <PickerOption
+            label="Self (My Player)"
+            icon={<User style={{ width: '16px', height: '16px', color: 'hsl(var(--muted-foreground))' }} />}
+            isSelected={currentValue === 'self'}
+            onSelect={() => onSelect('self')}
+          />
+          {testPlayers.map(player => (
+            <PickerOption
+              key={player.id}
+              label={player.display_name}
+              sublabel="Test Player"
+              icon={<TestTube style={{ width: '16px', height: '16px', color: 'hsl(var(--status-pending))' }} />}
+              isSelected={currentValue === player.id}
+              onSelect={() => onSelect(player.id)}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PickerOption({ label, sublabel, icon, isSelected, onSelect }) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '12px',
+        width: '100%',
+        padding: '12px 16px',
+        borderRadius: '8px',
+        textAlign: 'left',
+        cursor: 'pointer',
+        touchAction: 'manipulation',
+        WebkitTapHighlightColor: 'transparent',
+        background: isSelected ? 'hsl(var(--status-pending) / 0.15)' : 'hsl(var(--secondary) / 0.4)',
+        border: isSelected ? '1px solid hsl(var(--status-pending) / 0.5)' : '1px solid transparent',
+        color: 'hsl(var(--foreground))',
+      }}
+    >
+      <span style={{ flexShrink: 0 }}>{icon}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: '14px', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {label}
+        </div>
+        {sublabel && (
+          <div style={{ fontSize: '11px', color: 'hsl(var(--muted-foreground))' }}>{sublabel}</div>
+        )}
+      </div>
+      {isSelected && <Check style={{ width: '16px', height: '16px', color: 'hsl(var(--status-pending))', flexShrink: 0 }} />}
+    </button>
   );
 }
