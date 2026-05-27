@@ -534,10 +534,19 @@ export const MAP_V1_STANDARD: MapDefinition = {
 
 // ─── Registry & Lookup ────────────────────────────────────────────────────────
 
+import { MAP_SHATTERED_CROWN } from './mapData.shattered_crown';
+
 export const MAP_REGISTRY: Record<string, MapDefinition> = {
-  [MAP_V1_STANDARD.id]: MAP_V1_STANDARD,
+  [MAP_V1_STANDARD.id]:      MAP_V1_STANDARD,
+  [MAP_SHATTERED_CROWN.id]:  MAP_SHATTERED_CROWN,
 };
 
 export function getMap(mapId: string): MapDefinition | null {
   return MAP_REGISTRY[mapId] ?? null;
 }
+
+/** All maps available for campaign creation, ordered for display. */
+export const AVAILABLE_MAPS = [
+  MAP_SHATTERED_CROWN,
+  MAP_V1_STANDARD,
+] as const;

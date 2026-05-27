@@ -134,7 +134,7 @@ export const DEFAULT_CAMPAIGN_FORM: CampaignFormData = {
   description: '',
   game_profile_id: '',
   game_profile_name: '',
-  map_id: 'map_v1_standard',
+  map_id: 'shattered_crown_v1',
   settings: { ...DEFAULT_CAMPAIGN_SETTINGS },
   invitee_emails: [],
 };

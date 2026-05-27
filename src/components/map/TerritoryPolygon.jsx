@@ -19,6 +19,8 @@ const TERRAIN_PATTERNS = {
   urban:     { strokeDash: null,  extraOpacity: 1.0  },
   plains:    { strokeDash: null,  extraOpacity: 1.0  },
 };
+// Fallback: any unmapped terrain key (e.g. extended types from future maps) → plains
+const DEFAULT_TERRAIN = TERRAIN_PATTERNS.plains;
 
 export default function TerritoryPolygon({
   territory,       // TerritoryDef
@@ -31,7 +33,7 @@ export default function TerritoryPolygon({
   // onClick intentionally removed — handled by MapRenderer container delegation
 }) {
   const { points, cx, cy, terrain, name, territory_id } = territory;
-  const terrain_cfg = TERRAIN_PATTERNS[terrain ?? 'plains'] ?? TERRAIN_PATTERNS.plains;
+  const terrain_cfg = TERRAIN_PATTERNS[terrain ?? 'plains'] ?? DEFAULT_TERRAIN;
 
   // Fill: owned → player color tinted, unowned → region color dimmed
   const baseFill    = ownerColor ?? regionColor;
