@@ -19,9 +19,9 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { PLAYER_COLORS } from '@/config/theme';
-import TerritoryPolygon from './TerritoryPolygon';
+import TerritoryPolygon from './TerritoryPolygon.jsx';
 import AdjacencyLines from './AdjacencyLines';
-import ContinentLayer from './ContinentLayer';
+import ContinentLayer from './ContinentLayer.jsx';
 import { useMapInteraction } from '@/features/maps/useMapInteraction';
 
 function getPlayerHex(players, playerId) {
