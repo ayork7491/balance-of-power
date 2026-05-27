@@ -6,18 +6,16 @@ import { cn } from "@/lib/utils";
 const ToastProvider = React.forwardRef(({ ...props }, ref) => (
   <div
     ref={ref}
-    className="fixed top-0 z-[100] flex max-h-screen w-full flex-col-reverse p-4 sm:bottom-0 sm:right-0 sm:top-auto sm:flex-col md:max-w-[420px]"
+    className="pointer-events-none fixed top-0 z-[100] flex max-h-screen w-full flex-col-reverse p-4 sm:bottom-0 sm:right-0 sm:top-auto sm:flex-col md:max-w-[420px]"
     {...props}
   />
 ));
 ToastProvider.displayName = "ToastProvider";
 
-const ToastViewport = React.forwardRef(({ ...props }, ref) => (
-  <div
-    ref={ref}
-    className="fixed top-0 z-[100] flex max-h-screen w-full flex-col-reverse p-4 sm:bottom-0 sm:right-0 sm:top-auto sm:flex-col md:max-w-[420px] pointer-events-none"
-    {...props}
-  />
+// ToastViewport is a no-op passthrough — ToastProvider is the actual fixed container.
+// pointer-events-none is set on ToastProvider; individual Toast cards use pointer-events-auto.
+const ToastViewport = React.forwardRef(({ className, ...props }, ref) => (
+  <div ref={ref} className={className} {...props} />
 ));
 ToastViewport.displayName = "ToastViewport";
 
