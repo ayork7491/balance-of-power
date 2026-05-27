@@ -74,7 +74,7 @@ export default function PortraitCampaignLayout({
           overflow: 'hidden',
           zIndex: 0,
         }}
-        className="bg-background tactical-grid"
+        className="bg-background"
       >
         {children}
       </main>

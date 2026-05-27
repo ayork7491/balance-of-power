@@ -21,6 +21,7 @@ import { motion } from 'framer-motion';
 import { PLAYER_COLORS } from '@/config/theme';
 import TerritoryPolygon from './TerritoryPolygon';
 import AdjacencyLines from './AdjacencyLines';
+import ContinentLayer from './ContinentLayer';
 import { useMapInteraction } from '@/features/maps/useMapInteraction';
 
 function getPlayerHex(players, playerId) {
@@ -102,16 +103,43 @@ export default function MapRenderer({
     onDeployTerritorySelect,
   });
 
-  // Fit map to container on mount
+  // Fit map to container on mount.
+  // For tall maps (height > width * 1.2) we compute the content bounding box
+  // from territory centroids and fit to that box instead of the full coordinate
+  // space — this prevents excess dead ocean/empty space above and below the map.
   useEffect(() => {
     const el = containerRef.current;
     if (!el || !mapDef) return;
     const { width: cw, height: ch } = el.getBoundingClientRect();
-    const scaleX = cw / mapDef.width;
-    const scaleY = ch / mapDef.height;
-    const scale = Math.min(scaleX, scaleY) * 0.95;
-    const x = (cw - mapDef.width * scale) / 2;
-    const y = (ch - mapDef.height * scale) / 2;
+
+    // Compute tight content bounds from territory centroids
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const t of mapDef.territories) {
+      if (t.cx < minX) minX = t.cx;
+      if (t.cx > maxX) maxX = t.cx;
+      if (t.cy < minY) minY = t.cy;
+      if (t.cy > maxY) maxY = t.cy;
+    }
+    // Add padding around content
+    const padX = 60, padY = 60;
+    minX = Math.max(0, minX - padX);
+    minY = Math.max(0, minY - padY);
+    maxX = Math.min(mapDef.width,  maxX + padX);
+    maxY = Math.min(mapDef.height, maxY + padY);
+
+    const contentW = maxX - minX;
+    const contentH = maxY - minY;
+
+    // For tall maps use content box, for compact maps use full space
+    const isTall = mapDef.height > mapDef.width * 1.2;
+    const fitW  = isTall ? contentW : mapDef.width;
+    const fitH  = isTall ? contentH : mapDef.height;
+    const originX = isTall ? minX : 0;
+    const originY = isTall ? minY : 0;
+
+    const scale = Math.min(cw / fitW, ch / fitH) * 0.96;
+    const x = (cw - fitW * scale) / 2 - originX * scale;
+    const y = (ch - fitH * scale) / 2 - originY * scale;
     setTransform({ x, y, scale });
   }, [mapDef]);
 
@@ -292,7 +320,42 @@ export default function MapRenderer({
           height={mapDef.height}
           style={{ overflow: 'visible', display: 'block' }}
         >
+          {/* ── Global SVG filters ── */}
+          <defs>
+            <filter id="glow-selected" x="-30%" y="-30%" width="160%" height="160%">
+              <feGaussianBlur stdDeviation="5" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+            <filter id="glow-highlight" x="-30%" y="-30%" width="160%" height="160%">
+              <feFlood floodColor="#fde047" floodOpacity="0.6" result="color" />
+              <feComposite in="color" in2="SourceGraphic" operator="in" result="tinted" />
+              <feGaussianBlur in="tinted" stdDeviation="4" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+            <filter id="glow-attack" x="-30%" y="-30%" width="160%" height="160%">
+              <feFlood floodColor="#f87171" floodOpacity="0.7" result="color" />
+              <feComposite in="color" in2="SourceGraphic" operator="in" result="tinted" />
+              <feGaussianBlur in="tinted" stdDeviation="4" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+            <filter id="glow-owner" x="-30%" y="-30%" width="160%" height="160%">
+              <feGaussianBlur stdDeviation="6" result="blur" />
+            </filter>
+          </defs>
+
           <g>
+            {/* Continent silhouette/atmosphere layer — below everything */}
+            <ContinentLayer mapDef={mapDef} />
+
             {/* Adjacency lines — non-interactive */}
             <AdjacencyLines mapDef={mapDef} />
 
@@ -319,27 +382,30 @@ export default function MapRenderer({
               );
             })}
 
-            {/* Territory name labels — non-interactive */}
-            {transform.scale >= 0.7 && mapDef.territories.map(territory => (
-              <text
-                key={`label-${territory.territory_id}`}
-                x={territory.cx}
-                y={territory.cy + 22}
-                textAnchor="middle"
-                fontSize={Math.max(7, 10 / transform.scale * 0.85)}
-                fontFamily="'Rajdhani', sans-serif"
-                fontWeight="600"
-                fill="rgba(255,255,255,0.85)"
-                stroke="rgba(0,0,0,0.7)"
-                strokeWidth={0.7}
-                style={{
-                  pointerEvents: 'none',
-                  userSelect: 'none',
-                }}
-              >
-                {territory.name}
-              </text>
-            ))}
+            {/* Territory name labels — only at useful zoom levels */}
+            {transform.scale >= 0.45 && mapDef.territories.map(territory => {
+              // Scale font inversely with zoom so labels stay readable
+              const fontSize = Math.max(8, Math.min(14, 11 / transform.scale));
+              return (
+                <text
+                  key={`label-${territory.territory_id}`}
+                  x={territory.cx}
+                  y={territory.cy + 18}
+                  textAnchor="middle"
+                  fontSize={fontSize}
+                  fontFamily="'Rajdhani', sans-serif"
+                  fontWeight="600"
+                  letterSpacing="0.04em"
+                  fill="rgba(255,255,255,0.80)"
+                  stroke="rgba(0,0,0,0.85)"
+                  strokeWidth={fontSize * 0.06}
+                  paintOrder="stroke"
+                  style={{ pointerEvents: 'none', userSelect: 'none' }}
+                >
+                  {territory.name}
+                </text>
+              );
+            })}
           </g>
         </svg>
       </div>
@@ -389,8 +455,20 @@ export default function MapRenderer({
             const el = containerRef.current;
             if (!el || !mapDef) return;
             const { width: cw, height: ch } = el.getBoundingClientRect();
-            const scale = Math.min(cw / mapDef.width, ch / mapDef.height) * 0.95;
-            setTransform({ x: (cw - mapDef.width * scale) / 2, y: (ch - mapDef.height * scale) / 2, scale });
+            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+            for (const t of mapDef.territories) {
+              if (t.cx < minX) minX = t.cx; if (t.cx > maxX) maxX = t.cx;
+              if (t.cy < minY) minY = t.cy; if (t.cy > maxY) maxY = t.cy;
+            }
+            const padX = 60, padY = 60;
+            minX = Math.max(0, minX - padX); minY = Math.max(0, minY - padY);
+            maxX = Math.min(mapDef.width, maxX + padX); maxY = Math.min(mapDef.height, maxY + padY);
+            const isTall = mapDef.height > mapDef.width * 1.2;
+            const fitW = isTall ? maxX - minX : mapDef.width;
+            const fitH = isTall ? maxY - minY : mapDef.height;
+            const ox = isTall ? minX : 0; const oy = isTall ? minY : 0;
+            const scale = Math.min(cw / fitW, ch / fitH) * 0.96;
+            setTransform({ x: (cw - fitW * scale) / 2 - ox * scale, y: (ch - fitH * scale) / 2 - oy * scale, scale });
           }}
           className="w-9 h-9 rounded-lg bg-panel-header border border-panel-border text-foreground text-sm flex items-center justify-center hover:bg-secondary hover:border-primary/50 active:scale-95 transition-all shadow-lg touch-manipulation"
           aria-label="Reset zoom"

@@ -81,7 +81,7 @@ export default function LandscapeCampaignLayout({
         </motion.div>
 
         {/* Map center */}
-        <main className="flex-1 relative overflow-hidden bg-background tactical-grid min-h-0">
+        <main className="flex-1 relative overflow-hidden bg-background min-h-0">
           {children}
         </main>
 

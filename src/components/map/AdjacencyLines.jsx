@@ -1,7 +1,7 @@
 /**
  * AdjacencyLines — renders adjacency edges between territory centroids.
- * Drawn as faint SVG lines below territory polygons.
- * Schema-driven: reads from mapDef.adjacency + territory cx/cy.
+ * Render Pass v2: even fainter, no dashes, purely structural.
+ * Only visible at mid-zoom levels.
  */
 
 export default function AdjacencyLines({ mapDef }) {
@@ -11,7 +11,7 @@ export default function AdjacencyLines({ mapDef }) {
   }
 
   return (
-    <g opacity={0.18}>
+    <g opacity={0.08}>
       {mapDef.adjacency.map(([a, b], i) => {
         const ca = centroidById[a];
         const cb = centroidById[b];
@@ -21,9 +21,8 @@ export default function AdjacencyLines({ mapDef }) {
             key={i}
             x1={ca[0]} y1={ca[1]}
             x2={cb[0]} y2={cb[1]}
-            stroke="#ffffff"
-            strokeWidth={0.8}
-            strokeDasharray="3,4"
+            stroke="#e2e8f0"
+            strokeWidth={0.6}
           />
         );
       })}
