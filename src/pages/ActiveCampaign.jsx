@@ -36,7 +36,6 @@ function ActiveCampaignContent() {
   const [attackOriginId, setAttackOriginId] = useState(null);
   const [fortifyOriginId, setFortifyOriginId] = useState(null);
   const [buildTerritoryId, setBuildTerritoryId] = useState(null);
-  const [interactionDebug, setInteractionDebug] = useState(null);
   
   // Use centralized test context (includes selectedTerritoryId)
   const { 
@@ -183,71 +182,23 @@ function ActiveCampaignContent() {
 
   const handleAttackOriginSelect = useCallback((originId) => {
     setAttackOriginId(originId);
-    setInteractionDebug(prev => ({
-      ...prev,
-      attackOriginId: originId,
-      interactionMode: 'attack_origin_selected',
-      timestamp: new Date().toISOString(),
-    }));
   }, []);
 
-  const handleAttackTargetSelect = useCallback((originId, targetId) => {
-    setInteractionDebug(prev => ({
-      ...prev,
-      attackOriginId: originId,
-      attackTargetId: targetId,
-      interactionMode: 'attack_target_selected',
-      timestamp: new Date().toISOString(),
-    }));
-  }, []);
+  const handleAttackTargetSelect = useCallback((_originId, _targetId) => {}, []);
 
   const handleFortifyOriginSelect = useCallback((originId) => {
     setFortifyOriginId(originId);
-    setInteractionDebug(prev => ({
-      ...prev,
-      fortifyOriginId: originId,
-      interactionMode: 'fortify_origin_selected',
-      timestamp: new Date().toISOString(),
-    }));
   }, []);
 
-  const handleFortifyDestinationSelect = useCallback((originId, destinationId) => {
-    setInteractionDebug(prev => ({
-      ...prev,
-      fortifyOriginId: originId,
-      fortifyDestinationId: destinationId,
-      interactionMode: 'fortify_destination_selected',
-      timestamp: new Date().toISOString(),
-    }));
-  }, []);
+  const handleFortifyDestinationSelect = useCallback((_originId, _destinationId) => {}, []);
 
   const handleBuildTerritorySelect = useCallback((territoryId) => {
     setBuildTerritoryId(territoryId);
-    setInteractionDebug(prev => ({
-      ...prev,
-      buildTerritoryId: territoryId,
-      interactionMode: 'build_territory_selected',
-      timestamp: new Date().toISOString(),
-    }));
   }, []);
 
-  const handleDraftTerritorySelect = useCallback((territoryId) => {
-    setInteractionDebug(prev => ({
-      ...prev,
-      draftTerritoryId: territoryId,
-      interactionMode: 'draft_claim',
-      timestamp: new Date().toISOString(),
-    }));
-  }, []);
+  const handleDraftTerritorySelect = useCallback((_territoryId) => {}, []);
 
-  const handleDeployTerritorySelect = useCallback((territoryId) => {
-    setInteractionDebug(prev => ({
-      ...prev,
-      deployTerritoryId: territoryId,
-      interactionMode: 'deploy_placement',
-      timestamp: new Date().toISOString(),
-    }));
-  }, []);
+  const handleDeployTerritorySelect = useCallback((_territoryId) => {}, []);
 
   // Territory highlights (draft + attack) - uses effective player for perspective
   const highlightIds = useMemo(() => {

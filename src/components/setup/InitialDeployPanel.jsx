@@ -9,7 +9,7 @@
  * See SETUP_NOTES.md for full privacy contract.
  */
 import { useMemo, useState } from 'react';
-import { Loader2, Lock, Check, TestTube, User, Wrench, AlertTriangle } from 'lucide-react';
+import { Loader2, Lock, Check, Wrench, AlertTriangle } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { useInitialDeploy, useDeployLockStatus } from '@/features/campaigns/setup';
 import { useCampaignTestContext } from '@/features/adminTestMode/CampaignTestContext';
@@ -26,11 +26,10 @@ export default function InitialDeployPanel({
   const isAdmin = myPlayer?.is_admin;
   
   // Use centralized test context
-  const { actingAsPlayer, actingAsCampaignPlayerId, viewingAsPlayer } = useCampaignTestContext();
+  const { actingAsPlayer, actingAsCampaignPlayerId } = useCampaignTestContext();
   
   // Determine action player (acting-as or self)
   const actionPlayer = actingAsPlayer || myPlayer;
-  const canDelegateActions = !!actingAsPlayer;
 
   // My owned territories
   const myTerritories = useMemo(
@@ -203,94 +202,23 @@ export default function InitialDeployPanel({
 
       {/* Actions */}
       {!isLocked && (
-        <div className="space-y-2">
-          <div className="flex gap-2">
-            <button
-              onClick={handleSave}
-              disabled={submitting || troopsRemaining < 0}
-              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded border border-primary/40 text-primary text-xs font-display tracking-wider uppercase hover:bg-primary/10 transition-colors disabled:opacity-40"
-            >
-              {submitting && !saved ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-              {saved ? '✓ Saved' : 'Save'}
-            </button>
-            <button
-              onClick={handleLockAndRefresh}
-              disabled={submitting || troopsRemaining !== 0}
-              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded bg-primary text-primary-foreground text-xs font-display tracking-wider uppercase hover:brightness-110 disabled:opacity-40"
-            >
-              {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
-              Lock In
-            </button>
-          </div>
-          
-          {/* Initial Fortification Debug Panel */}
-          <div className="pt-3 border-t border-border">
-            <p className="text-[10px] font-display tracking-widest uppercase text-muted-foreground mb-2">
-              Fortification Debug
-            </p>
-            <div className="space-y-1.5 text-[10px]">
-              <div className="flex items-center gap-2">
-                <User className="w-3 h-3 text-muted-foreground" />
-                <span className="text-muted-foreground">Authenticated:</span>
-                <span className="text-foreground">{myPlayer?.display_name ?? 'None'}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <TestTube className="w-3 h-3 text-muted-foreground" />
-                <span className="text-muted-foreground">Acting-As:</span>
-                <span className="text-foreground">{actingAsPlayer ? `${actingAsPlayer.display_name}${actingAsPlayer.is_test_player ? ' (Test)' : ''}` : '(self)'}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-muted-foreground">Submit For:</span>
-                <span className="text-foreground font-medium">{actionPlayer?.display_name ?? 'Unknown'}</span>
-              </div>
-              <div className="pt-1.5 border-t border-border/50">
-                <p className="text-[10px] font-display tracking-widest uppercase text-status-pending mb-1.5">
-                  Allocation Details
-                </p>
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-muted-foreground">Total Submitted:</span>
-                    <span className="text-foreground font-mono">{totalPlaced}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-muted-foreground">Required:</span>
-                    <span className="text-foreground font-mono">{startingTroops}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-muted-foreground">Status:</span>
-                    <span className={isLocked ? 'text-status-locked font-semibold' : 'text-status-pending'}>
-                      {isLocked ? '✓ Locked' : 'Not locked'}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-muted-foreground">Submission Type:</span>
-                    <span className={decision?.is_auto_submitted ? 'text-status-danger' : 'text-status-locked'}>
-                      {decision?.is_auto_submitted ? 'Auto-randomized' : 'Manual'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-              {myTerritories.length > 0 && (
-                <div className="pt-1.5 border-t border-border/50">
-                  <p className="text-[10px] font-display tracking-widest uppercase text-muted-foreground mb-1">
-                    Submitted Allocation
-                  </p>
-                  <div className="space-y-0.5 max-h-32 overflow-y-auto">
-                    {myTerritories.map(ts => {
-                      const def = mapDef?.territories.find(t => t.territory_id === ts.territory_id);
-                      const count = placements[ts.territory_id] ?? 0;
-                      return (
-                        <div key={ts.territory_id} className="flex items-center justify-between text-[9px]">
-                          <span className="text-muted-foreground truncate max-w-[120px]">{def?.name ?? ts.territory_id}</span>
-                          <span className="text-foreground font-mono">{count}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
+        <div className="flex gap-2">
+          <button
+            onClick={handleSave}
+            disabled={submitting || troopsRemaining < 0}
+            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded border border-primary/40 text-primary text-xs font-display tracking-wider uppercase hover:bg-primary/10 transition-colors disabled:opacity-40"
+          >
+            {submitting && !saved ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+            {saved ? '✓ Saved' : 'Save'}
+          </button>
+          <button
+            onClick={handleLockAndRefresh}
+            disabled={submitting || troopsRemaining !== 0}
+            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded bg-primary text-primary-foreground text-xs font-display tracking-wider uppercase hover:brightness-110 disabled:opacity-40"
+          >
+            {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
+            Lock In
+          </button>
         </div>
       )}
 

@@ -272,18 +272,17 @@ function CampaignLobbyContent() {
                 )}
               </div>
               
-              {/* Admin debug info */}
-              {isAdmin && (
+              {/* Admin debug info — test mode only */}
+              {isAdmin && isTestMode && (
                 <div className="px-4 py-2 bg-muted/20 border-b border-border text-[10px] font-mono text-muted-foreground">
                   <p className="font-display tracking-wider uppercase mb-1">Player Debug</p>
                   <div className="space-y-0.5">
                     {players.map(p => (
                       <div key={p.id} className="flex items-center gap-2">
                         <span className="text-foreground">{p.display_name}</span>
-                        <span>→ id: {p.id}</span>
-                        <span>→ user_id: {p.user_id}</span>
-                        <span className={p.is_test_player ? 'text-status-info' : ''}>→ is_test_player: {p.is_test_player ? 'true' : 'false'}</span>
-                        <span className={p.is_ready ? 'text-status-locked' : 'text-status-pending'}>→ is_ready: {p.is_ready ? 'true' : 'false'}</span>
+                        <span>→ id: {p.id.slice(-6)}</span>
+                        <span className={p.is_test_player ? 'text-status-info' : ''}>→ test: {p.is_test_player ? 'yes' : 'no'}</span>
+                        <span className={p.is_ready ? 'text-status-locked' : 'text-status-pending'}>→ ready: {p.is_ready ? 'yes' : 'no'}</span>
                       </div>
                     ))}
                   </div>

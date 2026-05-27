@@ -17,7 +17,7 @@
  *   - Lock status shown via useDeployPhaseLockStatus (is_locked only).
  */
 import { useMemo, useState } from 'react';
-import { Loader2, Lock, Check, Play, ChevronDown, ChevronUp, User, TestTube } from 'lucide-react';
+import { Loader2, Lock, Check, Play, ChevronDown, ChevronUp, TestTube } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { useDeployPhase, useDeployPhaseLockStatus, useDeployIncome } from '@/features/campaigns/deploy';
 import { useActingAsPayload } from '@/features/adminTestMode/useActingAsPayload';
@@ -52,9 +52,6 @@ export default function DeployPanel({
     handleChange, handleSave, handleLock, reload: reloadDecision,
   } = useDeployPhase({ campaign, myPlayer, myTerritories });
   
-  // Debug state
-  const [debugInfo, setDebugInfo] = useState(null);
-
   const { lockStatus, reload: reloadLocks } = useDeployPhaseLockStatus({
     campaignId: campaign?.id,
     round,
@@ -90,19 +87,6 @@ export default function DeployPanel({
   };
 
   const handleLockAndRefresh = async () => {
-    // Capture debug info before lock
-    const payload = getPayload();
-    setDebugInfo({
-      authenticatedUserId: myPlayer?.user_id,
-      authenticatedPlayerId: myPlayer?.id,
-      authenticatedPlayerName: myPlayer?.display_name,
-      actingAsPlayerId: actingAsId,
-      actingAsPlayerName: actingPlayer?.display_name,
-      payloadActingAsPlayerId: payload.acting_as_player_id,
-      decisionPlayerId: decision?.player_id,
-      timestamp: new Date().toISOString(),
-    });
-    
     await handleLock(onPhaseChanged, actingAsId);
     reloadLocks();
   };
@@ -235,19 +219,6 @@ export default function DeployPanel({
       )}
 
       {error && <p className="text-xs text-destructive">{error}</p>}
-
-      {/* Debug output */}
-      {debugInfo && (
-        <div className="p-2 rounded bg-muted/30 border border-border text-[10px] space-y-0.5 font-mono">
-          <p className="font-display uppercase text-muted-foreground mb-1">Lock Debug Info</p>
-          <p><span className="text-muted-foreground">Auth User:</span> {debugInfo.authenticatedUserId?.slice(-8)}</p>
-          <p><span className="text-muted-foreground">Auth Player:</span> {debugInfo.authenticatedPlayerName} ({debugInfo.authenticatedPlayerId?.slice(-8)})</p>
-          <p><span className="text-muted-foreground">Acting-As:</span> {debugInfo.actingAsPlayerName} ({debugInfo.actingAsPlayerId?.slice(-8) || 'self'})</p>
-          <p><span className="text-muted-foreground">Payload:</span> {debugInfo.payloadActingAsPlayerId?.slice(-8) || 'null'}</p>
-          <p><span className="text-muted-foreground">Decision Player:</span> {debugInfo.decisionPlayerId?.slice(-8)}</p>
-          <p className="text-primary mt-1">Submit For: {debugInfo.actingAsPlayerName}</p>
-        </div>
-      )}
 
       {/* Save / Lock buttons */}
       {deployStarted && !isLocked && (
