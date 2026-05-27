@@ -174,41 +174,67 @@ Deno.serve(async (req) => {
     if (decision.is_locked) return Response.json({ error: 'Already locked' }, { status: 400 });
 
     const startingTroops = campaign.settings?.starting_troops ?? 30;
-    const currentPlacements = decision.data?.placements ?? {};
-    let totalPlaced = Object.values(currentPlacements).reduce((s, n) => s + (parseInt(n) || 0), 0);
 
-    // Validate placements before locking
+    // Prefer placements from the request body (atomic save+lock from frontend).
+    // Fall back to what was previously staged (Save button path) only if not provided.
+    const incomingPlacements = body.placements;
+    const hasFreshPayload = incomingPlacements && typeof incomingPlacements === 'object' && !Array.isArray(incomingPlacements);
+    const resolvedPlacements = hasFreshPayload ? incomingPlacements : (decision.data?.placements ?? {});
+
+    console.log('[lockDeploy] debug:', {
+      actingPlayerId: actingPlayer.id,
+      startingTroops,
+      hasFreshPayload,
+      resolvedPlacements,
+      rawBodyPlacements: incomingPlacements,
+      storedPlacements: decision.data?.placements,
+    });
+
+    // Normalise all values to integers — reject NaN/negative/non-number
+    const cleanPlacements = {};
+    for (const [tid, raw] of Object.entries(resolvedPlacements)) {
+      const n = Math.floor(Number(raw));
+      if (isNaN(n) || n < 0) {
+        return Response.json({ error: `Invalid troop count for territory ${tid}: ${raw}` }, { status: 400 });
+      }
+      cleanPlacements[tid] = n;
+    }
+
+    const totalPlaced = Object.values(cleanPlacements).reduce((s, n) => s + n, 0);
+
+    // Validate: only owned territories
     const ownedTerritories = await base44.asServiceRole.entities.TerritoryState.filter({
       campaign_id,
       owner_player_id: actingPlayer.id,
     });
     const ownedIds = new Set(ownedTerritories.map(t => t.territory_id));
-    
-    // Check all placements are for owned territories
-    for (const tid of Object.keys(currentPlacements)) {
-      if (!ownedIds.has(tid)) {
-        return Response.json({ error: `Territory ${tid} is not owned by you` }, { status: 400 });
-      }
+
+    const invalidTerritories = Object.keys(cleanPlacements).filter(tid => !ownedIds.has(tid));
+    if (invalidTerritories.length > 0) {
+      return Response.json({
+        error: `Territories not owned by acting player: ${invalidTerritories.join(', ')}`,
+        invalidTerritories,
+        actingPlayerId: actingPlayer.id,
+      }, { status: 400 });
     }
-    
-    // Check total equals starting troops
+
+    // Check total equals starting troops exactly
     if (totalPlaced !== startingTroops) {
       return Response.json({ 
         error: `Must place exactly ${startingTroops} troops. You placed ${totalPlaced}.`,
         totalPlaced,
         startingTroops,
+        cleanPlacements,
+        actingPlayerId: actingPlayer.id,
+        ownedTerritoryCount: ownedTerritories.length,
       }, { status: 400 });
     }
 
-    // Player manually submitted exact allocation - use it as-is (NO auto-distribution)
     await base44.entities.PhaseDecision.update(decision.id, {
       is_locked: true,
       locked_at: new Date().toISOString(),
-      is_auto_submitted: false, // Manual submission
-      data: { 
-        placements: currentPlacements, // Use EXACT submitted values
-        troops_remaining: 0,
-      },
+      is_auto_submitted: false,
+      data: { placements: cleanPlacements, troops_remaining: 0 },
     });
 
     await log(base44, campaign_id, 'player_locked', actingPlayer.id, {
@@ -217,11 +243,7 @@ Deno.serve(async (req) => {
       is_manual: true,
     }, true);
 
-    return Response.json({ 
-      success: true,
-      is_manual: true,
-      totalPlaced,
-    });
+    return Response.json({ success: true, is_manual: true, totalPlaced });
   }
 
   // ── processPhaseEnd ──────────────────────────────────────────────────────────

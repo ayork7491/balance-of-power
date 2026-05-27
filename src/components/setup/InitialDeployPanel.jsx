@@ -64,9 +64,9 @@ export default function InitialDeployPanel({
   const totalCount  = activePlayers.length;
   const allLocked   = lockedCount >= totalCount && totalCount > 0;
   
-  // Calculate total placed troops
+  // Calculate total placed troops — same parsing as hook and backend (floor, no NaN)
   const totalPlaced = useMemo(
-    () => Object.values(placements).reduce((s, n) => s + (parseInt(n) || 0), 0),
+    () => Object.values(placements).reduce((s, n) => s + Math.max(0, Math.floor(Number(n) || 0)), 0),
     [placements],
   );
 

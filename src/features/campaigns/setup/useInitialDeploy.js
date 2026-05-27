@@ -65,7 +65,9 @@ export function useInitialDeploy({ campaign, myPlayer, myTerritories }) {
   }, [reload]);
 
   const handleChange = useCallback((tid, value) => {
-    const n = Math.max(0, parseInt(value) || 0);
+    // Strip non-numeric, leading zeros; clamp to >= 0; no decimals, no NaN
+    const stripped = String(value).replace(/[^0-9]/g, '');
+    const n = stripped === '' ? 0 : Math.max(0, Math.floor(Number(stripped)));
     setPlacements(prev => ({ ...prev, [tid]: n }));
     setSaved(false);
   }, []);
@@ -98,19 +100,53 @@ export function useInitialDeploy({ campaign, myPlayer, myTerritories }) {
     setSubmitting(true);
     setError(null);
     try {
+      // Build clean numeric placements from current UI state
+      const cleanPlacements = {};
+      for (const [tid, v] of Object.entries(placements)) {
+        cleanPlacements[tid] = Math.max(0, Math.floor(Number(v) || 0));
+      }
+      const submittedTotal = Object.values(cleanPlacements).reduce((s, n) => s + n, 0);
+
+      console.log('[InitialDeploy] Lock payload debug:', {
+        cleanPlacements,
+        submittedTotal,
+        startingTroops,
+        acting_as_player_id: acting_as_player_id || null,
+      });
+
+      // Pre-flight check: submitted total must match required troops
+      if (submittedTotal !== startingTroops) {
+        setError(
+          `Allocation mismatch: UI shows ${submittedTotal} troops placed but ${startingTroops} required. ` +
+          `Check for unsaved edits and try saving first.`
+        );
+        setSubmitting(false);
+        return;
+      }
+
+      // Send placements with lock so backend uses exactly what the UI shows
       await base44.functions.invoke('initialDeploy', {
-        action:                'lockDeploy',
-        campaign_id:           campaign.id,
-        acting_as_player_id:   acting_as_player_id || null,
+        action:              'lockDeploy',
+        campaign_id:         campaign.id,
+        placements:          cleanPlacements,
+        acting_as_player_id: acting_as_player_id || null,
       });
       await reload();
       onPhaseChanged?.();
     } catch (err) {
-      setError(err?.response?.data?.error || 'Failed to lock deployment.');
+      const data = err?.response?.data;
+      if (data?.totalPlaced !== undefined) {
+        setError(
+          `Lock failed: backend received ${data.totalPlaced} troops, required ${data.startingTroops}. ` +
+          (data.error ?? '')
+        );
+      } else {
+        setError(data?.error || 'Failed to lock deployment.');
+      }
     } finally {
       setSubmitting(false);
     }
-  }, [campaign?.id, reload]);
+  }, [campaign?.id, placements, startingTroops, reload]);
 
   return {
     placements,
