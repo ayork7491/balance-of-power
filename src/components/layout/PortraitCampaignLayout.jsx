@@ -66,10 +66,10 @@ export default function PortraitCampaignLayout({
       {/* Compact top bar */}
       <PortraitTopBar campaign={campaign} isAdmin={isAdmin} />
 
-      {/* Map — takes all available space */}
+      {/* Map — takes all available space. z-index: 0 keeps it below top bar (z:100) and bottom nav (z:50). touchAction is handled by MapRenderer itself, not here. */}
       <main
         className="flex-1 min-h-0 relative overflow-hidden bg-background tactical-grid"
-        style={{ touchAction: 'none' }}
+        style={{ zIndex: 0 }}
       >
         {children}
       </main>

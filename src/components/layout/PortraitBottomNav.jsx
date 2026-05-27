@@ -24,6 +24,9 @@ export default function PortraitBottomNav({ activeTab, onTabChange }) {
       style={{
         paddingBottom: 'env(safe-area-inset-bottom, 0px)',
         minHeight: '52px',
+        position: 'relative',
+        zIndex: 50,
+        pointerEvents: 'auto',
       }}
       initial={{ y: 20, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
