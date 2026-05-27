@@ -273,7 +273,7 @@ function ActiveCampaignContent() {
       {/* Archived campaign banner */}
       {isArchived && (
         <motion.div
-          className="fixed top-0 left-0 right-0 z-50 bg-destructive/20 border-b border-destructive/40 px-4 py-2 text-center"
+          className="fixed top-0 left-0 right-0 z-50 bg-destructive/20 border-b border-destructive/40 px-4 py-2 text-center pointer-events-none"
           initial={{ y: -100 }}
           animate={{ y: 0 }}
           transition={{ duration: 0.3 }}
@@ -347,11 +347,11 @@ function ActiveCampaignContent() {
         </>
       )}
 
-      {/* Loading overlay */}
+      {/* Loading overlay — pointer-events-none so it never blocks top bar or map controls */}
       <AnimatePresence>
         {(loadingCampaign || loadingState) && (
           <motion.div
-            className="absolute inset-0 flex items-center justify-center bg-background/80 backdrop-blur-sm z-30"
+            className="absolute inset-0 flex items-center justify-center bg-background/80 backdrop-blur-sm z-30 pointer-events-none"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}

@@ -26,7 +26,6 @@ export default function PortraitTopBar({ campaign = null, isAdmin = false }) {
   return (
     <motion.header
       className="h-10 bg-panel-header border-b border-panel-border flex items-center px-2 gap-1.5 shrink-0"
-      style={{ position: 'relative', zIndex: 100, pointerEvents: 'auto' }}
       initial={{ y: -20, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
       transition={{ duration: 0.2 }}

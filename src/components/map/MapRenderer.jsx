@@ -146,6 +146,22 @@ export default function MapRenderer({
   // ── Pointer handlers ───────────────────────────────────────────────────────
   const onPointerDown = useCallback((e) => {
     if (e.button !== 0) return;
+
+    // CRITICAL: Only capture pointer events that originate INSIDE this container.
+    // setPointerCapture() hijacks ALL subsequent pointer events globally — if we
+    // capture without checking bounds, the pointer capture will intercept taps on
+    // the top bar, bottom nav, and any overlapping UI even after layout fixes.
+    const el = containerRef.current;
+    if (el) {
+      const rect = el.getBoundingClientRect();
+      const inside =
+        e.clientX >= rect.left &&
+        e.clientX <= rect.right &&
+        e.clientY >= rect.top &&
+        e.clientY <= rect.bottom;
+      if (!inside) return; // not our event — don't capture or prevent
+    }
+
     e.preventDefault();
 
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -156,7 +172,7 @@ export default function MapRenderer({
       originX: transform.x,
       originY: transform.y,
       moved: false,
-      downTarget: e.target, // save target at pointerdown for tid lookup
+      downTarget: e.target,
     };
 
     e.currentTarget.setPointerCapture(e.pointerId);
