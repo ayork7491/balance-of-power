@@ -8,8 +8,8 @@
  *
  * See SETUP_NOTES.md for full privacy contract.
  */
-import { useMemo } from 'react';
-import { Loader2, Lock, Check, TestTube, User, Eye } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Loader2, Lock, Check, TestTube, User, Wrench, AlertTriangle } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { useInitialDeploy, useDeployLockStatus } from '@/features/campaigns/setup';
 import { useCampaignTestContext } from '@/features/adminTestMode/CampaignTestContext';
@@ -70,9 +70,37 @@ export default function InitialDeployPanel({
     [placements],
   );
 
+  // Zero-troop territories: any owned territory with 0 allocation (invalid for lock)
+  const zeroTroopTerritories = useMemo(
+    () => myTerritories.filter(ts => (placements[ts.territory_id] ?? 0) < 1),
+    [myTerritories, placements],
+  );
+
+  // Repair state
+  const [repairing, setRepairing] = useState(false);
+  const [repairResult, setRepairResult] = useState(null);
+  const [repairError, setRepairError] = useState(null);
+
   const handleLockAndRefresh = async () => {
     await handleLock(onPhaseChanged, actingAsCampaignPlayerId || null);
     reloadLockStatus();
+  };
+
+  const handleRepair = async () => {
+    setRepairing(true);
+    setRepairResult(null);
+    setRepairError(null);
+    try {
+      const res = await base44.functions.invoke('repairInitialDeploy', {
+        campaign_id: campaign.id,
+      });
+      setRepairResult(res.data);
+      onPhaseChanged?.(); // reload territory state + campaign
+    } catch (err) {
+      setRepairError(err?.response?.data?.error || 'Repair failed.');
+    } finally {
+      setRepairing(false);
+    }
   };
 
   const handleProcessEnd = async () => {
@@ -158,6 +186,16 @@ export default function InitialDeployPanel({
             <span className="font-display tracking-wide">Deployment Locked</span>
           </div>
           <p className="text-muted-foreground mt-1">Hidden until reveal.</p>
+        </div>
+      )}
+
+      {/* Zero-troop warning — shown before lock attempt so player can fix it */}
+      {!isLocked && zeroTroopTerritories.length > 0 && (
+        <div className="flex items-start gap-2 px-3 py-2 rounded border border-status-pending/40 bg-status-pending/10 text-xs">
+          <AlertTriangle className="w-3.5 h-3.5 text-status-pending shrink-0 mt-0.5" />
+          <span className="text-status-pending">
+            {zeroTroopTerritories.length} territory{zeroTroopTerritories.length > 1 ? 'ies need' : 'y needs'} at least 1 troop before locking.
+          </span>
         </div>
       )}
 
@@ -289,9 +327,9 @@ export default function InitialDeployPanel({
         })}
       </div>
 
-      {/* Admin: process phase end */}
+      {/* Admin: process phase end + repair tool */}
       {isAdmin && (
-        <div className="pt-2 border-t border-border">
+        <div className="pt-2 border-t border-border space-y-2">
           {allLocked ? (
             <button
               onClick={handleProcessEnd}
@@ -311,6 +349,33 @@ export default function InitialDeployPanel({
               </button>
             </div>
           )}
+
+          {/* ── Repair tool — admin only, temporary ────────────────────────────
+              Fixes campaigns stuck due to 0-troop territories.
+              Sets every owned territory to minimum 1 troop, balances total
+              to startingTroops, then allows re-advancing. */}
+          <div className="pt-2 border-t border-border/50">
+            <p className="text-[10px] text-muted-foreground font-display tracking-widest uppercase mb-1.5">
+              Recovery Tools
+            </p>
+            <button
+              onClick={handleRepair}
+              disabled={repairing}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-destructive/40 text-destructive text-xs font-display tracking-wider uppercase hover:bg-destructive/10 transition-colors disabled:opacity-40"
+            >
+              {repairing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wrench className="w-3.5 h-3.5" />}
+              Repair Initial Deployment
+            </button>
+            {repairError && (
+              <p className="text-xs text-destructive mt-1.5">{repairError}</p>
+            )}
+            {repairResult && (
+              <div className="mt-1.5 text-[10px] text-status-locked space-y-0.5">
+                <p>✓ Repaired {repairResult.players_repaired} player(s), {repairResult.total_territory_changes} territory change(s).</p>
+                <p className="text-muted-foreground">{repairResult.next_step}</p>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

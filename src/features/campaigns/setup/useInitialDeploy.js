@@ -114,7 +114,18 @@ export function useInitialDeploy({ campaign, myPlayer, myTerritories }) {
         acting_as_player_id: acting_as_player_id || null,
       });
 
-      // Pre-flight check: submitted total must match required troops
+      // Pre-flight check 1: every owned territory must have >= 1 troop
+      const zeroTerritories = Object.entries(cleanPlacements).filter(([, n]) => n < 1);
+      if (zeroTerritories.length > 0) {
+        setError(
+          `Each drafted territory must receive at least 1 troop. ` +
+          `${zeroTerritories.length} territory${zeroTerritories.length > 1 ? 'ies have' : 'y has'} 0 troops.`
+        );
+        setSubmitting(false);
+        return;
+      }
+
+      // Pre-flight check 2: submitted total must match required troops
       if (submittedTotal !== startingTroops) {
         setError(
           `Allocation mismatch: UI shows ${submittedTotal} troops placed but ${startingTroops} required. ` +

@@ -144,6 +144,9 @@ Deno.serve(async (req) => {
       }, { status: 400 });
     }
 
+    // Note: stageTroops allows 0-troop territories (player may not be done yet).
+    // The >= 1 troop per territory rule is enforced at lockDeploy time.
+
     const troopsRemaining = startingTroops - totalPlaced;
 
     await base44.entities.PhaseDecision.update(decision.id, {
@@ -215,6 +218,15 @@ Deno.serve(async (req) => {
         error: `Territories not owned by acting player: ${invalidTerritories.join(', ')}`,
         invalidTerritories,
         actingPlayerId: actingPlayer.id,
+      }, { status: 400 });
+    }
+
+    // Check every owned territory has >= 1 troop
+    const zeroTerritories = Object.entries(cleanPlacements).filter(([, n]) => n < 1);
+    if (zeroTerritories.length > 0) {
+      return Response.json({
+        error: `Each drafted territory must receive at least 1 troop. ${zeroTerritories.length} territory(ies) have 0.`,
+        zeroTerritories: zeroTerritories.map(([tid]) => tid),
       }, { status: 400 });
     }
 
