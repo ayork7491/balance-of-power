@@ -16,7 +16,7 @@ import { motion } from 'framer-motion';
 import { Shield, TestTube } from 'lucide-react';
 import PhaseTag from '@/components/ui/PhaseTag';
 import CountdownTimer from '@/components/ui/CountdownTimer';
-import PerspectiveSelector from './PerspectiveSelector';
+import PortraitPerspectivePicker from './PortraitPerspectivePicker';
 import { useCampaignTestContext } from '@/features/adminTestMode/CampaignTestContext';
 
 export default function PortraitTopBar({ campaign = null, isAdmin = false }) {
@@ -79,8 +79,8 @@ export default function PortraitTopBar({ campaign = null, isAdmin = false }) {
       {/* Admin controls (only for campaign admins) */}
       {isAdmin && campaign?.id && (
         <div className="flex items-center gap-1 shrink-0 ml-1">
-          {/* Unified Perspective selector — compact, only shown when test players exist */}
-          <PerspectiveSelector compact />
+          {/* Portrait-safe perspective picker (bottom sheet, no Radix portal issues) */}
+          <PortraitPerspectivePicker />
 
           {/* Admin Mode link — always visible to campaign admins in portrait */}
           <Link
