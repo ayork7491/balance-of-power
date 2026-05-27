@@ -36,10 +36,10 @@ export default function TerritoryDraftPanel({
 }) {
   // Use centralized test context
   const { 
+    effectiveActingPlayer,
     actingAsPlayer,
     actingAsCampaignPlayerId,
-    viewingAsCampaignPlayerId,
-    selectedTerritoryId: contextSelectedId, // Alias for clarity
+    selectedTerritoryId: contextSelectedId,
   } = useCampaignTestContext();
   
   // Use prop (from context) or fallback to context directly
@@ -52,8 +52,10 @@ export default function TerritoryDraftPanel({
   const setupOrder = campaign?.setup_order ?? [];
   const currentIdx = campaign?.setup_current_index ?? 0;
   const currentPickerId = setupOrder[currentIdx];
-  const activePlayer = currentPerspective || myPlayer; // Use simulated perspective if set
-  const isMyTurn = currentPickerId === actingAsPlayer?.id; // Check if it's acting-as player's turn
+
+  // effectiveActingPlayer resolves to myPlayer for normal players — never null
+  const resolvedActingPlayer = effectiveActingPlayer ?? myPlayer;
+  const isMyTurn = currentPickerId === resolvedActingPlayer?.id;
   const picksRemaining = campaign?.draft_picks_remaining ?? 0;
 
   // Territory counts per player
@@ -76,9 +78,9 @@ export default function TerritoryDraftPanel({
   
   // Debug info for draft state
   const isInDraftPhase = campaign?.current_phase === 'territory_draft';
-  const canClaim = isMyTurn && pendingPickId && !pendingClaimed && actingAsPlayer && isInDraftPhase;
-  const claimBlockedReason = !actingAsPlayer
-    ? 'No acting-as player selected'
+  const canClaim = isMyTurn && pendingPickId && !pendingClaimed && resolvedActingPlayer && isInDraftPhase;
+  const claimBlockedReason = !resolvedActingPlayer
+    ? 'No player record found'
     : !isMyTurn
       ? `Not ${actingAsPlayer?.display_name ?? 'player'}'s turn`
       : !pendingPickId
@@ -187,8 +189,8 @@ export default function TerritoryDraftPanel({
             </p>
           ) : !isInDraftPhase ? (
             <p className="text-xs text-status-danger">Campaign is not in draft phase</p>
-          ) : !activePlayer ? (
-            <p className="text-xs text-status-pending">Select a player perspective from the dropdown above</p>
+          ) : !resolvedActingPlayer ? (
+            <p className="text-xs text-status-pending">No player record found</p>
           ) : (
             <>
               {error && <p className="text-xs text-destructive">{error}</p>}
@@ -267,17 +269,23 @@ export default function TerritoryDraftPanel({
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-muted-foreground">Acting As:</span>
+            <span className="text-muted-foreground">Acting As (raw):</span>
             <span className="text-foreground">
-              {actingAsPlayer ? `${actingAsPlayer.display_name}${actingAsPlayer.is_test_player ? ' (Test)' : ''}` : `My Player (fallback)`}
+              {actingAsPlayer ? `${actingAsPlayer.display_name} (Test)` : 'Self'}
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-muted-foreground">Acting-as Player ID (sent to backend):</span>
-            <span className="text-foreground font-mono">{actingAsCampaignPlayerId ?? 'null (use myPlayer)'}</span>
+            <span className="text-muted-foreground">Resolved Acting Player:</span>
+            <span className="text-foreground font-medium">
+              {resolvedActingPlayer?.display_name ?? 'None'}{resolvedActingPlayer?.is_test_player ? ' (Test)' : ''}
+            </span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-muted-foreground">Is Acting-As Active:</span>
+            <span className="text-muted-foreground">acting_as_player_id sent:</span>
+            <span className="text-foreground font-mono">{actingAsCampaignPlayerId ?? 'null (self)'}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Is My Turn:</span>
             <span className={isMyTurn ? 'text-status-locked font-semibold' : 'text-muted-foreground'}>
               {isMyTurn ? '✓ Yes' : '✗ No'}
             </span>

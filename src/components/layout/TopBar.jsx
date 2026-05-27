@@ -13,7 +13,6 @@ import { useCampaignTestContext } from '@/features/adminTestMode/CampaignTestCon
 
 export default function TopBar({ 
   campaign = null, 
-  isTestMode = false, 
   players = [],
   isAdmin = false,
 }) {
@@ -21,11 +20,11 @@ export default function TopBar({
   const {
     viewingAsCampaignPlayerId,
     actingAsCampaignPlayerId,
-    viewingAsPlayer,
-    actingAsPlayer,
     setViewingAsCampaignPlayerId,
     setActingAsCampaignPlayerId,
     availableActingAsPlayers,
+    availableViewingAsPlayers,
+    isTestMode,
   } = useCampaignTestContext();
   const { id } = useParams();
   return (
@@ -120,73 +119,76 @@ export default function TopBar({
         </motion.span>
       )}
 
-      {/* Admin Test Mode controls (Viewing As + Acting As) */}
-      {isAdmin && campaign?.id && players?.length > 0 && (
+      {/* Admin Test Mode controls — only for campaign admins, only self + test players in lists */}
+      {isAdmin && isTestMode && campaign?.id && availableActingAsPlayers?.length > 0 && (
         <div className="flex items-center gap-2 shrink-0">
-          {/* Viewing As selector - show in lobby, setup, and active campaign */}
-          <div className="flex items-center gap-1.5 bg-muted/10 border border-border px-2 py-1 rounded">
-            <Eye className="w-3.5 h-3.5 text-muted-foreground" />
-            <span className="text-[10px] text-muted-foreground uppercase tracking-wider hidden sm:inline">Viewing As</span>
-            <Select value={viewingAsCampaignPlayerId || 'admin'} onValueChange={(val) => {
-              const player = val === 'admin' ? null : players.find(p => p.id === val);
-              setViewingAsCampaignPlayerId(player?.id ?? null);
-            }}>
-              <SelectTrigger className="h-7 text-xs w-32 sm:w-40">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="admin">
-                  <span className="flex items-center gap-1.5">
-                    <User className="w-3 h-3" /> Admin / My View
-                  </span>
-                </SelectItem>
-                {players.map((player) => (
-                  <SelectItem key={player.id} value={player.id}>
+          {/* Viewing As selector — self + test players only */}
+          {availableViewingAsPlayers.length > 1 && (
+            <div className="flex items-center gap-1.5 bg-muted/10 border border-border px-2 py-1 rounded">
+              <Eye className="w-3.5 h-3.5 text-muted-foreground" />
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider hidden sm:inline">View As</span>
+              <Select value={viewingAsCampaignPlayerId || 'self'} onValueChange={(val) => {
+                setViewingAsCampaignPlayerId(val === 'self' ? null : val);
+              }}>
+                <SelectTrigger className="h-7 text-xs w-32 sm:w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="self">
                     <span className="flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: player.color ? `hsl(var(--${player.color}))` : '#888' }} />
-                      {player.display_name} {player.is_test_player && '(Test)'}
+                      <User className="w-3 h-3" /> My View
                     </span>
                   </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          
-          {/* Acting As selector (action delegation) - show in lobby, setup, and active campaign */}
-          <div className="flex items-center gap-1.5 bg-status-pending/10 border border-status-pending/40 px-2 py-1 rounded">
-            <TestTube className="w-3.5 h-3.5 text-status-pending" />
-            <span className="text-[10px] text-status-pending uppercase tracking-wider hidden sm:inline">Acting As</span>
-            <Select value={actingAsCampaignPlayerId || 'admin'} onValueChange={(val) => {
-              setActingAsCampaignPlayerId(val === 'admin' ? null : val);
-            }}>
-              <SelectTrigger className="h-7 text-xs w-32 sm:w-40">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="admin">
-                  <span className="flex items-center gap-1.5">
-                    <User className="w-3 h-3" /> My Player
-                  </span>
-                </SelectItem>
-                {availableActingAsPlayers.map((player) => (
-                  <SelectItem key={player.id} value={player.id}>
+                  {availableViewingAsPlayers.filter(p => p.is_test_player).map((player) => (
+                    <SelectItem key={player.id} value={player.id}>
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: player.color ? `hsl(var(--${player.color}))` : '#888' }} />
+                        {player.display_name} (Test)
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {/* Acting As selector — self + test players only */}
+          {availableActingAsPlayers.length > 1 && (
+            <div className="flex items-center gap-1.5 bg-status-pending/10 border border-status-pending/40 px-2 py-1 rounded">
+              <TestTube className="w-3.5 h-3.5 text-status-pending" />
+              <span className="text-[10px] text-status-pending uppercase tracking-wider hidden sm:inline">Act As</span>
+              <Select value={actingAsCampaignPlayerId || 'self'} onValueChange={(val) => {
+                setActingAsCampaignPlayerId(val === 'self' ? null : val);
+              }}>
+                <SelectTrigger className="h-7 text-xs w-32 sm:w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="self">
                     <span className="flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: player.color ? `hsl(var(--${player.color}))` : '#888' }} />
-                      {player.display_name} {player.is_test_player && '(Test)'}
+                      <User className="w-3 h-3" /> My Player
                     </span>
                   </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          
+                  {availableActingAsPlayers.filter(p => p.is_test_player).map((player) => (
+                    <SelectItem key={player.id} value={player.id}>
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: player.color ? `hsl(var(--${player.color}))` : '#888' }} />
+                        {player.display_name} (Test)
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
           <Link
             to={`/campaigns/${id}/admin`}
             className="flex items-center gap-1 bg-status-pending/20 border border-status-pending/40 text-status-pending px-2 py-0.5 rounded text-xs font-display tracking-wider uppercase shrink-0 hover:brightness-125 transition-all"
             title="Open Admin Test Mode"
           >
             <Settings className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Admin Mode</span>
+            <span className="hidden sm:inline">Admin</span>
           </Link>
         </div>
       )}

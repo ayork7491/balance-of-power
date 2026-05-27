@@ -46,6 +46,8 @@ function ActiveCampaignContent() {
     selectedTerritoryId,
     viewingAsPlayer,
     actingAsPlayer,
+    effectiveActingPlayer,
+    effectiveViewingPlayer,
     setViewingAsCampaignPlayerId,
     setActingAsCampaignPlayerId,
     setSelectedTerritoryId,
@@ -113,17 +115,11 @@ function ActiveCampaignContent() {
   const phase = campaign?.current_phase;
   const isArchived = campaign?.status === 'archived';
 
-  // Determine effective player for VIEWING perspective (simulated or real)
-  const effectivePlayer = useMemo(() => {
-    if (viewingAsPlayer) return viewingAsPlayer; // simulated perspective
-    return myPlayer; // admin view
-  }, [viewingAsPlayer, myPlayer]);
+  // Effective viewing player — resolves from context (self for normal players)
+  const effectivePlayer = effectiveViewingPlayer ?? myPlayer;
 
-  // Determine effective player for ACTIONS (acting-as delegation)
-  const actionPlayer = useMemo(() => {
-    if (actingAsPlayer) return actingAsPlayer; // delegated to test player
-    return myPlayer; // own player
-  }, [actingAsPlayer, myPlayer]);
+  // Effective acting player — resolves from context (self for normal players)
+  const actionPlayer = effectiveActingPlayer ?? myPlayer;
 
   // ── Panel routing (extracted) ──────────────────────────────────────────────
 
@@ -399,7 +395,7 @@ export default function ActiveCampaign() {
   }
 
   return (
-    <CampaignTestModeProvider campaign={campaign} players={players} isAdmin={isAdmin}>
+    <CampaignTestModeProvider campaign={campaign} players={players} isAdmin={isAdmin} myPlayer={myPlayer}>
       <ActiveCampaignContent />
     </CampaignTestModeProvider>
   );

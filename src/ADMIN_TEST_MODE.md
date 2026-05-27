@@ -1,672 +1,125 @@
-# Admin Test Mode Implementation
+# Admin Test Mode — Permission Model
 
-## Overview
+## Permission Matrix
 
-Admin Test Mode is a comprehensive debugging and solo testing tool for Balance of Power campaigns. It allows administrators to:
+| User Type | Acts As | Views As | Selectors Shown |
+|-----------|---------|----------|-----------------|
+| Normal player | Own CampaignPlayer (always) | Own CampaignPlayer (always) | None |
+| Campaign admin | Self OR test players only | Self OR test players only | Only when test players exist |
+| Platform admin | Same as campaign admin | Same as campaign admin | Same as campaign admin |
 
-- Create test player accounts
-- **Acting-As delegation** — Perform actions as test players (deploy, attack, fortify, etc.)
-- Switch perspectives between players
-- View all private decision data (debug overlay)
-- Force phase advancement
-- Inspect campaign state snapshots
-- Test campaign flows without waiting for timers
+## Core Rules
 
-**CRITICAL SECURITY**: All features are restricted to admin users only and preserve hidden-information rules in production.
+### A. Normal Player
+- **No Acting As / Viewing As selectors** shown in TopBar.
+- `effectiveActingPlayer = myPlayer` always (resolved in context).
+- `effectiveViewingPlayer = myPlayer` always.
+- All action buttons (claim, lock, stage, etc.) work automatically.
+- `acting_as_player_id` is **not sent** in API calls (or sent as `null`).
+- Backend resolves null → authenticated user's own CampaignPlayer.
+
+### B. Campaign Admin
+- By default: acts as and views as **own CampaignPlayer**.
+- May delegate to **test players** (is_test_player === true) only.
+- **Must NOT act as other real human players.**
+- **Must NOT view other real human players' private perspective.**
+- Selectors only appear when `isTestMode === true` (campaign has test players).
+- Selector lists show: own player + test players only. Real human players are excluded.
+
+### C. Platform Admin
+- Same rules as Campaign Admin for acting-as/viewing-as.
+- Platform debug override (acting as any player) is a backend-only capability.
+- No frontend override. Must use backend service role directly.
 
 ---
 
-## Acting-As Delegation Model
+## Implementation Details
 
-### What is Acting-As?
+### Context: `CampaignTestModeProvider`
+**File:** `features/adminTestMode/CampaignTestContext.jsx`
 
-Acting-As allows campaign admins to **perform player actions on behalf of test players**. When you select "Acting As: Test Player 1", all your phase actions (lock deploy, stage attacks, fortify, etc.) are executed as that test player.
-
-### Use Cases
-
-- **Solo testing** — Play all sides of a campaign yourself
-- **Debugging** — Test phase flows from different player perspectives
-- **Bot simulation** — Fill empty slots in test campaigns
-
-### How It Works
-
-**Frontend:**
-1. Admin selects "Acting As" from TopBar dropdown
-2. All player-action buttons use `useActingAsPayload()` hook
-3. Payload includes `acting_as_player_id: <selected_id>`
-4. Backend resolves acting player and executes action
-
-**Backend:**
-1. Every phase function calls `resolveActingCampaignPlayer()`
-2. Validates: admin can act as test players only
-3. Uses `actingPlayer.id` for all PhaseDecision queries/updates
-4. Logs actions under `actingPlayer.id`
-
-### Supported Phase Actions
-
-All player actions support acting-as:
-
-| Phase | Actions |
-|-------|---------|
-| **Faction Selection** | Select faction |
-| **Territory Draft** | Claim territory |
-| **Initial Deploy** | Stage troops, lock deployment |
-| **Deploy** | Stage troops, lock deployment |
-| **Attack** | Stage attack, delete attack, lock attacks |
-| **Fortify** | Stage movement, start construction, lock fortify |
-
-### Security Rules
-
-**Who Can Act As Whom:**
-
-| User Type | Can Act As |
-|-----------|------------|
-| Regular user | Self only |
-| Campaign admin | Self + test players in own campaign |
-| Platform admin | Any player (override) |
-
-**Validation:**
+Key resolved values:
 ```javascript
-// Backend validation (all phase functions)
-const actingResult = resolveActingCampaignPlayer({
-  user,
-  campaign_id,
-  acting_as_player_id,
-  campaignPlayers: players,
-  requireActive: false,
-});
-if (!actingResult.success) {
-  return Response.json({ error: actingResult.reason }, { status: 403 });
-}
-const actingPlayer = actingResult.actingPlayer;
+effectiveActingPlayer  = actingAsPlayer ?? myPlayer  // NEVER null for campaign members
+effectiveViewingPlayer = viewingAsPlayer ?? myPlayer  // NEVER null for campaign members
 ```
 
-### Frontend Helper: `useActingAsPayload`
-
-**Location:** `features/adminTestMode/useActingAsPayload.js`
-
-**Usage:**
-```javascript
-import { useActingAsPayload } from '@/features/adminTestMode/useActingAsPayload';
-
-function MyPhasePanel({ myPlayer }) {
-  const { getPayload, actingPlayer, actingAsId } = useActingAsPayload(myPlayer);
-  
-  const handleLock = async () => {
-    await base44.functions.invoke('deployPhase', {
-      action: 'lockDeploy',
-      campaign_id: campaign.id,
-      ...getPayload(),  // spreads { acting_as_player_id: ... }
-    });
-  };
-}
-```
-
-**Returns:**
-- `getPayload()` — Function returning `{ acting_as_player_id: ... }`
-- `actingPlayer` — Resolved player record (self or test player)
-- `actingAsId` — Selected acting-as CampaignPlayer.id (null if self)
-- `isActingAsSelf` — Boolean
-
-### Backend Resolver: `resolveActingCampaignPlayer`
-
-**Location:** Inlined in each phase function (`deployPhase.js`, `attackPhase.js`, `fortifyPhase.js`, `initialDeploy.js`, `setupPhase.js`)
-
-**Logic:**
-```javascript
-function resolveActingCampaignPlayer({
-  user,
-  campaign_id,
-  acting_as_player_id,
-  campaignPlayers,
-  requireActive = true,
-}) {
-  // 1. Find own player record
-  const ownPlayer = campaignPlayers.find(p => p.user_id === user.id);
-  
-  // 2. No acting-as specified → default to self
-  if (!acting_as_player_id) {
-    return { success: true, actingPlayer: ownPlayer, code: 'ACTING_AS_SELF' };
-  }
-  
-  // 3. Validate requested player exists in campaign
-  const requestedPlayer = campaignPlayers.find(p => p.id === acting_as_player_id);
-  
-  // 4. Platform admin can act as anyone
-  if (user.role === 'admin') {
-    return { success: true, actingPlayer: requestedPlayer, code: 'PLATFORM_ADMIN_OVERRIDE' };
-  }
-  
-  // 5. Campaign admin can act as test players only
-  if (ownPlayer?.is_admin) {
-    const isTestPlayer = requestedPlayer.is_test_player || requestedPlayer.user_id?.startsWith('test_player_');
-    if (!isTestPlayer) {
-      return { success: false, code: 'CANNOT_ACT_AS_REAL_PLAYER' };
-    }
-    return { success: true, actingPlayer: requestedPlayer, code: 'ADMIN_ACTING_AS_TEST' };
-  }
-  
-  // 6. Regular users cannot act as others
-  return { success: false, code: 'NOT_ADMIN' };
-}
-```
-
-### Debug UI Indicators
-
-All phase panels show:
-- **Authenticated:** Your user account
-- **Acting-As:** Selected test player (or "self")
-- **Submit For:** Which player the action will affect
-- **Submission Type:** Manual vs Auto-randomized
-
-**Example (InitialDeployPanel):**
-```jsx
-<div className="flex items-center gap-2">
-  <User className="w-3 h-3" />
-  <span>Authenticated:</span>
-  <span>{myPlayer?.display_name}</span>
-</div>
-<div className="flex items-center gap-2">
-  <TestTube className="w-3 h-3" />
-  <span>Acting-As:</span>
-  <span>{actingAsPlayer ? `${actingAsPlayer.display_name} (Test)` : '(self)'}</span>
-</div>
-<div className="flex items-center gap-2">
-  <span>Submit For:</span>
-  <span>{actionPlayer?.display_name}</span>
-</div>
-```
-
-### Testing Acting-As
-
-**Checklist:**
-
-- [ ] Acting as self → locks deploy for self
-- [ ] Acting as Test Player 1 → locks deploy for Test Player 1
-- [ ] Switch acting-as → button labels update
-- [ ] Lock status shows correct player
-- [ ] PhaseDecision saved for acting player, not authenticated user
-- [ ] Debug panel shows correct "Submit For" player
-- [ ] Cannot act as eliminated players
-- [ ] Campaign admin cannot act as real human players (test players only)
-- [ ] Platform admin can override (act as anyone)
-
----
-
----
-
-## Architecture
-
-### Backend Functions
-
-#### 1. `getAllPhaseDecisions.js`
-**Purpose**: Fetch all player decisions for a campaign (admin-only)
-
-**Access Control**:
-- Requires authenticated user
-- Requires `user.role === 'admin'`
-- Returns 403 for non-admins
-
-**Input**:
-```json
-{
-  "campaign_id": "string (required)",
-  "round": "number (optional)",
-  "phase": "string (optional)"
-}
-```
-
-**Output**:
-```json
-{
-  "decisions": [
-    {
-      "id": "...",
-      "player_id": "...",
-      "player_name": "...",
-      "phase": "deploy",
-      "round": 1,
-      "is_locked": true,
-      "is_auto_submitted": false,
-      "data": { ... },
-      "locked_at": "ISO timestamp"
-    }
-  ]
-}
-```
-
-**Security Notes**:
-- Uses `asServiceRole` to fetch all decisions (bypasses user-scoped filtering)
-- Enriches with player names for display
-- Should ONLY be called from Admin Test Mode UI
-- Never expose this endpoint to regular players
-
----
-
-#### 2. `forcePhaseAdvance.js`
-**Purpose**: Skip timer and advance campaign to next phase (admin-only)
-
-**Access Control**:
-- Requires authenticated user
-- Requires `user.role === 'admin'`
-- Returns 403 for non-admins
-
-**Input**:
-```json
-{
-  "campaign_id": "string (required)",
-  "target_phase": "string (optional, defaults to next phase)"
-}
-```
-
-**Output**:
-```json
-{
-  "success": true,
-  "campaign": {
-    "id": "...",
-    "current_phase": "attack",
-    "current_round": 1
-  }
-}
-```
-
-**Side Effects**:
-- Updates `Campaign.current_phase`
-- Updates `Campaign.phase_deadline` (7 days from now)
-- Increments `Campaign.current_round` if advancing from fortify → deploy
-- Creates `SetupLog` entry with `forced: true`
-
-**Security Notes**:
-- Bypasses normal phase transition logic
-- Auto-submits pending decisions
-- Should ONLY be used for testing, never in production gameplay
-
----
-
-#### 3. `createTestPlayer.js`
-**Purpose**: Create test user accounts for solo testing (admin-only)
-
-**Access Control**:
-- Requires authenticated user
-- Requires `user.role === 'admin'`
-- Returns 403 for non-admins
-
-**Input**:
-```json
-{
-  "email": "string (required)",
-  "display_name": "string (required)",
-  "role": "user | admin (optional, defaults to 'user')"
-}
-```
-
-**Output**:
-```json
-{
-  "success": true,
-  "user": {
-    "id": "...",
-    "email": "test1@example.com",
-    "full_name": "Player One",
-    "role": "user"
-  },
-  "note": "User created. Use invite flow or password reset to set credentials."
-}
-```
-
-**Limitations**:
-- Cannot set password directly via entity creation
-- Admin must use invite flow or password reset for credentials
-- Prevents duplicate emails (409 conflict)
-
----
-
-### Frontend Components
-
-#### 1. `TestPlayerCreator.jsx`
-**Purpose**: Form to create test player accounts
-
-**Features**:
-- Email input
-- Display name input
-- Role selector (user/admin)
-- Success/error toast notifications
-- Loading state management
-
-**Usage**:
-```jsx
-<TestPlayerCreator onPlayerCreated={(user) => {
-  console.log('Created:', user);
-}} />
-```
-
----
-
-#### 2. `PerspectiveSwitcher.jsx`
-**Purpose**: Switch view between different players
-
-**Features**:
-- Dropdown with all campaign players
-- Shows "(You)" indicator for current user
-- Toast notification on switch
-- Current perspective display
-
-**Security**:
-- Does NOT actually change authentication
-- Only affects UI rendering (future: filter private data)
-- Debug overlay bypasses perspective filtering
-
-**Usage**:
-```jsx
-<PerspectiveSwitcher
-  campaign={campaign}
-  players={players}
-  currentPerspective={currentPerspective}
-  onPerspectiveChange={setCurrentPerspective}
-/>
-```
-
----
-
-#### 3. `DebugOverlay.jsx`
-**Purpose**: Toggle visibility of all private decision data
-
-**Features**:
-- Enable/disable toggle
-- Fetches all decisions via `getAllPhaseDecisions`
-- Displays decisions by phase type:
-  - **Faction Selection**: Shows selected faction
-  - **Initial Deploy**: Shows troop placements
-  - **Deploy**: Shows deployment decisions
-  - **Attack**: Shows attack targets and troop counts
-  - **Fortify**: Shows movement decisions
-- Shows lock status and timestamps
-- Auto-refreshes on phase change
-
-**Security**:
-- Only fetches when enabled
-- Admin-only access (enforced by backend)
-- Does NOT persist — toggle resets on page reload
-
-**Usage**:
-```jsx
-<DebugOverlay
-  campaign={campaign}
-  enabled={debugOverlayEnabled}
-  onToggle={() => setDebugOverlayEnabled(!debugOverlayEnabled)}
-/>
-```
-
----
-
-#### 4. `PhaseControls.jsx`
-**Purpose**: Manual phase advancement and auto-fill controls
-
-**Features**:
-- **Force Phase Advance**:
-  - Shows next phase in sequence
-  - Confirmation dialog before advancing
-  - Destructive action (red button)
-  - Updates campaign state
-- **Auto-Fill Decisions** (placeholder):
-  - Future: randomly fill unstaged decisions
-  - Useful for testing battle generation
-
-**Phase Order**:
-```javascript
-[
-  'faction_selection',
-  'territory_draft',
-  'initial_deploy',
-  'deploy',
-  'attack',
-  'battle',
-  'fortify',
-  // → wraps to 'deploy' with round+1
-]
-```
-
-**Usage**:
-```jsx
-<PhaseControls
-  campaign={campaign}
-  onPhaseChanged={(newCampaign) => {
-    console.log('Phase advanced:', newCampaign);
-  }}
-/>
-```
-
----
-
-#### 5. `SnapshotInspector.jsx`
-**Purpose**: View and analyze campaign state snapshots
-
-**Features**:
-- Lists last 20 snapshots
-- Tabbed interface:
-  - **Territories**: Ownership and troop counts
-  - **Players**: Standings (territories, troops, income)
-  - **Income**: Detailed income breakdown
-- Click to select snapshot
-- Shows snapshot type (phase_start/phase_end)
-
-**Tabs**:
-
-**Territories Tab**:
-- Territory ID
-- Troop count
-- Owner name
-
-**Players Tab**:
-- Player name + color dot
-- Territory count
-- Troop total
-- Deploy income
-- Elimination status
-
-**Income Tab**:
-- Territory bonus
-- Troop bonus
-- Region bonus
-- Continent bonus
-- Total income
-
-**Usage**:
-```jsx
-<SnapshotInspector campaign={campaign} />
-```
-
----
-
-## Security Considerations
-
-### Admin-Only Access
-
-All backend functions enforce admin-only access:
+`canDelegateToPlayer(playerId)`:
+- Returns true only if: `playerId === myPlayer.id` OR `player.is_test_player === true`
+- Returns false for all other real human players
+
+`availableActingAsPlayers` / `availableViewingAsPlayers`:
+- Filtered to own player + test players only
+- Empty for non-admin users
+
+Safe setters (`safeSetActingAs`, `safeSetViewingAs`):
+- Silently reject invalid player IDs (other real humans)
+
+### Hook: `useActingAsPayload`
+**File:** `features/adminTestMode/useActingAsPayload.js`
 
 ```javascript
-const user = await base44.auth.me();
-if (!user || user.role !== 'admin') {
-  return Response.json({ error: 'Admin access required' }, { status: 403 });
-}
+const { actingPlayer } = useActingAsPayload(myPlayer);
+// actingPlayer = effectiveActingPlayer (always a real player, never null)
+
+getPayload() => { acting_as_player_id: actingAsCampaignPlayerId ?? null }
+// For normal players: acting_as_player_id = null → backend uses authenticated user
+// For admin acting as test player: acting_as_player_id = testPlayer.id
 ```
 
-**Frontend Check**:
-```javascript
-useEffect(() => {
-  base44.auth.me().then(user => {
-    setIsAdmin(user?.role === 'admin');
-  });
-}, []);
+### TopBar Selectors
+**File:** `components/layout/TopBar.jsx`
 
-if (!isAdmin) {
-  return <AccessDenied />;
-}
-```
+- Only rendered when `isAdmin && isTestMode && availableActingAsPlayers.length > 0`
+- Viewing As list: own player + test players only
+- Acting As list: own player + test players only
+- Hidden entirely for normal players
 
-### Hidden Information Preservation
+### Territory Draft
+**File:** `components/setup/TerritoryDraftPanel.jsx`
 
-**Production Mode** (debug overlay disabled):
-- Players only see their own `PhaseDecision` data
-- `PhaseSnapshot` contains only public revealed state
-- Attack reveals happen at phase boundaries
+Fixed: `isMyTurn = currentPickerId === resolvedActingPlayer?.id`
+where `resolvedActingPlayer = effectiveActingPlayer ?? myPlayer`
 
-**Debug Mode** (debug overlay enabled):
-- Admin can see ALL player decisions
-- Useful for debugging hidden information leaks
-- Does NOT affect production data visibility
-
-### Service Role Usage
-
-Backend functions use `asServiceRole` to bypass user-scoped filtering:
-
-```javascript
-// ✅ Correct: Admin function uses service role
-const decisions = await base44.asServiceRole.entities.PhaseDecision.filter({ campaign_id });
-
-// ❌ Incorrect: User-scoped query returns only own decisions
-const decisions = await base44.entities.PhaseDecision.filter({ campaign_id });
-```
-
-**Justification**:
-- Admin needs to see all decisions for debugging
-- Access controlled by admin role check
-- Never expose service role to frontend
+Normal players: `effectiveActingPlayer = myPlayer` → turn detection works correctly.
+Admin acting as test player: `effectiveActingPlayer = testPlayer` → delegates correctly.
 
 ---
 
-## Usage Guide
-
-### 1. Create Test Players
-
-1. Navigate to Admin Test Mode
-2. Use "Create Test Player" panel
-3. Enter email (e.g., `test1@example.com`)
-4. Enter display name (e.g., `Player One`)
-5. Select role (user/admin)
-6. Click "Create Test Player"
-
-**Note**: Use invite flow to set passwords for test accounts.
-
----
-
-### 2. Switch Perspectives
-
-1. Select a player from dropdown
-2. Click "Switch Perspective"
-3. UI now shows that player's view
-
-**Use Case**: Test hidden information from different player viewpoints.
-
----
-
-### 3. Enable Debug Overlay
-
-1. Click "Enable Debug Overlay"
-2. View all private decisions for current phase
-3. See lock status and timestamps
-4. Toggle off to return to normal view
-
-**Use Case**: Debug issues with decision data, verify privacy rules.
-
----
-
-### 4. Force Phase Advance
-
-1. Click "Force Advance" button
-2. Confirm in dialog
-3. Campaign advances to next phase
-4. All pending decisions auto-submitted
-
-**Use Case**: Test phase transitions without waiting for timers.
-
----
-
-### 5. Inspect Snapshots
-
-1. Select a snapshot from list
-2. Switch between tabs:
-   - Territories
-   - Players
-   - Income
-3. Analyze campaign state at phase boundaries
-
-**Use Case**: Verify state consistency, debug calculation issues.
-
----
-
-## Testing Checklist
-
-- [ ] Non-admin user cannot access Admin Test Mode (403)
-- [ ] Test player creation works (no duplicate emails)
-- [ ] Perspective switching updates UI
-- [ ] Debug overlay shows all decisions when enabled
-- [ ] Debug overlay hides decisions when disabled
-- [ ] Force phase advance updates campaign state
-- [ ] Force phase advance creates SetupLog entry
-- [ ] Snapshot inspector loads snapshots correctly
-- [ ] Snapshot tabs show correct data
-- [ ] All backend functions enforce admin-only access
-- [ ] No service role usage in frontend code
-- [ ] No private data leaks in production mode
-
----
-
-## Known Limitations
-
-### V1 Limitations (Accepted)
-
-- ❌ Auto-fill decisions not implemented (placeholder only)
-- ❌ Test player password must be set via invite flow
-- ❌ Perspective switching doesn't actually filter data (UI only)
-- ❌ No campaign selection (uses URL param `:id`)
-
-### Future Enhancements
-
-- [ ] Implement `autoFillDecisions` backend function
-- [ ] Add campaign selector dropdown
-- [ ] Implement actual perspective-based data filtering
-- [ ] Add battle result simulation
-- [ ] Add territory ownership editor
-- [ ] Add resource manipulation tools
-- [ ] Add campaign reset/rollback functionality
-
----
-
-## File Structure
+## Backend: Acting-As Resolution
+**File:** `services/permissions/actingAsPermissions.js`
 
 ```
-functions/
-  getAllPhaseDecisions.js
-  forcePhaseAdvance.js
-  createTestPlayer.js
-
-components/admin/
-  TestPlayerCreator.jsx
-  PerspectiveSwitcher.jsx
-  DebugOverlay.jsx
-  PhaseControls.jsx
-  SnapshotInspector.jsx
-
-pages/
-  AdminTestMode.jsx
-
-ADMIN_TEST_MODE.md (this file)
+resolveActingCampaignPlayer({ user, acting_as_player_id, campaignPlayers })
 ```
+
+| Scenario | Result |
+|----------|--------|
+| `acting_as_player_id = null` | Resolve to authenticated user's own CampaignPlayer |
+| `acting_as_player_id = own player id` | Allow (acting as self) |
+| `acting_as_player_id = test player id`, user is campaign admin | Allow |
+| `acting_as_player_id = real human player id`, user is campaign admin | **REJECT** (CANNOT_ACT_AS_REAL_PLAYER) |
+| `acting_as_player_id = any player id`, user is platform admin | Allow (PLATFORM_ADMIN_OVERRIDE) |
 
 ---
 
-## Summary
+## isTestMode Flag
 
-Admin Test Mode provides comprehensive tools for solo testing and debugging:
+`isTestMode = isAdmin && (players.some(p => p.is_test_player) || campaign.name includes 'test')`
 
-✅ **Test Player Creation** — Create accounts for testing multi-player scenarios  
-✅ **Perspective Switching** — View game from any player's viewpoint  
-✅ **Debug Overlay** — Toggle visibility of all private decisions  
-✅ **Phase Controls** — Force phase advancement, skip timers  
-✅ **Snapshot Inspector** — Analyze campaign state at phase boundaries  
-✅ **Admin-Only Access** — All features restricted to admins  
-✅ **Security Preserved** — No production data leaks  
+- Controls whether TopBar selectors are shown
+- Controls whether PhaseControls debug section is shown
+- Does NOT affect normal player behavior
 
-**All systems enforce proper access control and hidden-information rules.**
+---
+
+## Debug Display (Admin Test Mode Page)
+
+The Admin Test Mode page (`/campaigns/:id/admin`) shows:
+- Authenticated user identity
+- Own CampaignPlayer record
+- effectiveActingPlayer (resolved)
+- effectiveViewingPlayer (resolved)
+- Is campaign admin / platform admin
+- Available acting/viewing options
+- Rejection reason if delegation was blocked
