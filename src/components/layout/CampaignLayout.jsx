@@ -1,19 +1,19 @@
 /**
- * CampaignLayout — landscape-first docked layout for active campaign screens.
- * Structure:
- *   TopBar (full width)
- *   [ LeftDock | MapCenter | RightDock ]
- *   BottomRail (full width)
+ * CampaignLayout — Responsive layout router for active campaign screens.
  *
- * Enforces landscape mode on mobile with a rotate-prompt overlay.
+ * Philosophy: portrait-supported / landscape-optimized.
+ *   Portrait  → PortraitCampaignLayout  (map-dominant, bottom sheets)
+ *   Landscape → LandscapeCampaignLayout (command center, side docks)
+ *   compactLandscape → LandscapeCampaignLayout with compact=true (docks default collapsed)
+ *
+ * This component is a pure router — all layout structure lives in the
+ * dedicated layout components. No gameplay logic here.
+ *
+ * See RESPONSIVE_LAYOUT_NOTES.md for full documentation.
  */
-import { useState, useEffect } from 'react';
-import { RotateCcw } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
-import TopBar from './TopBar';
-import LeftDock from './LeftDock';
-import RightDock from './RightDock';
-import BottomRail from './BottomRail';
+import { useLayoutMode } from '@/hooks/useLayoutMode';
+import LandscapeCampaignLayout from './LandscapeCampaignLayout';
+import PortraitCampaignLayout from './PortraitCampaignLayout';
 
 export default function CampaignLayout({
   campaign = null,
@@ -27,103 +27,38 @@ export default function CampaignLayout({
   isAdmin = false,
   leftDockContent = null,
   rightDockContent = null,
-  children, // map center
+  children,
   defaultTab = 'map',
   onTabChange,
 }) {
-  const [activeTab, setActiveTab] = useState(defaultTab);
+  const layoutMode = useLayoutMode();
 
-  const handleTabChange = (tab) => {
-    setActiveTab(tab);
-    onTabChange?.(tab);
+  const sharedProps = {
+    campaign,
+    isTestMode,
+    players,
+    isAdmin,
+    leftDockContent,
+    rightDockContent,
+    children,
+    defaultTab,
+    onTabChange,
   };
 
+  if (layoutMode === 'portrait') {
+    return <PortraitCampaignLayout {...sharedProps} />;
+  }
+
+  // landscape or compactLandscape
   return (
-    <motion.div 
-      className="fixed inset-0 bg-background flex flex-col overflow-hidden"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.2 }}
-    >
-      {/* Portrait rotate prompt (mobile only) */}
-      <motion.div 
-        className="landscape-required flex-col items-center justify-center gap-4 bg-background text-center px-8"
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ delay: 0.1 }}
-      >
-        <RotateCcw className="w-12 h-12 text-primary" style={{ animation: 'spin 3s linear infinite' }} />
-        <div className="mt-4">
-          <p className="font-display text-xl font-bold tracking-wider uppercase text-foreground">
-            Rotate Device
-          </p>
-          <p className="text-sm text-muted-foreground mt-2 max-w-xs">
-            Balance of Power is designed for landscape mode to provide the best strategic experience.
-          </p>
-        </div>
-      </motion.div>
-
-      {/* Main landscape layout */}
-      <motion.div 
-        className="landscape-content flex-col w-full h-full"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.3 }}
-      >
-        {/* Top bar */}
-        <TopBar 
-            campaign={campaign} 
-            isTestMode={isTestMode}
-            players={players}
-            isAdmin={isAdmin}
-            currentPerspective={currentPerspective}
-            onPerspectiveChange={onPerspectiveChange}
-            actingAsPlayerId={actingAsPlayerId}
-            onActingAsChange={onActingAsChange}
-            availableActingAsPlayers={availableActingAsPlayers}
-          />
-
-        {/* Main row - critical for mobile scrolling: min-h-0 enables flex child overflow */}
-        <div className="flex flex-1 overflow-hidden min-h-0">
-          {/* Left dock - compact on mobile, ensure map gets 60%+ */}
-          <AnimatePresence>
-            <motion.div
-              initial={{ x: -20, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ x: -20, opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="h-full min-h-0 flex flex-col w-[240px] sm:w-[280px] md:max-w-[320px]"
-            >
-              <LeftDock>
-                {leftDockContent}
-              </LeftDock>
-            </motion.div>
-          </AnimatePresence>
-
-          {/* Map / center content - ensure at least 60% width on mobile */}
-          <main className="flex-1 min-w-[60%] relative overflow-hidden bg-background tactical-grid min-h-0">
-            {children}
-          </main>
-
-          {/* Right dock - compact on mobile, ensure map gets 60%+ */}
-          <AnimatePresence>
-            <motion.div
-              initial={{ x: 20, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ x: 20, opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="h-full min-h-0 flex flex-col w-[240px] sm:w-[280px] md:max-w-[320px]"
-            >
-              <RightDock>
-                {rightDockContent}
-              </RightDock>
-            </motion.div>
-          </AnimatePresence>
-        </div>
-
-        {/* Bottom rail */}
-        <BottomRail activeTab={activeTab} onTabChange={handleTabChange} />
-      </motion.div>
-    </motion.div>
+    <LandscapeCampaignLayout
+      {...sharedProps}
+      currentPerspective={currentPerspective}
+      onPerspectiveChange={onPerspectiveChange}
+      actingAsPlayerId={actingAsPlayerId}
+      onActingAsChange={onActingAsChange}
+      availableActingAsPlayers={availableActingAsPlayers}
+      compact={layoutMode === 'compactLandscape'}
+    />
   );
 }

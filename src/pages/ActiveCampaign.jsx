@@ -5,12 +5,11 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useParams } from 'react-router-dom';
-import { TestTube, User, Eye, Target, Castle, ArrowRight, Hammer } from 'lucide-react';
+
 import CampaignLayout from '@/components/layout/CampaignLayout';
 import { PLAYER_COLORS } from '@/config/theme';
 import MapRenderer from '@/components/map/MapRenderer';
 import TerritoryDetailPanel from '@/components/map/TerritoryDetailPanel';
-import RegionLegend from '@/components/map/RegionLegend';
 import AttackArrowLayer from '@/components/phases/attack/AttackArrowLayer';
 
 // Routers
@@ -332,8 +331,6 @@ function ActiveCampaignContent() {
               />
             ) : null}
           />
-
-          {/* RegionLegend moved to RightDockRouter to keep map viewport clear */}
 
           {/* Only show territory detail panel outside of draft phase (draft uses left dock) */}
           {phase !== 'territory_draft' && selectedTerritory && (

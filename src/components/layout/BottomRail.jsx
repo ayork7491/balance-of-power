@@ -50,7 +50,7 @@ export default function BottomRail({ activeTab, onTabChange }) {
             whileHover={{ scale: 1.02 }}
           >
             <IconComponent Icon={Icon} isActive={isActive} />
-            <span className="hidden sm:block font-medium">{label}</span>
+            <span className="font-medium">{label}</span>
           </motion.button>
         );
       })}

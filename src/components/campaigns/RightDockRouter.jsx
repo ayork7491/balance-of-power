@@ -34,25 +34,34 @@ export default function RightDockRouter({
 
     return (
       <div className="flex flex-col h-full">
-        {/* Region & Bonuses section (moved out of map viewport) */}
-        {mapDef?.regions && mapDef.regions.length > 0 && (
-          <div className="shrink-0 border-b border-border bg-muted/20">
-            <RegionLegend regions={mapDef.regions} />
-          </div>
-        )}
-
         {/* Tab-based content - tabs ALWAYS control what's shown */}
         <div className="flex-1 min-h-0 overflow-y-auto">
           {activeTab === 'leaderboard' ? (
-            <LeaderboardPanel campaign={campaign} players={players} />
+            <>
+              <LeaderboardPanel campaign={campaign} players={players} />
+              {/* Region bonuses surfaced here for portrait access */}
+              {mapDef?.regions?.length > 0 && (
+                <div className="mt-2 border-t border-border bg-muted/20">
+                  <RegionLegend regions={mapDef.regions} />
+                </div>
+              )}
+            </>
           ) : activeTab === 'history' ? (
             <HistoryLogPanel campaign={campaign} players={players} />
           ) : activeTab === 'territories' ? (
-            <InfoPanelPlaceholder 
-              title="Territories"
-              description="Territory overview coming soon"
-              icon="Grid3x3"
-            />
+            <>
+              <InfoPanelPlaceholder 
+                title="Territories"
+                description="Territory overview coming soon"
+                icon="Grid3x3"
+              />
+              {/* Region bonuses also shown here in portrait mode */}
+              {mapDef?.regions?.length > 0 && (
+                <div className="mt-2 border-t border-border bg-muted/20">
+                  <RegionLegend regions={mapDef.regions} />
+                </div>
+              )}
+            </>
           ) : activeTab === 'battles' ? (
             <InfoPanelPlaceholder 
               title="Battles"
