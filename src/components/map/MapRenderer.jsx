@@ -22,6 +22,7 @@ import { PLAYER_COLORS } from '@/config/theme';
 import TerritoryPolygon from './TerritoryPolygon';
 import AdjacencyLines from './AdjacencyLines';
 import ContinentLayer from './ContinentLayer';
+import RouteHintLayer from './RouteHintLayer';
 import { useMapInteraction } from '@/features/maps/useMapInteraction';
 
 function getPlayerHex(players, playerId) {
@@ -355,6 +356,9 @@ export default function MapRenderer({
           <g>
             {/* Continent silhouette/atmosphere layer — below everything */}
             <ContinentLayer mapDef={mapDef} />
+
+            {/* Route hint corridors — gateway connections that don't physically touch */}
+            <RouteHintLayer />
 
             {/* Adjacency lines — non-interactive */}
             <AdjacencyLines mapDef={mapDef} />
