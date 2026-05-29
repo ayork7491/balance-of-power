@@ -37,7 +37,7 @@ export default function TerrainUnderlayLayer({ underlayUrl, width, height }) {
         width={width}
         height={height}
         preserveAspectRatio="xMidYMid meet"
-        opacity={0.45}
+        opacity={1.0}
         style={{
           pointerEvents: 'none',
           userSelect: 'none',
