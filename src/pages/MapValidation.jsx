@@ -30,6 +30,11 @@ const LAYERS = [
     desc: 'Atlas Labels v1.0 — continent titles, subtitles, sea name, compass rose, decorative rings/arcs',
   },
   {
+    id: 'atmosphere',
+    label: '03b Atmosphere',
+    desc: 'Atmosphere Effects v1.0 — atmospheric depth, fog, continent glow, coastal bloom, vignette',
+  },
+  {
     id: 'territories',
     label: '04 Territories',
     desc: 'Territory polygon geometry & ownership fills',
@@ -112,6 +117,7 @@ function ValidationMapRenderer({ layers }) {
       underlayUrl={layers.world            ? MAP_SHATTERED_CROWN.underlay_url         : null}
       geographyDetailUrl={layers.geography ? MAP_SHATTERED_CROWN.geography_detail_url : null}
       atlasLabelsUrl={layers.atlas         ? MAP_SHATTERED_CROWN.atlas_labels_url     : null}
+      atmosphereUrl={layers.atmosphere     ? MAP_SHATTERED_CROWN.atmosphere_url       : null}
       _suppressConnectionLines={!layers.routes}
     />
   );
@@ -123,13 +129,15 @@ const ALL_ON = Object.fromEntries(
 
 // Preset layer sets for URL-driven isolation (?preset=ocean|world|geography|base3|all)
 const PRESETS = {
-  ocean:      { ocean: true,  world: false, geography: false, atlas: false, territories: false, labels: false, routes: false },
-  world:      { ocean: false, world: true,  geography: false, atlas: false, territories: false, labels: false, routes: false },
-  geography:  { ocean: false, world: false, geography: true,  atlas: false, territories: false, labels: false, routes: false },
-  atlas:      { ocean: false, world: false, geography: false, atlas: true,  territories: false, labels: false, routes: false },
-  base3:      { ocean: true,  world: true,  geography: true,  atlas: false, territories: false, labels: false, routes: false },
-  base4:      { ocean: true,  world: true,  geography: true,  atlas: true,  territories: false, labels: false, routes: false },
-  all:        ALL_ON,
+  ocean:        { ocean: true,  world: false, geography: false, atlas: false, atmosphere: false, territories: false, labels: false, routes: false },
+  world:        { ocean: false, world: true,  geography: false, atlas: false, atmosphere: false, territories: false, labels: false, routes: false },
+  geography:    { ocean: false, world: false, geography: true,  atlas: false, atmosphere: false, territories: false, labels: false, routes: false },
+  atlas:        { ocean: false, world: false, geography: false, atlas: true,  atmosphere: false, territories: false, labels: false, routes: false },
+  atmosphere:   { ocean: false, world: false, geography: false, atlas: false, atmosphere: true,  territories: false, labels: false, routes: false },
+  base3:        { ocean: true,  world: true,  geography: true,  atlas: false, atmosphere: false, territories: false, labels: false, routes: false },
+  base4:        { ocean: true,  world: true,  geography: true,  atlas: true,  atmosphere: false, territories: false, labels: false, routes: false },
+  base5:        { ocean: true,  world: true,  geography: true,  atlas: true,  atmosphere: true,  territories: false, labels: false, routes: false },
+  all:          ALL_ON,
 };
 
 export default function MapValidation() {

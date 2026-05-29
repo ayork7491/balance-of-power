@@ -73,6 +73,7 @@ export default function MapLayerStack({
   underlayUrl,
   geographyDetailUrl,
   atlasLabelsUrl,
+  atmosphereUrl,
   stateById,
   players,
   selectedId,
@@ -134,6 +135,17 @@ export default function MapLayerStack({
           ════════════════════════════════════════════════════════ */}
       <g id="layer-03-atlas-labels" style={DECORATIVE}>
         {atlasLabelsUrl && <AssetImage href={atlasLabelsUrl} width={width} height={height} />}
+      </g>
+
+      {/* ════════════════════════════════════════════════════════
+          03_atmosphere_effects  (SUBLAYER — between atlas_labels and territory_polygons)
+          Atmosphere Effects v1.0 — 09_atmosphere_v10.svg
+          Contains: atmospheric depth, fog overlay, continent glow halos,
+          coastal bloom, vignette. Visual separation between world art and gameplay.
+          Rendered verbatim. Decorative only. No interaction.
+          ════════════════════════════════════════════════════════ */}
+      <g id="sublayer-03-atmosphere-effects" style={DECORATIVE}>
+        {atmosphereUrl && <AssetImage href={atmosphereUrl} width={width} height={height} />}
       </g>
 
       {/* ════════════════════════════════════════════════════════
