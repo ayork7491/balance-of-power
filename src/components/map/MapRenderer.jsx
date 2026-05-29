@@ -78,6 +78,9 @@ export default function MapRenderer({
   const drag = useRef(null);
   const rafRef = useRef(null);
 
+  // Hover state for adjacency line preview
+  const [hoveredId, setHoveredId] = useState(null);
+
   // Debug state
   const [debugInfo, setDebugInfo] = useState(null);
 
@@ -207,6 +210,13 @@ export default function MapRenderer({
     e.currentTarget.setPointerCapture(e.pointerId);
   }, [transform.x, transform.y]);
 
+  const onPointerHover = useCallback((e) => {
+    // Only track hover when not dragging
+    if (drag.current?.moved) return;
+    const tid = getTerritoryIdFromTarget(e.target);
+    setHoveredId(tid ?? null);
+  }, []);
+
   const onPointerMove = useCallback((e) => {
     if (!drag.current) return;
     e.preventDefault();
@@ -296,9 +306,9 @@ export default function MapRenderer({
       ref={containerRef}
       className="absolute inset-0 overflow-hidden select-none"
       onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
+      onPointerMove={(e) => { onPointerHover(e); onPointerMove(e); }}
       onPointerUp={onPointerUp}
-      onPointerLeave={onPointerUp}
+      onPointerLeave={(e) => { setHoveredId(null); onPointerUp(e); }}
       style={{
         cursor: 'grab',
         touchAction: 'none',
@@ -360,8 +370,13 @@ export default function MapRenderer({
             {/* Route hint corridors — gateway connections that don't physically touch */}
             <RouteHintLayer />
 
-            {/* Adjacency lines — non-interactive */}
-            <AdjacencyLines mapDef={mapDef} />
+            {/* Adjacency lines — conditional: hover, selection, or phase origin */}
+            <AdjacencyLines
+              mapDef={mapDef}
+              hoveredId={hoveredId}
+              selectedId={selectedId}
+              originId={attackOriginId ?? fortifyOriginId ?? null}
+            />
 
             {/* Territory polygons — interactive via data-tid, no onClick prop */}
             {mapDef.territories.map(territory => {
