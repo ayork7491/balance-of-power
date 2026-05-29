@@ -3,7 +3,7 @@
  * Buttons correspond 1-to-1 with the canonical 9-layer MapLayerStack.
  * Navigate to /map-validation
  */
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { MAP_SHATTERED_CROWN } from '@/features/maps/mapData.shattered_crown';
 import MapRenderer from '@/components/map/MapRenderer';
 
@@ -22,7 +22,7 @@ const LAYERS = [
   {
     id: 'geography',
     label: '02 Geography',
-    desc: 'Terrain Layer 1.0 + Biome Layer 1.0',
+    desc: 'Geography Detail v2.0 — mountains, forests, rivers, fracture scars, reefs',
   },
   {
     id: 'atlas',
@@ -120,8 +120,19 @@ const ALL_ON = Object.fromEntries(
   LAYERS.filter(l => !l.reserved).map(l => [l.id, true])
 );
 
+// Preset layer sets for URL-driven isolation (?preset=ocean|world|geography|base3|all)
+const PRESETS = {
+  ocean:      { ocean: true,  world: false, geography: false, territories: false, labels: false, routes: false },
+  world:      { ocean: false, world: true,  geography: false, territories: false, labels: false, routes: false },
+  geography:  { ocean: false, world: false, geography: true,  territories: false, labels: false, routes: false },
+  base3:      { ocean: true,  world: true,  geography: true,  territories: false, labels: false, routes: false },
+  all:        ALL_ON,
+};
+
 export default function MapValidation() {
-  const [layers, setLayers] = useState(ALL_ON);
+  const urlParams = new URLSearchParams(window.location.search);
+  const preset = urlParams.get('preset');
+  const [layers, setLayers] = useState(preset && PRESETS[preset] ? PRESETS[preset] : ALL_ON);
 
   const toggle = (id) => setLayers(prev => ({ ...prev, [id]: !prev[id] }));
   const activeCount  = Object.values(layers).filter(Boolean).length;

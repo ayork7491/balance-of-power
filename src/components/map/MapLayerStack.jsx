@@ -5,7 +5,7 @@
  *
  *   00_ocean_background   — ocean color, gradient, depth shading
  *   01_world_landmasses   — continent silhouettes, coastlines (World Layer v2.0)
- *   02_geography_detail   — terrain + biome artwork (Terrain Layer, Biome Layer)
+ *   02_geography_detail   — Geography Detail v2.0 landforms SVG (mountains, forests, rivers, etc.)
  *   03_atlas_labels       — continent/region names, compass rose (reserved)
  *   04_territory_polygons — territory geometry, ownership fills, interaction
  *   05_territory_labels   — territory name text
@@ -23,7 +23,7 @@
  *   mapDef              — full MapDefinition
  *   width / height      — logical SVG coordinate space
  *   underlayUrl          — World Layer v2.0 SVG URL (01_world_landmasses)
- *   geographyDetailUrl   — Geography Detail v1.0 SVG URL (02_geography_detail)
+ *   geographyDetailUrl   — Geography Detail v2.0 SVG URL (02_geography_detail)
  *   stateById           — { [territory_id]: TerritoryState }
  *   players             — CampaignPlayer[]
  *   selectedId          — selected territory_id
@@ -88,16 +88,40 @@ export default function MapLayerStack({
 
       {/* ════════════════════════════════════════════════════════
           00_ocean_background
-          Ocean color + vignette. CSS background handles base color;
-          this vignette darkens the map edges.
+          Ocean base color, depth gradient, wave line pattern,
+          water texture, and vignette edge darkening.
+          All coded here — no external SVG dependency.
           ════════════════════════════════════════════════════════ */}
       <g id="layer-00-ocean-background" style={DECORATIVE}>
         <defs>
+          {/* Ocean depth gradient — deeper (darker) toward edges */}
+          <linearGradient id="ocean-depth" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%"   stopColor="#051624" stopOpacity="1" />
+            <stop offset="40%"  stopColor="#071e2e" stopOpacity="1" />
+            <stop offset="100%" stopColor="#040e18" stopOpacity="1" />
+          </linearGradient>
+          {/* Subtle wave/ripple repeat pattern */}
+          <pattern id="ocean-waves" x="0" y="0" width="120" height="40" patternUnits="userSpaceOnUse">
+            <path
+              d="M0,20 Q15,12 30,20 Q45,28 60,20 Q75,12 90,20 Q105,28 120,20"
+              fill="none" stroke="#0d3050" strokeWidth="0.8" strokeOpacity="0.35"
+            />
+            <path
+              d="M0,30 Q15,22 30,30 Q45,38 60,30 Q75,22 90,30 Q105,38 120,30"
+              fill="none" stroke="#0d3050" strokeWidth="0.5" strokeOpacity="0.20"
+            />
+          </pattern>
+          {/* Radial vignette — darkens map edges */}
           <radialGradient id="ocean-vignette" cx="50%" cy="50%" r="70%">
             <stop offset="0%"   stopColor="transparent" stopOpacity="0" />
-            <stop offset="100%" stopColor="#060a12"     stopOpacity="0.40" />
+            <stop offset="100%" stopColor="#060a12"     stopOpacity="0.45" />
           </radialGradient>
         </defs>
+        {/* Base ocean color */}
+        <rect x={0} y={0} width={width} height={height} fill="url(#ocean-depth)" />
+        {/* Wave line texture */}
+        <rect x={0} y={0} width={width} height={height} fill="url(#ocean-waves)" />
+        {/* Edge vignette */}
         <rect x={0} y={0} width={width} height={height} fill="url(#ocean-vignette)" />
       </g>
 
@@ -112,7 +136,8 @@ export default function MapLayerStack({
 
       {/* ════════════════════════════════════════════════════════
           02_geography_detail
-          Geography Detail v1.0 — permanent layer.
+          Geography Detail v2.0 — 02_geography_detail_v20_landforms.svg
+          Mountains, forests, rivers, farmland, fracture scars, reefs.
           Rendered verbatim at opacity=1.0. No modification.
           Decorative only. No interaction.
           ════════════════════════════════════════════════════════ */}
