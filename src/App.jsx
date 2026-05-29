@@ -39,6 +39,7 @@ import BattleResultEntry      from './pages/BattleResultEntry';
 import AdminBattleResultEntry from './pages/AdminBattleResultEntry';
 import HistoryDetail          from './pages/HistoryDetail';
 import AdminTestMode          from './pages/AdminTestMode';
+import MapExport              from './pages/MapExport';
 
 function App() {
   return (
@@ -83,6 +84,7 @@ function App() {
 
               {/* Admin test mode */}
               <Route path="/campaigns/:id/admin"                    element={<AdminTestMode />} />
+              <Route path="/map-export"                             element={<MapExport />} />
             </Route>
 
             {/* 404 */}
