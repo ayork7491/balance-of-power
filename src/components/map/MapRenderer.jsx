@@ -77,8 +77,6 @@ export default function MapRenderer({
   onDeployTerritorySelect = null,
   // Debug
   debugMode = false,
-  // Validation-only: suppress the programmatic continent atmosphere layer
-  _suppressContinentLayer = false,
   // Validation-only: suppress adjacency lines and route hints
   _suppressConnectionLines = false,
 }) {
@@ -392,7 +390,6 @@ export default function MapRenderer({
             scale={transform.scale}
             regionColorById={regionColorById}
             getPlayerHex={getPlayerHex}
-            suppressContinentLayer={_suppressContinentLayer}
             suppressConnectionLines={_suppressConnectionLines}
           />
         </svg>

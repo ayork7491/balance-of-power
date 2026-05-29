@@ -31,13 +31,8 @@ const LAYERS = [
     reserved: true,
   },
   {
-    id: 'continent',
-    label: '04a Continent Atmo',
-    desc: 'Programmatic continent atmosphere tints (sub-layer of 04)',
-  },
-  {
     id: 'territories',
-    label: '04b Territories',
+    label: '04 Territories',
     desc: 'Territory polygon geometry & ownership fills',
   },
   {
@@ -116,7 +111,6 @@ function ValidationMapRenderer({ layers }) {
       onSelect={() => {}}
       underlayUrl={layers.world       ? MAP_SHATTERED_CROWN.underlay_url        : null}
       geographyDetailUrl={layers.geography ? MAP_SHATTERED_CROWN.geography_detail_url : null}
-      _suppressContinentLayer={!layers.continent}
       _suppressConnectionLines={!layers.routes}
     />
   );

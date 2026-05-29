@@ -42,7 +42,6 @@
  * this file free of direct game-logic imports.
  */
 
-import ContinentLayer from './ContinentLayer';
 import RouteHintLayer from './RouteHintLayer';
 import AdjacencyLines from './AdjacencyLines';
 import TerritoryPolygon from './TerritoryPolygon';
@@ -81,10 +80,8 @@ export default function MapLayerStack({
   scale,
   regionColorById,
   getPlayerHex,
-  suppressContinentLayer,
   suppressConnectionLines,
 }) {
-  const hasAssets = underlayUrl || geographyDetailUrl;
 
   return (
     <g>
@@ -139,23 +136,8 @@ export default function MapLayerStack({
           PRIMARY GAMEPLAY LAYER.
           All territory clicks originate here via data-tid delegation
           in MapRenderer. No onClick props on children.
-
-          Programmatic continent atmosphere sits inside this layer
-          at reduced opacity when asset layers are present, to keep
-          it visually behind territory borders.
           ════════════════════════════════════════════════════════ */}
       <g id="layer-04-territory-polygons">
-        {/* Continent atmosphere — programmatic, rendered below polygons */}
-        {!suppressContinentLayer && (
-          <g
-            id="layer-04a-continent-atmosphere"
-            style={DECORATIVE}
-            opacity={hasAssets ? 0.35 : 1.0}
-          >
-            <ContinentLayer mapDef={mapDef} />
-          </g>
-        )}
-
         {/* Territory polygons — interactive via MapRenderer event delegation */}
         {mapDef.territories.map(territory => {
           const tid = territory.territory_id;
