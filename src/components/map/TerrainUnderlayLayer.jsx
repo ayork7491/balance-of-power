@@ -1,67 +1,65 @@
 /**
- * TerrainUnderlayLayer — renders a pre-authored SVG terrain/landmass underlay
- * as a non-interactive visual layer within the map SVG coordinate space.
+ * TerrainUnderlayLayer — renders the pre-authored SVG map layers as non-interactive
+ * visual underlays within the map SVG coordinate space.
  *
- * Layer order contract (bottom → top):
- *   Ocean background  ← handled by MapRenderer container bg
- *   TerrainUnderlayLayer  ← this component (SVG image embed)
- *   ContinentLayer        ← atmosphere halos + terrain textures (reduced opacity when underlay present)
- *   Territory polygons    ← gameplay geometry
- *   Ownership / troops    ← UI overlays
+ * Layer order (bottom → top within this component):
+ *   1. World Layer 2.0   (underlayUrl)     — continent silhouettes, coastlines
+ *   2. Terrain Layer 1.0 (terrainLayerUrl) — mountains, forests, rivers, ruins, etc.
  *
- * Requirements:
- *   - Non-interactive (pointerEvents: none everywhere)
- *   - Non-selectable
- *   - Subtle: opacity tuned to keep territory borders readable on mobile
- *   - Coordinate-aligned: SVG underlay must share the same logical coordinate
- *     space as the map (width × height). For Shattered Crown: 1000 × 1400.
+ * Both SVGs are rendered verbatim at opacity=1.0 exactly as authored.
+ * No opacity overrides. No color changes. No modifications.
+ *
+ * All layers are fully non-interactive (pointerEvents: none).
+ * Coordinate space: x=0, y=0, width×height of the map logical space (1000×1400).
  */
 
-export default function TerrainUnderlayLayer({ underlayUrl, width, height }) {
-  if (!underlayUrl || !width || !height) return null;
+export default function TerrainUnderlayLayer({ underlayUrl, terrainLayerUrl, width, height }) {
+  if ((!underlayUrl && !terrainLayerUrl) || !width || !height) return null;
+
+  const imgStyle = {
+    pointerEvents: 'none',
+    userSelect: 'none',
+    WebkitUserSelect: 'none',
+    imageRendering: 'auto',
+  };
 
   return (
     <g style={{ pointerEvents: 'none', userSelect: 'none' }}>
-      {/*
-        Render the SVG as a foreign image element within the SVG coordinate space.
-        x=0, y=0, width/height match the map's logical coordinate space exactly,
-        so the underlay aligns 1:1 with the territory geometry.
+      {/* ── World Layer 2.0: continent silhouettes + coastlines ── */}
+      {underlayUrl && (
+        <image
+          href={underlayUrl}
+          x={0} y={0}
+          width={width} height={height}
+          preserveAspectRatio="xMidYMid meet"
+          opacity={1.0}
+          style={imgStyle}
+        />
+      )}
 
-        preserveAspectRatio="none" ensures pixel-perfect alignment with the
-        coordinate space even if the raster differs slightly in aspect.
-      */}
-      <image
-        href={underlayUrl}
-        x={0}
-        y={0}
-        width={width}
-        height={height}
-        preserveAspectRatio="xMidYMid meet"
-        opacity={1.0}
-        style={{
-          pointerEvents: 'none',
-          userSelect: 'none',
-          WebkitUserSelect: 'none',
-          // Smooth rendering on mobile
-          imageRendering: 'auto',
-        }}
-      />
+      {/* ── Terrain Layer 1.0: mountains, forests, rivers, ruins, etc. ──
+          Rendered verbatim above the world layer.
+          Opacity authored into the SVG — no override applied here. */}
+      {terrainLayerUrl && (
+        <image
+          href={terrainLayerUrl}
+          x={0} y={0}
+          width={width} height={height}
+          preserveAspectRatio="xMidYMid meet"
+          opacity={1.0}
+          style={imgStyle}
+        />
+      )}
 
-      {/*
-        Mobile overlay: a subtle dark vignette to ensure territory borders
-        remain readable at smaller viewports / lower pixel density.
-        This is a radial gradient that darkens the edges without affecting
-        the center where most territory action occurs.
-      */}
+      {/* ── Edge vignette ── subtle darkening at map borders only,
+          does not affect interior terrain features. */}
       <defs>
         <radialGradient id="underlay-vignette" cx="50%" cy="50%" r="70%">
-          <stop offset="0%" stopColor="transparent" stopOpacity="0" />
-          <stop offset="100%" stopColor="#060a12" stopOpacity="0.45" />
+          <stop offset="0%"   stopColor="transparent" stopOpacity="0" />
+          <stop offset="100%" stopColor="#060a12"     stopOpacity="0.40" />
         </radialGradient>
       </defs>
-      <rect
-        x={0} y={0}
-        width={width} height={height}
+      <rect x={0} y={0} width={width} height={height}
         fill="url(#underlay-vignette)"
         style={{ pointerEvents: 'none' }}
       />

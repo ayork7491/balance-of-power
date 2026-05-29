@@ -62,6 +62,8 @@ export default function MapRenderer({
   arrowLayer = null,
   // Optional terrain underlay SVG URL (coordinate-aligned with mapDef dimensions)
   underlayUrl = null,
+  // Optional terrain detail layer SVG URL (rendered above world layer, below polygons)
+  terrainLayerUrl = null,
   // Phase interaction props
   currentPhase = null,
   actingPlayer = null,
@@ -319,7 +321,7 @@ export default function MapRenderer({
         WebkitUserSelect: 'none',
         userSelect: 'none',
         // Ocean background — visible outside the landmass underlay extents
-        backgroundColor: underlayUrl ? '#04111e' : undefined,
+        backgroundColor: (underlayUrl || terrainLayerUrl) ? '#04111e' : undefined,
       }}
       data-map-container="true"
     >
@@ -369,10 +371,11 @@ export default function MapRenderer({
           </defs>
 
           <g>
-            {/* ── Layer 1: Pre-authored terrain/landmass SVG underlay ── */}
-            {underlayUrl && (
+            {/* ── Layer 1: World Layer 2.0 + Terrain Layer 1.0 ── */}
+            {(underlayUrl || terrainLayerUrl) && (
               <TerrainUnderlayLayer
                 underlayUrl={underlayUrl}
+                terrainLayerUrl={terrainLayerUrl}
                 width={mapDef.width}
                 height={mapDef.height}
               />
@@ -381,7 +384,7 @@ export default function MapRenderer({
             {/* ── Layer 2: Programmatic continent atmosphere (reduced when underlay present) ── */}
             {/* When underlay is active, wrap in a low-opacity group so atmosphere
                 halos and terrain textures supplement without competing with the SVG art. */}
-            <g opacity={underlayUrl ? 0.35 : 1.0}>
+            <g opacity={(underlayUrl || terrainLayerUrl) ? 0.35 : 1.0}>
               <ContinentLayer mapDef={mapDef} />
             </g>
 

@@ -401,6 +401,7 @@ export const MAP_SHATTERED_CROWN: MapDefinition = {
   min_players: 5,
   max_players: 7,
   underlay_url: 'https://media.base44.com/images/public/6a1504188a2a3ce4c5d33e1b/3e3e22db5_shattered_crown_world_layer_v20_sculpted_landmasses.svg',
+  terrain_layer_url: 'https://media.base44.com/images/public/6a1504188a2a3ce4c5d33e1b/dfbb3bcc0_shattered_crown_terrain_layer_v10.svg',
 
   continents: [
     { id: 'ironspine',       name: 'Ironspine',       control_bonus: 7,  color: '#64748b' },
