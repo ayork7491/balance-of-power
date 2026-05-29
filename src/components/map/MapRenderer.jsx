@@ -1,29 +1,30 @@
 /**
- * MapRenderer — schema-driven SVG map.
+ * MapRenderer — schema-driven SVG map with canonical 9-layer render stack.
  *
- * Pointer event architecture (fixes territory click regression):
+ * Layer stack (managed by MapLayerStack):
+ *   08_ui_overlays        — selection glows, hover effects, debug
+ *   07_gameplay_markers   — troop counts, structures, objectives (reserved)
+ *   06_gameplay_routes    — adjacency lines, route hints, attack paths
+ *   05_territory_labels   — territory name text
+ *   04_territory_polygons — territory geometry + ownership (PRIMARY GAMEPLAY)
+ *   03_atlas_labels       — continent/region names, compass rose (reserved)
+ *   02_geography_detail   — Terrain Layer + Biome Layer artwork
+ *   01_world_landmasses   — World Layer v2.0 continent silhouettes
+ *   00_ocean_background   — ocean color + vignette
  *
- *   pointerdown on container  → record start position + capture pointer
- *   pointermove on container  → track drag distance, pan if moved
- *   pointerup on container    → if NOT dragged (< TAP_THRESHOLD px), check if
- *                               the event target has data-tid and fire territory
- *                               selection. drag.current is still live here.
+ * Pointer event architecture:
+ *   pointerdown → record start position + capture pointer
+ *   pointermove → track drag distance, pan if moved
+ *   pointerup   → if NOT dragged (< TAP_THRESHOLD px), find data-tid and fire
+ *                 territory selection. drag.current is still live here.
  *
- * Key fix: territory selection fires in onPointerUp (NOT via child onClick).
- * This keeps drag.current live at decision time and avoids the child onClick
- * firing AFTER drag.current was nulled out.
- *
- * TerritoryPolygon no longer has an onClick prop — all clicks are handled here
- * via event delegation on the container.
+ * Key: territory selection fires in onPointerUp (NOT via child onClick).
+ * TerritoryPolygon has no onClick — clicks handled via event delegation here.
  */
 import { useRef, useState, useCallback, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { PLAYER_COLORS } from '@/config/theme';
-import TerritoryPolygon from './TerritoryPolygon';
-import AdjacencyLines from './AdjacencyLines';
-import ContinentLayer from './ContinentLayer';
-import RouteHintLayer from './RouteHintLayer';
-import TerrainUnderlayLayer from './TerrainUnderlayLayer';
+import MapLayerStack from './MapLayerStack';
 import { useMapInteraction } from '@/features/maps/useMapInteraction';
 
 function getPlayerHex(players, playerId) {
@@ -376,84 +377,27 @@ export default function MapRenderer({
             </filter>
           </defs>
 
-          <g>
-            {/* ── Layer 1: World Layer 2.0 + Terrain Layer 1.0 ── */}
-            {(underlayUrl || terrainLayerUrl || biomeLayerUrl) && (
-              <TerrainUnderlayLayer
-                underlayUrl={underlayUrl}
-                terrainLayerUrl={terrainLayerUrl}
-                biomeLayerUrl={biomeLayerUrl}
-                width={mapDef.width}
-                height={mapDef.height}
-              />
-            )}
-
-            {/* ── Layer 2: Programmatic continent atmosphere (reduced when underlay present) ── */}
-            {!_suppressContinentLayer && (
-              <g opacity={(underlayUrl || terrainLayerUrl || biomeLayerUrl) ? 0.35 : 1.0}>
-                <ContinentLayer mapDef={mapDef} />
-              </g>
-            )}
-
-            {/* Route hint corridors — gateway connections that don't physically touch */}
-            {!_suppressConnectionLines && <RouteHintLayer />}
-
-            {/* Adjacency lines — conditional: hover, selection, or phase origin */}
-            {!_suppressConnectionLines && <AdjacencyLines
-              mapDef={mapDef}
-              hoveredId={hoveredId}
-              selectedId={selectedId}
-              originId={attackOriginId ?? fortifyOriginId ?? null}
-            />}
-
-            {/* Territory polygons — interactive via data-tid, no onClick prop */}
-            {mapDef.territories.map(territory => {
-              const tid = territory.territory_id;
-              const tState = stateById[tid];
-              const ownerColor = tState?.owner_player_id
-                ? getPlayerHex(players, tState.owner_player_id)
-                : null;
-              const regionColor = regionColorById[territory.region_id] ?? '#334155';
-
-              return (
-                <TerritoryPolygon
-                  key={tid}
-                  territory={territory}
-                  regionColor={regionColor}
-                  ownerColor={ownerColor}
-                  troopCount={tState?.troop_count ?? 0}
-                  isSelected={selectedId === tid}
-                  isHighlighted={highlightIds.has(tid)}
-                  isAttackable={attackableIds.has(tid)}
-                />
-              );
-            })}
-
-            {/* Territory name labels — only at useful zoom levels */}
-            {transform.scale >= 0.45 && mapDef.territories.map(territory => {
-              // Scale font inversely with zoom so labels stay readable
-              const fontSize = Math.max(8, Math.min(14, 11 / transform.scale));
-              return (
-                <text
-                  key={`label-${territory.territory_id}`}
-                  x={territory.cx}
-                  y={territory.cy + 18}
-                  textAnchor="middle"
-                  fontSize={fontSize}
-                  fontFamily="'Rajdhani', sans-serif"
-                  fontWeight="600"
-                  letterSpacing="0.04em"
-                  fill="rgba(255,255,255,0.80)"
-                  stroke="rgba(0,0,0,0.85)"
-                  strokeWidth={fontSize * 0.06}
-                  paintOrder="stroke"
-                  style={{ pointerEvents: 'none', userSelect: 'none' }}
-                >
-                  {territory.name}
-                </text>
-              );
-            })}
-          </g>
+          <MapLayerStack
+            mapDef={mapDef}
+            width={mapDef.width}
+            height={mapDef.height}
+            underlayUrl={underlayUrl}
+            terrainLayerUrl={terrainLayerUrl}
+            biomeLayerUrl={biomeLayerUrl}
+            stateById={stateById}
+            players={players}
+            selectedId={selectedId}
+            highlightIds={highlightIds}
+            attackableIds={attackableIds}
+            hoveredId={hoveredId}
+            attackOriginId={attackOriginId}
+            fortifyOriginId={fortifyOriginId}
+            scale={transform.scale}
+            regionColorById={regionColorById}
+            getPlayerHex={getPlayerHex}
+            suppressContinentLayer={_suppressContinentLayer}
+            suppressConnectionLines={_suppressConnectionLines}
+          />
         </svg>
       </div>
 

@@ -1,16 +1,12 @@
 /**
- * TerrainUnderlayLayer — renders the pre-authored SVG map layers as non-interactive
- * visual underlays within the map SVG coordinate space.
+ * TerrainUnderlayLayer — SUPERSEDED by MapLayerStack (layers 01 + 02).
  *
- * Layer order (bottom → top within this component):
- *   1. World Layer 2.0   (underlayUrl)     — continent silhouettes, coastlines
- *   2. Terrain Layer 1.0 (terrainLayerUrl) — mountains, forests, rivers, ruins, etc.
+ * Retained for backwards compatibility. MapRenderer no longer uses this
+ * component directly — asset rendering is now handled by:
+ *   layer-01-world-landmasses  (underlayUrl)
+ *   layer-02-geography-detail  (terrainLayerUrl + biomeLayerUrl)
  *
- * Both SVGs are rendered verbatim at opacity=1.0 exactly as authored.
- * No opacity overrides. No color changes. No modifications.
- *
- * All layers are fully non-interactive (pointerEvents: none).
- * Coordinate space: x=0, y=0, width×height of the map logical space (1000×1400).
+ * This file is safe to delete once all call sites are confirmed removed.
  */
 
 export default function TerrainUnderlayLayer({ underlayUrl, terrainLayerUrl, biomeLayerUrl, width, height }) {
