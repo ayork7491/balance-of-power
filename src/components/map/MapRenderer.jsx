@@ -78,6 +78,8 @@ export default function MapRenderer({
   debugMode = false,
   // Validation-only: suppress the programmatic continent atmosphere layer
   _suppressContinentLayer = false,
+  // Validation-only: suppress adjacency lines and route hints
+  _suppressConnectionLines = false,
 }) {
   const containerRef = useRef(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
@@ -391,15 +393,15 @@ export default function MapRenderer({
             )}
 
             {/* Route hint corridors — gateway connections that don't physically touch */}
-            <RouteHintLayer />
+            {!_suppressConnectionLines && <RouteHintLayer />}
 
             {/* Adjacency lines — conditional: hover, selection, or phase origin */}
-            <AdjacencyLines
+            {!_suppressConnectionLines && <AdjacencyLines
               mapDef={mapDef}
               hoveredId={hoveredId}
               selectedId={selectedId}
               originId={attackOriginId ?? fortifyOriginId ?? null}
-            />
+            />}
 
             {/* Territory polygons — interactive via data-tid, no onClick prop */}
             {mapDef.territories.map(territory => {

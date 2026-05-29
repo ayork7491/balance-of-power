@@ -47,8 +47,8 @@ function ValidationMapRenderer({ layers }) {
       onSelect={() => {}}
       underlayUrl={layers.world    ? MAP_SHATTERED_CROWN.underlay_url     : null}
       terrainLayerUrl={layers.terrain ? MAP_SHATTERED_CROWN.terrain_layer_url : null}
-      // Suppress continent tints by injecting a custom prop we handle below
       _suppressContinentLayer={!layers.continent}
+      _suppressConnectionLines={!layers.territories}
     />
   );
 }
