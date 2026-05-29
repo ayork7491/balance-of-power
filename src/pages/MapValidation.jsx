@@ -10,6 +10,7 @@ import MapRenderer from '@/components/map/MapRenderer';
 const LAYERS = [
   { id: 'world',      label: 'World Layer',      desc: 'Continent silhouettes & coastlines (World Layer 2.0)' },
   { id: 'terrain',    label: 'Terrain Layer',     desc: 'Mountains, forests, rivers, ruins (Terrain Layer 1.0)' },
+  { id: 'biome',      label: 'Biome Layer',       desc: 'Biome regions (Biome Layer 1.0)' },
   { id: 'territories', label: 'Territories',       desc: 'Interactive territory polygons' },
   { id: 'labels',     label: 'Labels',            desc: 'Territory name text labels' },
   { id: 'continent',  label: 'Continent Tints',   desc: 'Programmatic continent atmosphere layer' },
@@ -47,6 +48,7 @@ function ValidationMapRenderer({ layers }) {
       onSelect={() => {}}
       underlayUrl={layers.world    ? MAP_SHATTERED_CROWN.underlay_url     : null}
       terrainLayerUrl={layers.terrain ? MAP_SHATTERED_CROWN.terrain_layer_url : null}
+      biomeLayerUrl={layers.biome ? MAP_SHATTERED_CROWN.biome_layer_url : null}
       _suppressContinentLayer={!layers.continent}
       _suppressConnectionLines={!layers.territories}
     />
@@ -75,6 +77,7 @@ export default function MapValidation() {
   const [layers, setLayers] = useState({
     world: true,
     terrain: true,
+    biome: true,
     territories: true,
     labels: true,
     continent: true,
@@ -98,7 +101,7 @@ export default function MapValidation() {
           />
         ))}
         <button
-          onClick={() => setLayers({ world: true, terrain: true, territories: true, labels: true, continent: true })}
+          onClick={() => setLayers({ world: true, terrain: true, biome: true, territories: true, labels: true, continent: true })}
           className="ml-auto px-3 py-2 rounded border border-border text-xs font-display tracking-wider uppercase text-muted-foreground hover:text-foreground hover:border-muted-foreground transition-all whitespace-nowrap"
         >
           Reset All

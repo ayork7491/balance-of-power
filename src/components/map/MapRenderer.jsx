@@ -64,6 +64,8 @@ export default function MapRenderer({
   underlayUrl = null,
   // Optional terrain detail layer SVG URL (rendered above world layer, below polygons)
   terrainLayerUrl = null,
+  // Optional biome layer SVG URL (rendered above terrain layer, below polygons)
+  biomeLayerUrl = null,
   // Phase interaction props
   currentPhase = null,
   actingPlayer = null,
@@ -325,7 +327,7 @@ export default function MapRenderer({
         WebkitUserSelect: 'none',
         userSelect: 'none',
         // Ocean background — visible outside the landmass underlay extents
-        backgroundColor: (underlayUrl || terrainLayerUrl) ? '#04111e' : undefined,
+        backgroundColor: (underlayUrl || terrainLayerUrl || biomeLayerUrl) ? '#04111e' : undefined,
       }}
       data-map-container="true"
     >
@@ -376,10 +378,11 @@ export default function MapRenderer({
 
           <g>
             {/* ── Layer 1: World Layer 2.0 + Terrain Layer 1.0 ── */}
-            {(underlayUrl || terrainLayerUrl) && (
+            {(underlayUrl || terrainLayerUrl || biomeLayerUrl) && (
               <TerrainUnderlayLayer
                 underlayUrl={underlayUrl}
                 terrainLayerUrl={terrainLayerUrl}
+                biomeLayerUrl={biomeLayerUrl}
                 width={mapDef.width}
                 height={mapDef.height}
               />
@@ -387,7 +390,7 @@ export default function MapRenderer({
 
             {/* ── Layer 2: Programmatic continent atmosphere (reduced when underlay present) ── */}
             {!_suppressContinentLayer && (
-              <g opacity={(underlayUrl || terrainLayerUrl) ? 0.35 : 1.0}>
+              <g opacity={(underlayUrl || terrainLayerUrl || biomeLayerUrl) ? 0.35 : 1.0}>
                 <ContinentLayer mapDef={mapDef} />
               </g>
             )}

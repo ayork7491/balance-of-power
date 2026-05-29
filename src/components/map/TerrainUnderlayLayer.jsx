@@ -13,8 +13,8 @@
  * Coordinate space: x=0, y=0, width×height of the map logical space (1000×1400).
  */
 
-export default function TerrainUnderlayLayer({ underlayUrl, terrainLayerUrl, width, height }) {
-  if ((!underlayUrl && !terrainLayerUrl) || !width || !height) return null;
+export default function TerrainUnderlayLayer({ underlayUrl, terrainLayerUrl, biomeLayerUrl, width, height }) {
+  if ((!underlayUrl && !terrainLayerUrl && !biomeLayerUrl) || !width || !height) return null;
 
   const imgStyle = {
     pointerEvents: 'none',
@@ -43,6 +43,19 @@ export default function TerrainUnderlayLayer({ underlayUrl, terrainLayerUrl, wid
       {terrainLayerUrl && (
         <image
           href={terrainLayerUrl}
+          x={0} y={0}
+          width={width} height={height}
+          preserveAspectRatio="xMidYMid meet"
+          opacity={1.0}
+          style={imgStyle}
+        />
+      )}
+
+      {/* ── Biome Layer 1.0: biome regions rendered above terrain, below territories. ──
+          Rendered verbatim. No opacity, color, or geometry changes. */}
+      {biomeLayerUrl && (
+        <image
+          href={biomeLayerUrl}
           x={0} y={0}
           width={width} height={height}
           preserveAspectRatio="xMidYMid meet"
