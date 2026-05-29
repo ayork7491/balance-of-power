@@ -61,9 +61,11 @@ export default function MapRenderer({
   attackableIds = new Set(),
   onSelect,
   arrowLayer = null,
-  // 01_world_landmasses — World Layer v2.0 SVG URL
+  // 00_ocean_background — Ocean Background v1.0 SVG URL
+  oceanBackgroundUrl = null,
+  // 01_world_landmasses — World Landmasses v2.1 clean SVG URL
   underlayUrl = null,
-  // 02_geography_detail — Geography Detail v1.0 SVG URL (replaces dev terrain + biome layers)
+  // 02_geography_detail — Geography Detail v2.0 SVG URL
   geographyDetailUrl = null,
   // Phase interaction props
   currentPhase = null,
@@ -323,8 +325,8 @@ export default function MapRenderer({
         WebkitTouchCallout: 'none',
         WebkitUserSelect: 'none',
         userSelect: 'none',
-        // Ocean background — visible outside the landmass underlay extents
-        backgroundColor: (underlayUrl || geographyDetailUrl) ? '#04111e' : undefined,
+        // Fallback bg color — ocean SVG covers this when loaded
+        backgroundColor: '#04111e',
       }}
       data-map-container="true"
     >
@@ -377,6 +379,7 @@ export default function MapRenderer({
             mapDef={mapDef}
             width={mapDef.width}
             height={mapDef.height}
+            oceanBackgroundUrl={oceanBackgroundUrl}
             underlayUrl={underlayUrl}
             geographyDetailUrl={geographyDetailUrl}
             stateById={stateById}

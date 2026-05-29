@@ -400,8 +400,11 @@ export const MAP_SHATTERED_CROWN: MapDefinition = {
   height: 1400,
   min_players: 5,
   max_players: 7,
-  underlay_url: 'https://media.base44.com/images/public/6a1504188a2a3ce4c5d33e1b/3e3e22db5_shattered_crown_world_layer_v20_sculpted_landmasses.svg',
-  // 02_geography_detail — permanent layer (v1.0, replaces dev Terrain + Biome layers)
+  // 00_ocean_background — v1.0 ocean base color, gradient, wave texture
+  ocean_background_url: 'https://media.base44.com/images/public/6a1504188a2a3ce4c5d33e1b/2a2d79aa8_00_ocean_background_v10.svg',
+  // 01_world_landmasses — v2.1 clean: continent silhouettes + coastlines only
+  underlay_url: 'https://media.base44.com/images/public/6a1504188a2a3ce4c5d33e1b/1d9e65aeb_01_world_landmasses_v21_clean.svg',
+  // 02_geography_detail — v2.0 landforms: mountains, forests, rivers, fracture scars, reefs
   geography_detail_url: 'https://media.base44.com/images/public/6a1504188a2a3ce4c5d33e1b/6cdf1c4e3_02_geography_detail_v20_landforms.svg',
 
   continents: [

@@ -109,7 +109,8 @@ function ValidationMapRenderer({ layers }) {
       highlightIds={new Set()}
       attackableIds={new Set()}
       onSelect={() => {}}
-      underlayUrl={layers.world       ? MAP_SHATTERED_CROWN.underlay_url        : null}
+      oceanBackgroundUrl={layers.ocean     ? MAP_SHATTERED_CROWN.ocean_background_url : null}
+      underlayUrl={layers.world            ? MAP_SHATTERED_CROWN.underlay_url         : null}
       geographyDetailUrl={layers.geography ? MAP_SHATTERED_CROWN.geography_detail_url : null}
       _suppressConnectionLines={!layers.routes}
     />

@@ -261,6 +261,7 @@ function ActiveCampaignContent() {
             highlightIds={highlightIds}
             attackableIds={attackableIds}
             onSelect={setSelectedTerritoryId}
+            oceanBackgroundUrl={mapDef.ocean_background_url ?? null}
             underlayUrl={mapDef.underlay_url ?? null}
             geographyDetailUrl={mapDef.geography_detail_url ?? null}
             currentPhase={phase}

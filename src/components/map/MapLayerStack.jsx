@@ -22,7 +22,8 @@
  * Props:
  *   mapDef              — full MapDefinition
  *   width / height      — logical SVG coordinate space
- *   underlayUrl          — World Layer v2.0 SVG URL (01_world_landmasses)
+ *   oceanBackgroundUrl   — Ocean Background v1.0 SVG URL (00_ocean_background)
+ *   underlayUrl          — World Landmasses v2.1 SVG URL (01_world_landmasses)
  *   geographyDetailUrl   — Geography Detail v2.0 SVG URL (02_geography_detail)
  *   stateById           — { [territory_id]: TerritoryState }
  *   players             — CampaignPlayer[]
@@ -67,6 +68,7 @@ export default function MapLayerStack({
   mapDef,
   width,
   height,
+  oceanBackgroundUrl,
   underlayUrl,
   geographyDetailUrl,
   stateById,
@@ -88,46 +90,22 @@ export default function MapLayerStack({
 
       {/* ════════════════════════════════════════════════════════
           00_ocean_background
-          Ocean base color, depth gradient, wave line pattern,
-          water texture, and vignette edge darkening.
-          All coded here — no external SVG dependency.
+          Ocean Background v1.0 — 00_ocean_background_v10.svg
+          Contains: ocean base color, gradient, wave texture, water pattern.
+          Rendered verbatim. Decorative only. No interaction.
           ════════════════════════════════════════════════════════ */}
       <g id="layer-00-ocean-background" style={DECORATIVE}>
-        <defs>
-          {/* Ocean depth gradient — deeper (darker) toward edges */}
-          <linearGradient id="ocean-depth" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%"   stopColor="#051624" stopOpacity="1" />
-            <stop offset="40%"  stopColor="#071e2e" stopOpacity="1" />
-            <stop offset="100%" stopColor="#040e18" stopOpacity="1" />
-          </linearGradient>
-          {/* Subtle wave/ripple repeat pattern */}
-          <pattern id="ocean-waves" x="0" y="0" width="120" height="40" patternUnits="userSpaceOnUse">
-            <path
-              d="M0,20 Q15,12 30,20 Q45,28 60,20 Q75,12 90,20 Q105,28 120,20"
-              fill="none" stroke="#0d3050" strokeWidth="0.8" strokeOpacity="0.35"
-            />
-            <path
-              d="M0,30 Q15,22 30,30 Q45,38 60,30 Q75,22 90,30 Q105,38 120,30"
-              fill="none" stroke="#0d3050" strokeWidth="0.5" strokeOpacity="0.20"
-            />
-          </pattern>
-          {/* Radial vignette — darkens map edges */}
-          <radialGradient id="ocean-vignette" cx="50%" cy="50%" r="70%">
-            <stop offset="0%"   stopColor="transparent" stopOpacity="0" />
-            <stop offset="100%" stopColor="#060a12"     stopOpacity="0.45" />
-          </radialGradient>
-        </defs>
-        {/* Base ocean color */}
-        <rect x={0} y={0} width={width} height={height} fill="url(#ocean-depth)" />
-        {/* Wave line texture */}
-        <rect x={0} y={0} width={width} height={height} fill="url(#ocean-waves)" />
-        {/* Edge vignette */}
-        <rect x={0} y={0} width={width} height={height} fill="url(#ocean-vignette)" />
+        {oceanBackgroundUrl
+          ? <AssetImage href={oceanBackgroundUrl} width={width} height={height} />
+          : <rect x={0} y={0} width={width} height={height} fill="#04111e" />
+        }
       </g>
 
       {/* ════════════════════════════════════════════════════════
           01_world_landmasses
-          Continent silhouettes + coastlines — World Layer v2.0.
+          World Landmasses v2.1 clean — 01_world_landmasses_v21_clean.svg
+          Contains: continent silhouettes, coastlines, major islands only.
+          No ocean waves, no gradients, no labels, no test polygons.
           Decorative only. No interaction.
           ════════════════════════════════════════════════════════ */}
       <g id="layer-01-world-landmasses" style={DECORATIVE}>
