@@ -10,7 +10,7 @@ import { MAP_SHATTERED_CROWN } from '@/features/maps/mapData.shattered_crown';
 const ROUTE_HINTS = MAP_SHATTERED_CROWN.adjacency.map(([from, to]) => {
   const fromT = MAP_SHATTERED_CROWN.territories.find(t => t.territory_id === from);
   const toT   = MAP_SHATTERED_CROWN.territories.find(t => t.territory_id === to);
-  return { from, to, type: 'gateway_route', points: fromT && toT ? [[fromT.cx, fromT.cy], [toT.cx, toT.cy]] as [number,number][] : [] };
+  return { from, to, type: 'gateway_route', points: fromT && toT ? [[fromT.cx, fromT.cy], [toT.cx, toT.cy]] : [] };
 }).filter(r => r.points.length > 0);
 
 // Continent color palette for route tinting
