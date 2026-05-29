@@ -79,6 +79,8 @@ export default function InitialDeployPanel({
   const [repairing, setRepairing] = useState(false);
   const [repairResult, setRepairResult] = useState(null);
   const [repairError, setRepairError] = useState(null);
+  const [processError, setProcessError] = useState(null);
+  const [processing, setProcessing] = useState(false);
 
   const handleLockAndRefresh = async () => {
     await handleLock(onPhaseChanged, actingAsCampaignPlayerId || null);
@@ -103,15 +105,21 @@ export default function InitialDeployPanel({
   };
 
   const handleProcessEnd = async () => {
+    setProcessError(null);
+    setProcessing(true);
     try {
-      await base44.functions.invoke('initialDeploy', {
+      const res = await base44.functions.invoke('initialDeploy', {
         action:      'processPhaseEnd',
         campaign_id: campaign.id,
       });
+      console.log('[initialDeploy processPhaseEnd] success:', res.data);
       onPhaseChanged?.();
     } catch (err) {
-      // error surfaces via the hook; swallow here
-      console.error(err);
+      const msg = err?.response?.data?.error || err?.message || 'Unknown error advancing phase.';
+      console.error('[initialDeploy processPhaseEnd] error:', err?.response?.data ?? err);
+      setProcessError(msg);
+    } finally {
+      setProcessing(false);
     }
   };
 
@@ -258,12 +266,19 @@ export default function InitialDeployPanel({
       {/* Admin: process phase end + repair tool */}
       {isAdmin && (
         <div className="pt-2 border-t border-border space-y-2">
+          {processError && (
+            <div className="flex items-start gap-2 px-3 py-2 rounded border border-destructive/40 bg-destructive/10 text-xs text-destructive">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+              <span>{processError}</span>
+            </div>
+          )}
           {allLocked ? (
             <button
               onClick={handleProcessEnd}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded bg-primary text-primary-foreground text-xs font-display tracking-widest uppercase hover:brightness-110 glow-primary transition-all"
+              disabled={processing}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded bg-primary text-primary-foreground text-xs font-display tracking-widest uppercase hover:brightness-110 glow-primary transition-all disabled:opacity-50"
             >
-              <Check className="w-4 h-4" />
+              {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
               Reveal &amp; Begin Round 1
             </button>
           ) : (
@@ -271,8 +286,10 @@ export default function InitialDeployPanel({
               <p className="text-xs text-muted-foreground">Waiting for all players to lock…</p>
               <button
                 onClick={handleProcessEnd}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded border border-border text-xs text-muted-foreground font-display tracking-wider uppercase hover:text-foreground transition-colors"
+                disabled={processing}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded border border-border text-xs text-muted-foreground font-display tracking-wider uppercase hover:text-foreground transition-colors disabled:opacity-50"
               >
+                {processing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
                 Force Advance (auto-fill missing)
               </button>
             </div>

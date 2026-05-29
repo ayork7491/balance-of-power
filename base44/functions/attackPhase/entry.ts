@@ -85,9 +85,11 @@ function resolveActingCampaignPlayer({ user, campaign_id, acting_as_player_id, c
   return { success: false, actingPlayer: null, reason: 'Only admins can act as other players.', code: 'NOT_ADMIN' };
 }
 
-// ─── Inline: V1 Map Adjacency ─────────────────────────────────────────────────
-// Must stay in sync with features/maps/mapData.ts adjacency array.
+// ─── Inline: Map Adjacency by map_id ─────────────────────────────────────────
+// Local imports are prohibited in Deno deploy, so adjacency for each map is
+// inlined here. Keep in sync with features/maps/mapData.ts and mapData.shattered_crown.ts.
 
+// V1 Standard map (map_v1_standard)
 const V1_ADJACENCY_PAIRS = [
   ['frost_peak','irongate'],['irongate','tundra_flats'],['tundra_flats','glacier_pass'],
   ['glacier_pass','stormwatch'],['stormwatch','crow_harbor'],['irongate','pale_cliffs'],
@@ -119,9 +121,53 @@ const V1_ADJACENCY_PAIRS = [
   ['verdant_basin','crimson_shore'],
 ];
 
-function buildAdjacency() {
+// Shattered Crown map (shattered_crown_v1) — sourced from mapData.shattered_crown.ts adjacency_ids
+const SHATTERED_CROWN_ADJACENCY_PAIRS = [
+  // Ironspine internal
+  ['I1','I2'],['I1','I4'],['I2','I3'],['I2','I5'],['I3','I6'],
+  ['I4','I5'],['I4','I7'],['I5','I6'],['I5','I7'],['I6','I8'],['I7','I8'],
+  // Ironspine ↔ Wild Frontier
+  ['I1','W1'],['I4','W2'],
+  // Ironspine ↔ Fracture Basin
+  ['I2','B1'],['I5','B2'],['I7','B3'],['I8','B4'],
+  // Ironspine ↔ Shattered Coast
+  ['I3','C1'],['I6','C2'],['I8','C3'],
+  // Wild Frontier internal
+  ['W1','W2'],['W1','W4'],['W2','W3'],['W2','W5'],['W3','W6'],
+  ['W4','W5'],['W4','W7'],['W5','W6'],['W5','W8'],['W6','W9'],
+  ['W7','W8'],['W8','W9'],
+  // Wild Frontier ↔ Fracture Basin
+  ['W3','B1'],['W5','B2'],['W6','B5'],['W9','B6'],
+  // Wild Frontier ↔ Sunfields
+  ['W7','S1'],['W8','S2'],['W9','S3'],
+  // Fracture Basin internal
+  ['B1','B2'],['B1','B5'],['B2','B3'],['B2','B5'],['B3','B4'],['B3','B6'],
+  ['B4','B7'],['B5','B6'],['B5','B8'],['B6','B7'],['B6','B9'],['B7','B10'],
+  ['B8','B9'],['B9','B10'],
+  // Fracture Basin ↔ Shattered Coast
+  ['B4','C3'],['B7','C4'],['B10','C6'],
+  // Fracture Basin ↔ Sunfields
+  ['B8','S3'],['B9','S5'],['B10','S6'],
+  // Sunfields internal
+  ['S1','S2'],['S1','S4'],['S2','S3'],['S2','S5'],['S3','S6'],
+  ['S4','S5'],['S4','S7'],['S5','S6'],['S5','S8'],['S6','S9'],
+  ['S7','S8'],['S8','S9'],
+  // Shattered Coast internal
+  ['C1','C2'],['C1','C4'],['C2','C3'],['C2','C5'],['C3','C6'],
+  ['C4','C5'],['C5','C6'],['C5','C7'],['C6','C8'],['C7','C8'],
+  // Shattered Coast ↔ Sunfields
+  ['C8','S9'],
+];
+
+const ADJACENCY_BY_MAP_ID = {
+  'map_v1_standard':   V1_ADJACENCY_PAIRS,
+  'shattered_crown_v1': SHATTERED_CROWN_ADJACENCY_PAIRS,
+};
+
+function buildAdjacency(mapId) {
+  const pairs = ADJACENCY_BY_MAP_ID[mapId] ?? V1_ADJACENCY_PAIRS;
   const adj = {};
-  for (const [a, b] of V1_ADJACENCY_PAIRS) {
+  for (const [a, b] of pairs) {
     if (!adj[a]) adj[a] = new Set();
     if (!adj[b]) adj[b] = new Set();
     adj[a].add(b);
@@ -264,10 +310,33 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'committed_troops must be a positive integer' }, { status: 400 });
     }
 
-    // Build adjacency
-    const adj = buildAdjacency();
-    if (!areAdjacent(origin_territory_id, target_territory_id, adj)) {
-      return Response.json({ error: `${target_territory_id} is not adjacent to ${origin_territory_id}` }, { status: 400 });
+    // Build adjacency from the campaign's actual map_id
+    const mapId = campaign.map_id ?? 'map_v1_standard';
+    const adj = buildAdjacency(mapId);
+    const originAdjList = adj[origin_territory_id] ? [...adj[origin_territory_id]] : [];
+    const targetFound = areAdjacent(origin_territory_id, target_territory_id, adj);
+
+    console.log('[attackPhase] adjacency debug', {
+      campaign_map_id: mapId,
+      adjacency_source: ADJACENCY_BY_MAP_ID[mapId] ? mapId : 'fallback_v1',
+      origin_territory_id,
+      target_territory_id,
+      origin_adjacency_list: originAdjList,
+      target_found: targetFound,
+    });
+
+    if (!targetFound) {
+      return Response.json({
+        error: `${target_territory_id} is not adjacent to ${origin_territory_id}`,
+        debug: {
+          campaign_map_id: mapId,
+          adjacency_source: ADJACENCY_BY_MAP_ID[mapId] ? mapId : 'fallback_v1',
+          origin_territory_id,
+          target_territory_id,
+          origin_adjacency_list: originAdjList,
+          target_found: false,
+        },
+      }, { status: 400 });
     }
 
     // Load territory states for validation
