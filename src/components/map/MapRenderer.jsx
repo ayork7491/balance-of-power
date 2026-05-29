@@ -76,6 +76,8 @@ export default function MapRenderer({
   onDeployTerritorySelect = null,
   // Debug
   debugMode = false,
+  // Validation-only: suppress the programmatic continent atmosphere layer
+  _suppressContinentLayer = false,
 }) {
   const containerRef = useRef(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
@@ -382,11 +384,11 @@ export default function MapRenderer({
             )}
 
             {/* ── Layer 2: Programmatic continent atmosphere (reduced when underlay present) ── */}
-            {/* When underlay is active, wrap in a low-opacity group so atmosphere
-                halos and terrain textures supplement without competing with the SVG art. */}
-            <g opacity={(underlayUrl || terrainLayerUrl) ? 0.35 : 1.0}>
-              <ContinentLayer mapDef={mapDef} />
-            </g>
+            {!_suppressContinentLayer && (
+              <g opacity={(underlayUrl || terrainLayerUrl) ? 0.35 : 1.0}>
+                <ContinentLayer mapDef={mapDef} />
+              </g>
+            )}
 
             {/* Route hint corridors — gateway connections that don't physically touch */}
             <RouteHintLayer />
