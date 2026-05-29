@@ -8,7 +8,7 @@ import { Link } from 'react-router-dom';
 import AppShell from '@/components/layout/AppShell';
 import ProfileColorPicker from '@/components/auth/ProfileColorPicker';
 import { useUserProfile } from '@/features/auth/useUserProfile';
-import { User, Palette, Bell, Shield, Save, Loader2, Check, AlertTriangle } from 'lucide-react';
+import { User, Palette, Bell, Shield, Save, Loader2, Check, AlertTriangle, Map } from 'lucide-react';
 
 export default function Settings() {
   const { user, loading, saving, error: profileError, updateProfile } = useUserProfile();
@@ -164,6 +164,27 @@ export default function Settings() {
             </Link>
           </div>
         </section>
+
+        {/* Admin Tools — only visible to admins */}
+        {user?.role === 'admin' && (
+          <section className="panel border-primary/20">
+            <div className="panel-header">
+              <h2 className="font-display text-xs tracking-widest uppercase text-muted-foreground flex items-center gap-2">
+                <Map className="w-3.5 h-3.5" />
+                Admin Tools
+              </h2>
+            </div>
+            <div className="p-4 space-y-3">
+              <p className="text-xs text-muted-foreground">Developer utilities for map and asset validation.</p>
+              <Link
+                to="/map-validation"
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded border border-border text-xs font-display tracking-wider uppercase text-muted-foreground hover:text-foreground hover:border-primary/50 transition-colors"
+              >
+                Map Validation
+              </Link>
+            </div>
+          </section>
+        )}
 
         {/* Notifications (future) */}
         <section className="panel">
