@@ -114,9 +114,8 @@ function ValidationMapRenderer({ layers }) {
       highlightIds={new Set()}
       attackableIds={new Set()}
       onSelect={() => {}}
-      underlayUrl={layers.world     ? MAP_SHATTERED_CROWN.underlay_url      : null}
-      terrainLayerUrl={layers.geography ? MAP_SHATTERED_CROWN.terrain_layer_url : null}
-      biomeLayerUrl={layers.geography   ? MAP_SHATTERED_CROWN.biome_layer_url   : null}
+      underlayUrl={layers.world       ? MAP_SHATTERED_CROWN.underlay_url        : null}
+      geographyDetailUrl={layers.geography ? MAP_SHATTERED_CROWN.geography_detail_url : null}
       _suppressContinentLayer={!layers.continent}
       _suppressConnectionLines={!layers.routes}
     />

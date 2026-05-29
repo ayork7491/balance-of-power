@@ -22,9 +22,8 @@
  * Props:
  *   mapDef              — full MapDefinition
  *   width / height      — logical SVG coordinate space
- *   underlayUrl         — World Layer v2.0 SVG URL (01_world_landmasses)
- *   terrainLayerUrl     — Terrain Layer SVG URL (02_geography_detail)
- *   biomeLayerUrl       — Biome Layer SVG URL (02_geography_detail)
+ *   underlayUrl          — World Layer v2.0 SVG URL (01_world_landmasses)
+ *   geographyDetailUrl   — Geography Detail v1.0 SVG URL (02_geography_detail)
  *   stateById           — { [territory_id]: TerritoryState }
  *   players             — CampaignPlayer[]
  *   selectedId          — selected territory_id
@@ -70,8 +69,7 @@ export default function MapLayerStack({
   width,
   height,
   underlayUrl,
-  terrainLayerUrl,
-  biomeLayerUrl,
+  geographyDetailUrl,
   stateById,
   players,
   selectedId,
@@ -86,7 +84,7 @@ export default function MapLayerStack({
   suppressContinentLayer,
   suppressConnectionLines,
 }) {
-  const hasAssets = underlayUrl || terrainLayerUrl || biomeLayerUrl;
+  const hasAssets = underlayUrl || geographyDetailUrl;
 
   return (
     <g>
@@ -117,14 +115,12 @@ export default function MapLayerStack({
 
       {/* ════════════════════════════════════════════════════════
           02_geography_detail
-          Terrain artwork + biome regions.
-          Contains: Terrain Layer 1.0, Biome Layer 1.0.
-          Rendered verbatim — no opacity, color, or geometry changes.
+          Geography Detail v1.0 — permanent layer.
+          Rendered verbatim at opacity=1.0. No modification.
           Decorative only. No interaction.
           ════════════════════════════════════════════════════════ */}
       <g id="layer-02-geography-detail" style={DECORATIVE}>
-        {terrainLayerUrl && <AssetImage href={terrainLayerUrl} width={width} height={height} />}
-        {biomeLayerUrl   && <AssetImage href={biomeLayerUrl}   width={width} height={height} />}
+        {geographyDetailUrl && <AssetImage href={geographyDetailUrl} width={width} height={height} />}
       </g>
 
       {/* ════════════════════════════════════════════════════════

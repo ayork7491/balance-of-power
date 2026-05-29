@@ -262,8 +262,7 @@ function ActiveCampaignContent() {
             attackableIds={attackableIds}
             onSelect={setSelectedTerritoryId}
             underlayUrl={mapDef.underlay_url ?? null}
-            terrainLayerUrl={mapDef.terrain_layer_url ?? null}
-            biomeLayerUrl={mapDef.biome_layer_url ?? null}
+            geographyDetailUrl={mapDef.geography_detail_url ?? null}
             currentPhase={phase}
             actingPlayer={actionPlayer}
             onAttackOriginSelect={handleAttackOriginSelect}

@@ -61,12 +61,10 @@ export default function MapRenderer({
   attackableIds = new Set(),
   onSelect,
   arrowLayer = null,
-  // Optional terrain underlay SVG URL (coordinate-aligned with mapDef dimensions)
+  // 01_world_landmasses — World Layer v2.0 SVG URL
   underlayUrl = null,
-  // Optional terrain detail layer SVG URL (rendered above world layer, below polygons)
-  terrainLayerUrl = null,
-  // Optional biome layer SVG URL (rendered above terrain layer, below polygons)
-  biomeLayerUrl = null,
+  // 02_geography_detail — Geography Detail v1.0 SVG URL (replaces dev terrain + biome layers)
+  geographyDetailUrl = null,
   // Phase interaction props
   currentPhase = null,
   actingPlayer = null,
@@ -328,7 +326,7 @@ export default function MapRenderer({
         WebkitUserSelect: 'none',
         userSelect: 'none',
         // Ocean background — visible outside the landmass underlay extents
-        backgroundColor: (underlayUrl || terrainLayerUrl || biomeLayerUrl) ? '#04111e' : undefined,
+        backgroundColor: (underlayUrl || geographyDetailUrl) ? '#04111e' : undefined,
       }}
       data-map-container="true"
     >
@@ -382,8 +380,7 @@ export default function MapRenderer({
             width={mapDef.width}
             height={mapDef.height}
             underlayUrl={underlayUrl}
-            terrainLayerUrl={terrainLayerUrl}
-            biomeLayerUrl={biomeLayerUrl}
+            geographyDetailUrl={geographyDetailUrl}
             stateById={stateById}
             players={players}
             selectedId={selectedId}
