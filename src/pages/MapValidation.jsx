@@ -27,8 +27,7 @@ const LAYERS = [
   {
     id: 'atlas',
     label: '03 Atlas Labels',
-    desc: 'Continent/region names, compass rose (reserved)',
-    reserved: true,
+    desc: 'Atlas Labels v1.0 — continent titles, subtitles, sea name, compass rose, decorative rings/arcs',
   },
   {
     id: 'territories',
@@ -112,6 +111,7 @@ function ValidationMapRenderer({ layers }) {
       oceanBackgroundUrl={layers.ocean     ? MAP_SHATTERED_CROWN.ocean_background_url : null}
       underlayUrl={layers.world            ? MAP_SHATTERED_CROWN.underlay_url         : null}
       geographyDetailUrl={layers.geography ? MAP_SHATTERED_CROWN.geography_detail_url : null}
+      atlasLabelsUrl={layers.atlas         ? MAP_SHATTERED_CROWN.atlas_labels_url     : null}
       _suppressConnectionLines={!layers.routes}
     />
   );
@@ -123,10 +123,12 @@ const ALL_ON = Object.fromEntries(
 
 // Preset layer sets for URL-driven isolation (?preset=ocean|world|geography|base3|all)
 const PRESETS = {
-  ocean:      { ocean: true,  world: false, geography: false, territories: false, labels: false, routes: false },
-  world:      { ocean: false, world: true,  geography: false, territories: false, labels: false, routes: false },
-  geography:  { ocean: false, world: false, geography: true,  territories: false, labels: false, routes: false },
-  base3:      { ocean: true,  world: true,  geography: true,  territories: false, labels: false, routes: false },
+  ocean:      { ocean: true,  world: false, geography: false, atlas: false, territories: false, labels: false, routes: false },
+  world:      { ocean: false, world: true,  geography: false, atlas: false, territories: false, labels: false, routes: false },
+  geography:  { ocean: false, world: false, geography: true,  atlas: false, territories: false, labels: false, routes: false },
+  atlas:      { ocean: false, world: false, geography: false, atlas: true,  territories: false, labels: false, routes: false },
+  base3:      { ocean: true,  world: true,  geography: true,  atlas: false, territories: false, labels: false, routes: false },
+  base4:      { ocean: true,  world: true,  geography: true,  atlas: true,  territories: false, labels: false, routes: false },
   all:        ALL_ON,
 };
 

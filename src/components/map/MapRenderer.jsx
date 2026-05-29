@@ -67,6 +67,8 @@ export default function MapRenderer({
   underlayUrl = null,
   // 02_geography_detail — Geography Detail v2.0 SVG URL
   geographyDetailUrl = null,
+  // 03_atlas_labels — Atlas Labels v1.0 SVG URL
+  atlasLabelsUrl = null,
   // Phase interaction props
   currentPhase = null,
   actingPlayer = null,
@@ -382,6 +384,7 @@ export default function MapRenderer({
             oceanBackgroundUrl={oceanBackgroundUrl}
             underlayUrl={underlayUrl}
             geographyDetailUrl={geographyDetailUrl}
+            atlasLabelsUrl={atlasLabelsUrl}
             stateById={stateById}
             players={players}
             selectedId={selectedId}

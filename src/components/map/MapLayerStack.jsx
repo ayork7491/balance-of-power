@@ -25,6 +25,7 @@
  *   oceanBackgroundUrl   — Ocean Background v1.0 SVG URL (00_ocean_background)
  *   underlayUrl          — World Landmasses v2.1 SVG URL (01_world_landmasses)
  *   geographyDetailUrl   — Geography Detail v2.0 SVG URL (02_geography_detail)
+ *   atlasLabelsUrl       — Atlas Labels v1.0 SVG URL (03_atlas_labels)
  *   stateById           — { [territory_id]: TerritoryState }
  *   players             — CampaignPlayer[]
  *   selectedId          — selected territory_id
@@ -71,6 +72,7 @@ export default function MapLayerStack({
   oceanBackgroundUrl,
   underlayUrl,
   geographyDetailUrl,
+  atlasLabelsUrl,
   stateById,
   players,
   selectedId,
@@ -125,12 +127,13 @@ export default function MapLayerStack({
 
       {/* ════════════════════════════════════════════════════════
           03_atlas_labels
-          Continent names, region names, compass rose, cartographic
-          decorations. Reserved for future content.
-          Decorative only. No interaction.
+          Atlas Labels v1.0 — 03_atlas_labels_v10.svg
+          Contains: continent titles, continent subtitles, central sea title,
+          compass rose, decorative atlas rings, decorative atlas arcs.
+          Rendered verbatim. Decorative only. No interaction.
           ════════════════════════════════════════════════════════ */}
       <g id="layer-03-atlas-labels" style={DECORATIVE}>
-        {/* Reserved — continent/region label artwork goes here */}
+        {atlasLabelsUrl && <AssetImage href={atlasLabelsUrl} width={width} height={height} />}
       </g>
 
       {/* ════════════════════════════════════════════════════════

@@ -406,6 +406,8 @@ export const MAP_SHATTERED_CROWN: MapDefinition = {
   underlay_url: 'https://media.base44.com/images/public/6a1504188a2a3ce4c5d33e1b/1d9e65aeb_01_world_landmasses_v21_clean.svg',
   // 02_geography_detail — v2.0 landforms: mountains, forests, rivers, fracture scars, reefs
   geography_detail_url: 'https://media.base44.com/images/public/6a1504188a2a3ce4c5d33e1b/6cdf1c4e3_02_geography_detail_v20_landforms.svg',
+  // 03_atlas_labels — v1.0: continent titles, subtitles, sea name, compass rose, decorative rings/arcs
+  atlas_labels_url: 'https://media.base44.com/images/public/6a1504188a2a3ce4c5d33e1b/6c6f260af_03_atlas_labels_v10.svg',
 
   continents: [
     { id: 'ironspine',       name: 'Ironspine',       control_bonus: 7,  color: '#64748b' },
