@@ -270,18 +270,63 @@ Deno.serve(async (req) => {
 
     const activePlayers = players.filter(p => !p.is_eliminated);
 
-    // Load all decisions
-    const allDecisions = await base44.asServiceRole.entities.PhaseDecision.filter({
+    // ── DIAGNOSTICS: pre-reveal snapshot ────────────────────────────────────
+    const allTerritoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+    const allDecisionsPre = await base44.asServiceRole.entities.PhaseDecision.filter({
       campaign_id,
       phase: 'initial_deploy',
     });
 
+    const diagnostics = {
+      campaign_id,
+      campaign_map_id: campaign.map_id ?? null,
+      player_count: activePlayers.length,
+      locked_player_count: allDecisionsPre.filter(d => d.is_locked).length,
+      territory_count: allTerritoryStates.length,
+      decision_count: allDecisionsPre.length,
+    };
+
+    // ── VALIDATION CHECKS ────────────────────────────────────────────────────
+    const checks = {};
+
+    // Every active player has a decision
+    const playersWithDecision = activePlayers.filter(p => allDecisionsPre.some(d => d.player_id === p.id));
+    checks.all_players_have_decision = {
+      pass: playersWithDecision.length === activePlayers.length,
+      detail: `${playersWithDecision.length}/${activePlayers.length} players have decisions`,
+    };
+
+    // Every active player is locked (or will be auto-submitted)
+    const lockedDecisions = allDecisionsPre.filter(d => d.is_locked);
+    checks.all_players_locked = {
+      pass: lockedDecisions.length === activePlayers.length,
+      detail: `${lockedDecisions.length}/${activePlayers.length} players locked`,
+    };
+
+    // Every territory state has an owner
+    const unownedTerritories = allTerritoryStates.filter(ts => !ts.owner_player_id);
+    checks.all_territories_have_owner = {
+      pass: unownedTerritories.length === 0,
+      detail: unownedTerritories.length === 0
+        ? 'All territories have owners'
+        : `${unownedTerritories.length} unowned: ${unownedTerritories.map(t => t.territory_id).join(', ')}`,
+    };
+
+    // Territory states exist at all
+    checks.territory_states_exist = {
+      pass: allTerritoryStates.length > 0,
+      detail: `${allTerritoryStates.length} territory states found`,
+    };
+
+    console.log('[processPhaseEnd] diagnostics:', JSON.stringify(diagnostics));
+    console.log('[processPhaseEnd] validation checks:', JSON.stringify(checks));
+
     const startingTroops = campaign.settings?.starting_troops ?? 30;
 
-    // Auto-submit any unlocked/missing players (ONLY for non-submitters)
+    // ── STAGE: Auto-submit unlocked/missing players ──────────────────────────
+    console.log('[processPhaseEnd] STAGE: auto-submit missing players');
     for (const p of activePlayers) {
-      const dec = allDecisions.find(d => d.player_id === p.id);
-      // Only auto-submit if player has NO locked decision
+      const dec = allDecisionsPre.find(d => d.player_id === p.id);
       if (!dec || !dec.is_locked) {
         const ownedTerritories = await base44.asServiceRole.entities.TerritoryState.filter({
           campaign_id,
@@ -308,6 +353,7 @@ Deno.serve(async (req) => {
           });
         }
 
+        // FIX: correct argument order — was previously passing 7 args to a 6-arg function
         await log(base44, campaign_id, 'auto_submitted', p.id, {
           display_name: p.display_name,
           placements,
@@ -316,17 +362,27 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Reload final decisions
+    // ── STAGE: Reload final decisions ────────────────────────────────────────
+    console.log('[processPhaseEnd] STAGE: reload final decisions');
     const finalDecisions = await base44.asServiceRole.entities.PhaseDecision.filter({
       campaign_id,
       phase: 'initial_deploy',
     });
+    console.log('[processPhaseEnd] final decision count:', finalDecisions.length);
 
-    // Apply all troop placements to TerritoryState
+    // ── STAGE: Apply troop placements to TerritoryState ─────────────────────
+    console.log('[processPhaseEnd] STAGE: apply troop placements');
     for (const dec of finalDecisions) {
       const placements = dec.data?.placements ?? {};
       const isAuto = dec.is_auto_submitted ?? false;
-      
+      const totalTroops = Object.values(placements).reduce((s, n) => s + (parseInt(n) || 0), 0);
+
+      console.log('[processPhaseEnd] applying placements for player', dec.player_id, {
+        territory_count: Object.keys(placements).length,
+        total_troops: totalTroops,
+        is_auto: isAuto,
+      });
+
       for (const [tid, count] of Object.entries(placements)) {
         const countNum = parseInt(count) || 0;
         const existing = await base44.asServiceRole.entities.TerritoryState.filter({
@@ -337,18 +393,22 @@ Deno.serve(async (req) => {
           await base44.asServiceRole.entities.TerritoryState.update(existing[0].id, {
             troop_count: (existing[0].troop_count || 0) + countNum,
           });
+        } else {
+          console.warn('[processPhaseEnd] WARN: no TerritoryState found for territory', tid, '(skipped)');
         }
       }
 
-      // Log applied placements
-      await log(base44, campaign_id, 'initial_deploy', 'placements_applied', dec.player_id, {
+      // FIX: was previously called with 7 args (extra leading string 'initial_deploy')
+      // causing playerId='placements_applied', payload=dec.player_id, isPublic={object}
+      await log(base44, campaign_id, 'placements_applied', dec.player_id, {
         placements,
         is_auto_submitted: isAuto,
-        total_troops: Object.values(placements).reduce((s, n) => s + (parseInt(n) || 0), 0),
+        total_troops: totalTroops,
       }, false);
     }
 
-    // Advance campaign to Round 1 deploy phase
+    // ── STAGE: Advance campaign to Round 1 ───────────────────────────────────
+    console.log('[processPhaseEnd] STAGE: advance campaign to round 1 deploy');
     await base44.asServiceRole.entities.Campaign.update(campaign_id, {
       current_phase: 'deploy',
       current_round: 1,
@@ -360,7 +420,14 @@ Deno.serve(async (req) => {
       round: 1,
     }, true);
 
-    return Response.json({ success: true, next_phase: 'deploy', round: 1 });
+    console.log('[processPhaseEnd] SUCCESS: advanced to deploy round 1');
+    return Response.json({
+      success: true,
+      next_phase: 'deploy',
+      round: 1,
+      diagnostics,
+      checks,
+    });
   }
 
   return Response.json({ error: `Unknown action: ${action}` }, { status: 400 });

@@ -80,7 +80,10 @@ export default function InitialDeployPanel({
   const [repairResult, setRepairResult] = useState(null);
   const [repairError, setRepairError] = useState(null);
   const [processError, setProcessError] = useState(null);
+  const [processErrorDetail, setProcessErrorDetail] = useState(null);
   const [processing, setProcessing] = useState(false);
+  const [revealDiagnostics, setRevealDiagnostics] = useState(null);
+  const [showDebug, setShowDebug] = useState(false);
 
   const handleLockAndRefresh = async () => {
     await handleLock(onPhaseChanged, actingAsCampaignPlayerId || null);
@@ -106,18 +109,37 @@ export default function InitialDeployPanel({
 
   const handleProcessEnd = async () => {
     setProcessError(null);
+    setProcessErrorDetail(null);
     setProcessing(true);
+    const timestamp = new Date().toISOString();
+    console.log('[Reveal] handler called at', timestamp, 'campaign_id:', campaign.id);
     try {
+      console.log('[Reveal] calling initialDeploy/processPhaseEnd');
       const res = await base44.functions.invoke('initialDeploy', {
         action:      'processPhaseEnd',
         campaign_id: campaign.id,
       });
-      console.log('[initialDeploy processPhaseEnd] success:', res.data);
+      console.log('[Reveal] SUCCESS:', res.data);
+      if (res.data?.diagnostics) {
+        setRevealDiagnostics({ ...res.data.diagnostics, checks: res.data.checks, timestamp, success: true });
+      }
       onPhaseChanged?.();
     } catch (err) {
-      const msg = err?.response?.data?.error || err?.message || 'Unknown error advancing phase.';
-      console.error('[initialDeploy processPhaseEnd] error:', err?.response?.data ?? err);
+      const responseData = err?.response?.data;
+      const httpStatus   = err?.response?.status;
+      const msg = responseData?.error || err?.message || 'Unknown error advancing phase.';
+      const detail = {
+        timestamp,
+        httpStatus,
+        errorMessage: msg,
+        responsePayload: responseData ?? null,
+        stackTrace: err?.stack ?? null,
+        axiosMessage: err?.message ?? null,
+      };
+      console.error('[Reveal] FAILED', detail);
       setProcessError(msg);
+      setProcessErrorDetail(detail);
+      setShowDebug(true);
     } finally {
       setProcessing(false);
     }
@@ -266,10 +288,71 @@ export default function InitialDeployPanel({
       {/* Admin: process phase end + repair tool */}
       {isAdmin && (
         <div className="pt-2 border-t border-border space-y-2">
+
+          {/* Pre-reveal diagnostics summary */}
+          <div className="px-3 py-2 rounded border border-border bg-muted/20 text-[10px] font-mono text-muted-foreground space-y-0.5">
+            <p className="font-display text-[10px] tracking-widest uppercase text-muted-foreground mb-1">Reveal Prerequisites</p>
+            <p>campaign_id: <span className="text-foreground">{campaign.id}</span></p>
+            <p>map_id: <span className="text-foreground">{campaign.map_id ?? '(none)'}</span></p>
+            <p>players: <span className="text-foreground">{totalCount}</span> active, <span className={allLocked ? 'text-status-locked' : 'text-status-pending'}>{lockedCount} locked</span></p>
+            <p>territories in state: <span className="text-foreground">{Object.keys(stateById).length}</span></p>
+            <p>mapDef territories: <span className="text-foreground">{mapDef?.territories?.length ?? '(not loaded)'}</span></p>
+            <div className="mt-1 space-y-0.5">
+              <p className={allLocked ? 'text-status-locked' : 'text-status-pending'}>
+                {allLocked ? '✓' : '✗'} All players locked ({lockedCount}/{totalCount})
+              </p>
+              <p className={Object.keys(stateById).length > 0 ? 'text-status-locked' : 'text-destructive'}>
+                {Object.keys(stateById).length > 0 ? '✓' : '✗'} Territory states exist ({Object.keys(stateById).length})
+              </p>
+              <p className={mapDef ? 'text-status-locked' : 'text-destructive'}>
+                {mapDef ? '✓' : '✗'} Map definition loaded
+              </p>
+            </div>
+          </div>
+
           {processError && (
-            <div className="flex items-start gap-2 px-3 py-2 rounded border border-destructive/40 bg-destructive/10 text-xs text-destructive">
-              <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-              <span>{processError}</span>
+            <div className="space-y-1">
+              <div className="flex items-start gap-2 px-3 py-2 rounded border border-destructive/40 bg-destructive/10 text-xs text-destructive">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                <span className="flex-1 break-all">{processError}</span>
+              </div>
+              {processErrorDetail && (
+                <div className="space-y-1">
+                  <button
+                    onClick={() => setShowDebug(v => !v)}
+                    className="text-[10px] text-muted-foreground underline"
+                  >
+                    {showDebug ? 'Hide' : 'Show'} full debug info
+                  </button>
+                  {showDebug && (
+                    <div className="px-3 py-2 rounded border border-destructive/20 bg-destructive/5 text-[10px] font-mono text-destructive/80 space-y-1 overflow-auto max-h-64">
+                      <p className="font-semibold">HTTP {processErrorDetail.httpStatus} — {processErrorDetail.timestamp}</p>
+                      <p className="font-semibold text-destructive">Error: {processErrorDetail.errorMessage}</p>
+                      {processErrorDetail.responsePayload && (
+                        <pre className="whitespace-pre-wrap break-all">{JSON.stringify(processErrorDetail.responsePayload, null, 2)}</pre>
+                      )}
+                      {processErrorDetail.stackTrace && (
+                        <details>
+                          <summary className="cursor-pointer text-muted-foreground">Stack trace</summary>
+                          <pre className="whitespace-pre-wrap break-all mt-1">{processErrorDetail.stackTrace}</pre>
+                        </details>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Last successful reveal diagnostics */}
+          {revealDiagnostics && (
+            <div className="px-3 py-2 rounded border border-status-locked/30 bg-status-locked/5 text-[10px] font-mono space-y-0.5">
+              <p className="font-display text-[10px] tracking-widest uppercase text-status-locked mb-1">Last Reveal Report — {revealDiagnostics.timestamp?.split('T')[1]?.slice(0,8)}</p>
+              {revealDiagnostics.checks && Object.entries(revealDiagnostics.checks).map(([k, v]) => (
+                <p key={k} className={v.pass ? 'text-status-locked' : 'text-destructive'}>
+                  {v.pass ? '✓' : '✗'} {k}: {v.detail}
+                </p>
+              ))}
             </div>
           )}
           {allLocked ? (
