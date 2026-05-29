@@ -6,7 +6,12 @@
  * Pure visual — no interactivity, no gameplay logic.
  */
 
-import { ROUTE_HINTS } from '@/features/maps/mapData.shattered_crown';
+import { MAP_SHATTERED_CROWN } from '@/features/maps/mapData.shattered_crown';
+const ROUTE_HINTS = MAP_SHATTERED_CROWN.adjacency.map(([from, to]) => {
+  const fromT = MAP_SHATTERED_CROWN.territories.find(t => t.territory_id === from);
+  const toT   = MAP_SHATTERED_CROWN.territories.find(t => t.territory_id === to);
+  return { from, to, type: 'gateway_route', points: fromT && toT ? [[fromT.cx, fromT.cy], [toT.cx, toT.cy]] as [number,number][] : [] };
+}).filter(r => r.points.length > 0);
 
 // Continent color palette for route tinting
 const CONTINENT_COLORS = {
