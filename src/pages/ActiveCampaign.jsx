@@ -261,6 +261,7 @@ function ActiveCampaignContent() {
             highlightIds={highlightIds}
             attackableIds={attackableIds}
             onSelect={setSelectedTerritoryId}
+            underlayUrl={mapDef.underlay_url ?? null}
             currentPhase={phase}
             actingPlayer={actionPlayer}
             onAttackOriginSelect={handleAttackOriginSelect}

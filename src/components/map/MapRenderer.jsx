@@ -23,6 +23,7 @@ import TerritoryPolygon from './TerritoryPolygon';
 import AdjacencyLines from './AdjacencyLines';
 import ContinentLayer from './ContinentLayer';
 import RouteHintLayer from './RouteHintLayer';
+import TerrainUnderlayLayer from './TerrainUnderlayLayer';
 import { useMapInteraction } from '@/features/maps/useMapInteraction';
 
 function getPlayerHex(players, playerId) {
@@ -59,6 +60,8 @@ export default function MapRenderer({
   attackableIds = new Set(),
   onSelect,
   arrowLayer = null,
+  // Optional terrain underlay SVG URL (coordinate-aligned with mapDef dimensions)
+  underlayUrl = null,
   // Phase interaction props
   currentPhase = null,
   actingPlayer = null,
@@ -315,6 +318,8 @@ export default function MapRenderer({
         WebkitTouchCallout: 'none',
         WebkitUserSelect: 'none',
         userSelect: 'none',
+        // Ocean background — visible outside the landmass underlay extents
+        backgroundColor: underlayUrl ? '#04111e' : undefined,
       }}
       data-map-container="true"
     >
@@ -364,8 +369,21 @@ export default function MapRenderer({
           </defs>
 
           <g>
-            {/* Continent silhouette/atmosphere layer — below everything */}
-            <ContinentLayer mapDef={mapDef} />
+            {/* ── Layer 1: Pre-authored terrain/landmass SVG underlay ── */}
+            {underlayUrl && (
+              <TerrainUnderlayLayer
+                underlayUrl={underlayUrl}
+                width={mapDef.width}
+                height={mapDef.height}
+              />
+            )}
+
+            {/* ── Layer 2: Programmatic continent atmosphere (reduced when underlay present) ── */}
+            {/* When underlay is active, wrap in a low-opacity group so atmosphere
+                halos and terrain textures supplement without competing with the SVG art. */}
+            <g opacity={underlayUrl ? 0.35 : 1.0}>
+              <ContinentLayer mapDef={mapDef} />
+            </g>
 
             {/* Route hint corridors — gateway connections that don't physically touch */}
             <RouteHintLayer />

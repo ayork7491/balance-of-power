@@ -121,6 +121,12 @@ export interface MapDefinition {
   adjacency: [string, string][];
   min_players: number;
   max_players: number;
+  /**
+   * Optional URL of a pre-authored SVG terrain/landmass underlay.
+   * Must share the same logical coordinate space (width × height) as this map.
+   * Rendered below territory polygons as a non-interactive background layer.
+   */
+  underlay_url?: string;
 }
 
 // ─── Campaign Territory State (dynamic) ──────────────────────────────────────
