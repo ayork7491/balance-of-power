@@ -211,19 +211,31 @@ function getMapTerritories(mapMeta) {
   }));
 }
 
+// ── Issue 3 fix: new deploy formula
+// Deploy Troops = floor((territories/3) * avgBattleSize) + floor(totalTroops/10) + region_bonus + continent_bonus
+// calcTerritoryBonus now takes territories and avgBattleSize directly per new formula.
 function calcTerritoryBonus(territoriesOwned, settings, avgBattleSize) {
   const perTroop  = settings?.territories_per_bonus_troop ?? DEFAULT_PER_TROOP;
   const minTroops = settings?.min_troops_per_turn ?? DEFAULT_MIN_TROOPS;
-  // Scale: (territories / perTroop) gives base troops at 1000pt avg_battle_size.
-  // Multiply by (avgBattleSize / 1000) to scale up/down with the game's battle size.
-  const scale = (avgBattleSize ?? DEFAULT_AVG_BATTLE_SIZE) / INCOME_SCALE_DIVISOR;
-  const raw   = Math.floor((territoriesOwned / perTroop) * scale);
+  const avg       = avgBattleSize ?? DEFAULT_AVG_BATTLE_SIZE;
+  // New formula: floor((territories / 3) * avgBattleSize)
+  const raw = Math.floor((territoriesOwned / perTroop) * avg);
   return Math.max(minTroops, raw);
 }
 
+function calcTroopContribution(totalTroops) {
+  // New formula: floor(totalTroops / 10) — not scaled by avgBattleSize
+  return Math.floor(totalTroops / 10);
+}
+
+// ── Issue 2 fix: use Math.round (not Math.ceil) to avoid spurious +1 bonuses.
+// Math.ceil(0.5) = 1 which was causing +1 region bonuses at sub-1000 battle sizes.
+// Math.round gives correct rounding: Math.round(0.5)=1 but Math.round(0.4)=0.
+// For exact integer results (avgBattleSize=1000, scale=1.0) this is identical.
 function calcRegionBonusScaled(playerId, allStates, mapTerritories, regions, avgBattleSize) {
   const scale = (avgBattleSize ?? DEFAULT_AVG_BATTLE_SIZE) / INCOME_SCALE_DIVISOR;
   let bonus = 0;
+  const ownedRegions = [];
   for (const region of (regions ?? [])) {
     const regionTerrs = mapTerritories.filter(t => t.region_id === region.id);
     if (!regionTerrs.length) continue;
@@ -231,14 +243,19 @@ function calcRegionBonusScaled(playerId, allStates, mapTerritories, regions, avg
       const s = allStates.find(st => st.territory_id === t.territory_id);
       return s?.owner_player_id === playerId;
     });
-    if (allOwned) bonus += Math.ceil((region.control_bonus ?? 0) * scale);
+    if (allOwned) {
+      const raw = Math.round((region.control_bonus ?? 0) * scale);
+      bonus += raw;
+      ownedRegions.push({ region_id: region.id, control_bonus: region.control_bonus, scale, scaled_bonus: raw });
+    }
   }
-  return bonus;
+  return { bonus, ownedRegions };
 }
 
 function calcContinentBonusScaled(playerId, allStates, mapTerritories, continents, avgBattleSize) {
   const scale = (avgBattleSize ?? DEFAULT_AVG_BATTLE_SIZE) / INCOME_SCALE_DIVISOR;
   let bonus = 0;
+  const ownedContinents = [];
   for (const continent of (continents ?? [])) {
     const contTerrs = mapTerritories.filter(t => t.continent_id === continent.id);
     if (!contTerrs.length) continue;
@@ -246,9 +263,13 @@ function calcContinentBonusScaled(playerId, allStates, mapTerritories, continent
       const s = allStates.find(st => st.territory_id === t.territory_id);
       return s?.owner_player_id === playerId;
     });
-    if (allOwned) bonus += Math.ceil((continent.control_bonus ?? 0) * scale);
+    if (allOwned) {
+      const raw = Math.round((continent.control_bonus ?? 0) * scale);
+      bonus += raw;
+      ownedContinents.push({ continent_id: continent.id, control_bonus: continent.control_bonus, scale, scaled_bonus: raw });
+    }
   }
-  return bonus;
+  return { bonus, ownedContinents };
 }
 
 function calcTroopBonus(totalTroops, settings, avgBattleSize) {
@@ -448,17 +469,35 @@ Deno.serve(async (req) => {
 
     const activePlayers = players.filter(p => !p.is_eliminated);
     const deployIncomes = {};
+    const incomeBreakdownLog = [];
 
     for (const p of activePlayers) {
       const ownedStates      = allTerritoryStates.filter(s => s.owner_player_id === p.id);
       const territoriesOwned = ownedStates.length;
       const totalTroops      = ownedStates.reduce((sum, s) => sum + (s.troop_count || 0), 0);
 
-      const territory_bonus = calcTerritoryBonus(territoriesOwned, campaign.settings, avgBattleSize);
-      const troop_bonus     = calcTroopBonus(totalTroops, campaign.settings, avgBattleSize);
-      const region_bonus    = calcRegionBonusScaled(p.id, allTerritoryStates, mapTerritories, mapMeta.regions, avgBattleSize);
-      const continent_bonus = calcContinentBonusScaled(p.id, allTerritoryStates, mapTerritories, mapMeta.continents, avgBattleSize);
-      const total           = territory_bonus + troop_bonus + region_bonus + continent_bonus;
+      // Issue 3: New formula — territory_bonus = floor((territories/3) * avgBattleSize)
+      const territory_bonus   = calcTerritoryBonus(territoriesOwned, campaign.settings, avgBattleSize);
+      // Issue 3: troop contribution = floor(totalTroops / 10), not scaled
+      const troop_bonus       = calcTroopContribution(totalTroops);
+      // Issue 2: returns { bonus, ownedRegions } — use Math.round not Math.ceil
+      const regionResult      = calcRegionBonusScaled(p.id, allTerritoryStates, mapTerritories, mapMeta.regions, avgBattleSize);
+      const continentResult   = calcContinentBonusScaled(p.id, allTerritoryStates, mapTerritories, mapMeta.continents, avgBattleSize);
+      const region_bonus      = regionResult.bonus;
+      const continent_bonus   = continentResult.bonus;
+      const total             = territory_bonus + troop_bonus + region_bonus + continent_bonus;
+
+      // Diagnostics log for Issue 2 & 3
+      const breakdown = {
+        player_id: p.id, display_name: p.display_name,
+        territories_owned: territoriesOwned, total_troops: totalTroops,
+        avg_battle_size: avgBattleSize,
+        territory_bonus, troop_bonus, region_bonus, continent_bonus, total,
+        owned_regions: regionResult.ownedRegions,
+        owned_continents: continentResult.ownedContinents,
+      };
+      incomeBreakdownLog.push(breakdown);
+      console.log('[startDeploy] Income breakdown:', JSON.stringify(breakdown));
 
       const resources_generated = generateResourcesForPlayer(p.id, round, allTerritoryStates, mapTerritories, campaign_id);
       deployIncomes[p.id] = { territory_bonus, troop_bonus, region_bonus, continent_bonus, total };
@@ -482,7 +521,7 @@ Deno.serve(async (req) => {
 
     await log(base44, campaign_id, round, phase, 'phase_started', null, {
       avg_battle_size: avgBattleSize,
-      player_incomes: Object.entries(deployIncomes).map(([pid, inc]) => ({ player_id: pid, ...inc })),
+      player_incomes: incomeBreakdownLog,
     }, true);
 
     return Response.json({ success: true, incomes: deployIncomes, avg_battle_size: avgBattleSize });
@@ -632,18 +671,36 @@ Deno.serve(async (req) => {
       campaign_id, phase: 'deploy', round,
     });
 
+    // Issue 1: load territory states once for efficient lookup + diagnostics
+    const allTSForReveal = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+    const tsMapForReveal = {};
+    for (const ts of allTSForReveal) tsMapForReveal[ts.territory_id] = ts;
+    const revealDiagnostics = [];
+
     for (const dec of finalDecisions) {
       const decPlacements = dec.data?.placements ?? {};
+      const playerDiag = { player_id: dec.player_id, placements_applied: [] };
+
       for (const [tid, count] of Object.entries(decPlacements)) {
         if (!count) continue;
-        const existing = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id, territory_id: tid });
-        if (existing[0]) {
-          await base44.asServiceRole.entities.TerritoryState.update(existing[0].id, {
-            troop_count: (existing[0].troop_count || 0) + count,
-          });
+        const ts = tsMapForReveal[tid];
+        const troopsBefore = ts?.troop_count ?? null;
+        const troopsAfter  = ts ? (ts.troop_count || 0) + count : null;
+
+        // Diagnostics: log exactly what territory_id we selected and what we applied
+        console.log(`[deployPhase reveal] player=${dec.player_id} territory_selected=${tid} troops_staged=${count} territory_applied=${tid} troops_applied=${count} troop_before=${troopsBefore} troop_after=${troopsAfter}`);
+        playerDiag.placements_applied.push({ territory_id_selected: tid, troops_staged: count, territory_id_applied: tid, troops_applied: count });
+
+        if (ts) {
+          await base44.asServiceRole.entities.TerritoryState.update(ts.id, { troop_count: troopsAfter });
+          tsMapForReveal[tid] = { ...ts, troop_count: troopsAfter };
+        } else {
+          console.warn(`[deployPhase reveal] No TerritoryState found for ${tid} — skipped`);
         }
       }
+      revealDiagnostics.push(playerDiag);
     }
+    console.log('[deployPhase reveal] Full diagnostics:', JSON.stringify(revealDiagnostics));
 
     const finalTerritoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
     const incomeRecords = await base44.asServiceRole.entities.DeployIncome.filter({ campaign_id, round });

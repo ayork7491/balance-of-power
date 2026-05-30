@@ -164,7 +164,9 @@ export function useMapInteraction({
           // Second click: select attack target (must be adjacent enemy/neutral)
           const validTargets = getValidAttackTargets(attackOriginId);
           if (validTargets.includes(territoryId)) {
-            onSelect(territoryId);
+            // Issue 4: keep selectedTerritoryId = origin so AttackPanel shows AttackTargetSelector.
+            // The target is communicated via onAttackTargetSelect callback only.
+            onSelect(attackOriginId);
             setInteractionMode('attack_target_selected');
             onAttackTargetSelect?.(attackOriginId, territoryId);
           } else if (territoryId === attackOriginId) {

@@ -34,6 +34,7 @@ export default function PhasePanelRouter({
   mapDef,
   adjacencyMap,
   selectedTerritoryId,
+  attackPreselectedTargetId,
   onClearSelection,
   onPhaseChanged,
   currentPerspective,
@@ -110,6 +111,7 @@ export default function PhasePanelRouter({
           mapDef={mapDef}
           adjacencyMap={adjacencyMap}
           selectedTerritoryId={selectedTerritoryId}
+          preselectedTargetId={attackPreselectedTargetId}
           onClearSelection={onClearSelection}
           onPhaseChanged={onPhaseChanged}
         />
@@ -155,6 +157,7 @@ export default function PhasePanelRouter({
     mapDef,
     adjacencyMap,
     selectedTerritoryId,
+    attackPreselectedTargetId,
     onClearSelection,
     onPhaseChanged,
   ]);

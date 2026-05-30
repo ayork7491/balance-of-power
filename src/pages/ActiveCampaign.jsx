@@ -34,6 +34,8 @@ function ActiveCampaignContent() {
   const [gameProfile, setGameProfile] = useState(null);
   
   // Interaction state
+  // attackOriginId tracks the attack origin from map interactions so the panel
+  // always shows AttackTargetSelector for the origin territory (not the clicked target)
   const [attackOriginId, setAttackOriginId] = useState(null);
   const [fortifyOriginId, setFortifyOriginId] = useState(null);
   const [buildTerritoryId, setBuildTerritoryId] = useState(null);
@@ -138,7 +140,12 @@ function ActiveCampaignContent() {
         mapDef={mapDef}
         adjacencyMap={adjacencyMap}
         selectedTerritoryId={selectedTerritoryId}
-        onClearSelection={() => setSelectedTerritoryId(null)}
+        attackPreselectedTargetId={attackPreselectedTargetId}
+        onClearSelection={() => {
+          setSelectedTerritoryId(null);
+          setAttackOriginId(null);
+          setAttackPreselectedTargetId(null);
+        }}
         onPhaseChanged={handlePhaseChanged}
         currentPerspective={viewingAsPlayer}
         actingAsPlayerId={actingAsCampaignPlayerId}
@@ -183,9 +190,14 @@ function ActiveCampaignContent() {
 
   const handleAttackOriginSelect = useCallback((originId) => {
     setAttackOriginId(originId);
-  }, []);
+    // Keep selectedTerritoryId pointing at origin so AttackPanel sees the origin territory
+    setSelectedTerritoryId(originId);
+  }, [setSelectedTerritoryId]);
 
-  const handleAttackTargetSelect = useCallback((_originId, _targetId) => {}, []);
+  const [attackPreselectedTargetId, setAttackPreselectedTargetId] = useState(null);
+  const handleAttackTargetSelect = useCallback((_originId, targetId) => {
+    setAttackPreselectedTargetId(targetId);
+  }, []);
 
   const handleFortifyOriginSelect = useCallback((originId) => {
     setFortifyOriginId(originId);

@@ -328,13 +328,15 @@ Deno.serve(async (req) => {
         const countNum = parseInt(count) || 0;
         if (countNum === 0) continue;
         const ts = stateById[tid];
+        const troopsBefore = ts?.troop_count ?? null;
+        const troopsAfter  = ts ? (ts.troop_count || 0) + countNum : null;
+        // Issue 1 diagnostics: log territory_id selected vs territory_id applied
+        console.log(`[initialDeploy reveal] player=${dec.player_id} territory_id_selected=${tid} troops_staged=${countNum} territory_id_applied=${tid} troops_applied=${countNum} troop_before=${troopsBefore} troop_after=${troopsAfter}`);
         if (ts) {
-          const newCount = (ts.troop_count || 0) + countNum;
           await base44.asServiceRole.entities.TerritoryState.update(ts.id, {
-            troop_count: newCount,
+            troop_count: troopsAfter,
           });
-          // Update local cache to prevent double-add if same territory appears in multiple decisions
-          stateById[tid] = { ...ts, troop_count: newCount };
+          stateById[tid] = { ...ts, troop_count: troopsAfter };
         } else {
           console.warn('[processPhaseEnd] No TerritoryState found for', tid, '— skipped');
         }

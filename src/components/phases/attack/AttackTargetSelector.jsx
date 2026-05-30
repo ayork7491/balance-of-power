@@ -19,6 +19,7 @@ function getTerritoryName(territoryId, mapDef) {
 
 export default function AttackTargetSelector({
   originId,
+  preselectedTargetId,
   mapDef,
   stateById,
   players,
@@ -31,7 +32,8 @@ export default function AttackTargetSelector({
   submitting,
   error,
 }) {
-  const [targetId, setTargetId]         = useState(null);
+  // Issue 4: pre-select the target clicked on the map (if any)
+  const [targetId, setTargetId]         = useState(preselectedTargetId ?? null);
   const [committedTroops, setCommitted] = useState(1);
 
   const originState = stateById[originId];

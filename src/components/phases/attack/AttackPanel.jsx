@@ -30,6 +30,7 @@ export default function AttackPanel({
   mapDef,
   adjacencyMap,
   selectedTerritoryId,
+  preselectedTargetId,
   onClearSelection,
   onPhaseChanged,
 }) {
@@ -170,6 +171,7 @@ export default function AttackPanel({
       {!isLocked && selectedTerritoryId && stateById[selectedTerritoryId]?.owner_player_id === actingPlayer?.id && (
         <AttackTargetSelector
           originId={selectedTerritoryId}
+          preselectedTargetId={preselectedTargetId}
           mapDef={mapDef}
           stateById={stateById}
           players={players}
