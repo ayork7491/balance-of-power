@@ -32,6 +32,7 @@ export function useMapInteraction({
   mapDef,
   stateById,
   players,
+  adjacencyMap: adjacencyMapProp,
   onSelect,
   onAttackOriginSelect,
   onAttackTargetSelect,
@@ -46,15 +47,18 @@ export function useMapInteraction({
   const [attackOriginId, setAttackOriginId] = useState(null);
   const [fortifyOriginId, setFortifyOriginId] = useState(null);
   
-  // Get adjacency map
+  // Use provided adjacencyMap (built from mapDef.adjacency pairs) or fall back to building from mapDef
   const adjacencyMap = useMemo(() => {
-    if (!mapDef) return {};
+    if (adjacencyMapProp && Object.keys(adjacencyMapProp).length > 0) return adjacencyMapProp;
+    if (!mapDef?.adjacency) return {};
     const map = {};
-    mapDef.territories.forEach(t => {
-      map[t.territory_id] = new Set(t.adjacent_to || []);
-    });
+    for (const t of mapDef.territories) map[t.territory_id] = new Set();
+    for (const [a, b] of mapDef.adjacency) {
+      map[a]?.add(b);
+      map[b]?.add(a);
+    }
     return map;
-  }, [mapDef]);
+  }, [adjacencyMapProp, mapDef]);
 
   // Check if territory is owned by acting player
   const isOwnedByActingPlayer = useCallback((territoryId) => {

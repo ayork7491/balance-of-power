@@ -114,33 +114,29 @@ function calcDraftTargets(totalTerritories, playerCount, draftPct = 0.6) {
 
 // ─── Snake draft next index ───────────────────────────────────────────────────
 //
-// Correct snake order for 4 players:
-//   Round 1 (forward):  0→1→2→3
-//   Round 2 (backward): 3→2→1→0
-//   Round 3 (forward):  0→1→2→3
-//   ...
+// Standard snake order for 4 players:
+//   Forward:  0 → 1 → 2 → 3
+//   Backward: 3 → 2 → 1 → 0   (player at index 3 picks twice: last forward + first backward)
+//   Forward:  0 → 1 → 2 → 3   (player at index 0 picks twice: last backward + first forward)
 //
-// The player at the END of each direction picks TWICE (no double-pick for
-// the turnaround player) — this is standard snake draft behavior.
-// We track picks_remaining externally to know when to flip direction.
-//
-// Implementation: the NEXT call after reaching an endpoint should continue
-// from that same endpoint in the new direction, NOT repeat the endpoint.
-// e.g. after index=3 in 'forward', next is index=2 in 'backward'.
-// after index=0 in 'backward', next is index=1 in 'forward'.
+// The turnaround player at each end picks TWICE (once to end the pass, once to start the
+// reverse pass). This is standard snake draft.
+// 
+// Implementation: when the current pick is at an endpoint, the NEXT pick stays at the
+// same index but flips direction. The endpoint player is NOT skipped.
 
 function nextSnakeIndex(current, playerCount, direction) {
   if (direction === 'forward') {
     if (current >= playerCount - 1) {
-      // Reached the end — reverse: next pick is playerCount-2 in 'backward'
-      return { index: playerCount - 2, direction: 'backward' };
+      // At the far end — stay at this index, flip to backward
+      return { index: playerCount - 1, direction: 'backward' };
     }
     return { index: current + 1, direction: 'forward' };
   } else {
     // backward
     if (current <= 0) {
-      // Reached the start — reverse: next pick is index 1 in 'forward'
-      return { index: 1, direction: 'forward' };
+      // At the start — stay at index 0, flip to forward
+      return { index: 0, direction: 'forward' };
     }
     return { index: current - 1, direction: 'backward' };
   }

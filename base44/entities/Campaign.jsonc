@@ -92,6 +92,14 @@
       "default": 0,
       "description": "Total picks remaining across all players in territory draft."
     },
+    "initial_deploy_reveal_started_at": {
+      "type": "string",
+      "description": "ISO timestamp when initial deploy reveal was claimed. Used to prevent concurrent duplicate reveals."
+    },
+    "initial_deploy_reveal_completed_at": {
+      "type": "string",
+      "description": "ISO timestamp when initial deploy reveal completed. Idempotency guard \u2014 if set, processPhaseEnd is a no-op."
+    },
     "settings": {
       "type": "object",
       "description": "Per-campaign gameplay setting overrides.",

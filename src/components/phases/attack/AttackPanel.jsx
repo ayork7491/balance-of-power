@@ -58,9 +58,9 @@ export default function AttackPanel({
   const lockedCount   = lockStatus.filter(s => s.is_locked).length;
   const allLocked     = lockedCount >= activePlayers.length && activePlayers.length > 0;
 
-  // Determine if selected territory is a valid attack origin (owned by me, has troops)
+  // Determine if selected territory is a valid attack origin (owned by acting player)
   const selectedIsMyTerritory = selectedTerritoryId
-    && stateById[selectedTerritoryId]?.owner_player_id === myPlayer?.id;
+    && stateById[selectedTerritoryId]?.owner_player_id === actingPlayer?.id;
 
   const myTerritories = useMemo(
     () => Object.values(stateById).filter(s => s.owner_player_id === myPlayer?.id),

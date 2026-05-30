@@ -42,10 +42,15 @@ function resolveActingCampaignPlayer({ user, campaign_id, acting_as_player_id, c
 }
 
 const DEFAULT_AVG_BATTLE_SIZE  = 1000;
-const DEFAULT_PER_TROOP        = 3;
+const DEFAULT_PER_TROOP        = 3;    // territories per 1 troop (at base 1000pt battle size)
 const DEFAULT_MIN_TROOPS       = 3;
 const DEFAULT_TROOP_DIVISOR    = 2000;
 const DEFAULT_TROOP_BONUS_ON   = false;
+// Scale factor: at avg_battle_size=1000, 1 territory = 1/DEFAULT_PER_TROOP troops.
+// Formula: floor(territories / perTroop * (avgBattleSize / 1000))
+// So at avg=1000 and perTroop=3: 9 territories → 3 troops (+region bonuses)
+// Region/continent bonuses are also scaled by the same factor.
+const INCOME_SCALE_DIVISOR     = 1000; // base scale reference
 
 function seededRandom(seed) {
   let h = 2166136261;
@@ -209,8 +214,41 @@ function getMapTerritories(mapMeta) {
 function calcTerritoryBonus(territoriesOwned, settings, avgBattleSize) {
   const perTroop  = settings?.territories_per_bonus_troop ?? DEFAULT_PER_TROOP;
   const minTroops = settings?.min_troops_per_turn ?? DEFAULT_MIN_TROOPS;
-  const raw       = Math.floor((territoriesOwned / perTroop) * (avgBattleSize / 1000));
+  // Scale: (territories / perTroop) gives base troops at 1000pt avg_battle_size.
+  // Multiply by (avgBattleSize / 1000) to scale up/down with the game's battle size.
+  const scale = (avgBattleSize ?? DEFAULT_AVG_BATTLE_SIZE) / INCOME_SCALE_DIVISOR;
+  const raw   = Math.floor((territoriesOwned / perTroop) * scale);
   return Math.max(minTroops, raw);
+}
+
+function calcRegionBonusScaled(playerId, allStates, mapTerritories, regions, avgBattleSize) {
+  const scale = (avgBattleSize ?? DEFAULT_AVG_BATTLE_SIZE) / INCOME_SCALE_DIVISOR;
+  let bonus = 0;
+  for (const region of (regions ?? [])) {
+    const regionTerrs = mapTerritories.filter(t => t.region_id === region.id);
+    if (!regionTerrs.length) continue;
+    const allOwned = regionTerrs.every(t => {
+      const s = allStates.find(st => st.territory_id === t.territory_id);
+      return s?.owner_player_id === playerId;
+    });
+    if (allOwned) bonus += Math.ceil((region.control_bonus ?? 0) * scale);
+  }
+  return bonus;
+}
+
+function calcContinentBonusScaled(playerId, allStates, mapTerritories, continents, avgBattleSize) {
+  const scale = (avgBattleSize ?? DEFAULT_AVG_BATTLE_SIZE) / INCOME_SCALE_DIVISOR;
+  let bonus = 0;
+  for (const continent of (continents ?? [])) {
+    const contTerrs = mapTerritories.filter(t => t.continent_id === continent.id);
+    if (!contTerrs.length) continue;
+    const allOwned = contTerrs.every(t => {
+      const s = allStates.find(st => st.territory_id === t.territory_id);
+      return s?.owner_player_id === playerId;
+    });
+    if (allOwned) bonus += Math.ceil((continent.control_bonus ?? 0) * scale);
+  }
+  return bonus;
 }
 
 function calcTroopBonus(totalTroops, settings, avgBattleSize) {
@@ -418,8 +456,8 @@ Deno.serve(async (req) => {
 
       const territory_bonus = calcTerritoryBonus(territoriesOwned, campaign.settings, avgBattleSize);
       const troop_bonus     = calcTroopBonus(totalTroops, campaign.settings, avgBattleSize);
-      const region_bonus    = calcRegionBonus(p.id, allTerritoryStates, mapTerritories, mapMeta.regions);
-      const continent_bonus = calcContinentBonus(p.id, allTerritoryStates, mapTerritories, mapMeta.continents);
+      const region_bonus    = calcRegionBonusScaled(p.id, allTerritoryStates, mapTerritories, mapMeta.regions, avgBattleSize);
+      const continent_bonus = calcContinentBonusScaled(p.id, allTerritoryStates, mapTerritories, mapMeta.continents, avgBattleSize);
       const total           = territory_bonus + troop_bonus + region_bonus + continent_bonus;
 
       const resources_generated = generateResourcesForPlayer(p.id, round, allTerritoryStates, mapTerritories, campaign_id);

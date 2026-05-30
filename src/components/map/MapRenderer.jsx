@@ -21,7 +21,7 @@
  * Key: territory selection fires in onPointerUp (NOT via child onClick).
  * TerritoryPolygon has no onClick — clicks handled via event delegation here.
  */
-import { useRef, useState, useCallback, useEffect } from 'react';
+import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { PLAYER_COLORS } from '@/config/theme';
 import MapLayerStack from './MapLayerStack';
@@ -99,6 +99,18 @@ export default function MapRenderer({
   const [debugInfo, setDebugInfo] = useState(null);
 
   // Use canonical map interaction controller
+  // Build adjacencyMap from mapDef.adjacency pairs (canonical — matches buildAdjacencyMap)
+  const adjacencyMapForInteraction = useMemo(() => {
+    if (!mapDef?.adjacency) return {};
+    const map = {};
+    for (const t of mapDef.territories) map[t.territory_id] = new Set();
+    for (const [a, b] of mapDef.adjacency) {
+      map[a]?.add(b);
+      map[b]?.add(a);
+    }
+    return map;
+  }, [mapDef]);
+
   const {
     interactionMode,
     attackOriginId,
@@ -111,6 +123,7 @@ export default function MapRenderer({
     mapDef,
     stateById,
     players,
+    adjacencyMap: adjacencyMapForInteraction,
     onSelect,
     onAttackOriginSelect,
     onAttackTargetSelect,
