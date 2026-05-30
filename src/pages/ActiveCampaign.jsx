@@ -220,6 +220,20 @@ function ActiveCampaignContent() {
     return new Set([...neighbors].filter(tid => stateById[tid]?.owner_player_id !== effectivePlayer.id));
   }, [phase, selectedTerritoryId, effectivePlayer, mapDef, stateById, adjacencyMap]);
 
+  // Victory screen overrides everything
+  if (phase === 'complete') {
+    return (
+      <div className="relative w-full h-screen bg-background overflow-hidden">
+        <VictoryScreen
+          campaign={campaign}
+          players={players}
+          stateById={stateById}
+          myPlayer={myPlayer}
+        />
+      </div>
+    );
+  }
+
   return (
     <>
       {/* Archived campaign banner */}
