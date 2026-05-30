@@ -218,8 +218,13 @@ Deno.serve(async (req) => {
     return Response.json({ battle_cards: cards });
   }
 
-  // ── ACTION: submitResult ──────────────────────────────────────────────────────
+  // ── ACTION: submitResult ─────────────────────────────────────────────────────
+  // Admin only: only campaign admins may submit or finalize battle results.
   if (action === 'submitResult') {
+    if (!isAdmin) {
+      return Response.json({ error: 'Only the campaign admin can submit battle results' }, { status: 403 });
+    }
+
     const { battle_card_id, winner_player_id, surviving_tabletop_troops, notes } = body;
     if (!battle_card_id || winner_player_id == null || surviving_tabletop_troops == null) {
       return Response.json({ error: 'battle_card_id, winner_player_id, surviving_tabletop_troops required' }, { status: 400 });
@@ -231,11 +236,8 @@ Deno.serve(async (req) => {
     if (card.campaign_id !== campaign_id) return Response.json({ error: 'Campaign mismatch' }, { status: 403 });
 
     const participantIds = getParticipantIds(card);
-    if (!isAdmin && !participantIds.includes(myPlayer.id)) {
-      return Response.json({ error: 'You are not a participant in this battle' }, { status: 403 });
-    }
 
-    if (!['pending', 'awaiting_result', 'delayed'].includes(card.status)) {
+    if (!['pending', 'awaiting_result', 'delayed', 'result_submitted', 'awaiting_approval'].includes(card.status)) {
       return Response.json({ error: `Cannot submit result for card in status: ${card.status}` }, { status: 400 });
     }
 
@@ -537,7 +539,24 @@ Deno.serve(async (req) => {
 
       if (card.status === 'delayed') {
         delayedCount++;
-        continue; // Skip delayed battles
+        // Delayed battles count as resolved for THIS round — territories become locked.
+        // The battle card will reactivate in the next battle phase via a new card.
+        // We apply NO territory change for delayed battles (status quo maintained).
+        // Mark delayed cards as applied so phase end doesn't block on them.
+        await base44.asServiceRole.entities.BattleCard.update(card.id, {
+          result_applied: true,
+          result: {
+            winner_player_id: null,
+            surviving_tabletop_troops: 0,
+            notes: 'Battle delayed — territories locked pending next battle phase.',
+            result_source: 'delayed',
+            applied_at: new Date().toISOString(),
+          },
+        });
+        await log(base44, campaign_id, round, 'battle_delayed_carried', null, {
+          battle_card_id: card.id, target_territory_id: card.target_territory_id,
+        }, true);
+        continue;
       }
 
       let resultToApply = card.result;
@@ -641,14 +660,46 @@ Deno.serve(async (req) => {
       players_eliminated:  eliminatedNow.length,
     }, true);
 
-    // Advance to fortify phase
-    await base44.asServiceRole.entities.Campaign.update(campaign_id, {
-      current_phase: 'fortify',
-    });
+    // ── VICTORY DETECTION ─────────────────────────────────────────────────────
+    const remainingAfterElim = activePlayers.filter(p => !eliminatedNow.includes(p.id) && !p.is_eliminated);
+    let nextPhase = 'fortify';
+    let campaignComplete = false;
+
+    if (remainingAfterElim.length === 1) {
+      // Single player remaining — victory!
+      const victor = remainingAfterElim[0];
+      nextPhase = 'complete';
+      campaignComplete = true;
+
+      await log(base44, campaign_id, round, 'campaign_victory', victor.id, {
+        display_name: victor.display_name,
+        rounds_played: round,
+        condition: 'domination',
+      }, true);
+
+      await base44.asServiceRole.entities.Campaign.update(campaign_id, {
+        current_phase: 'complete',
+        status: 'complete',
+      });
+    } else if (remainingAfterElim.length === 0) {
+      // Everyone eliminated (draw) — mark complete
+      nextPhase = 'complete';
+      campaignComplete = true;
+      await base44.asServiceRole.entities.Campaign.update(campaign_id, {
+        current_phase: 'complete',
+        status: 'complete',
+      });
+    } else {
+      // Normal: advance to fortify phase
+      await base44.asServiceRole.entities.Campaign.update(campaign_id, {
+        current_phase: 'fortify',
+      });
+    }
 
     return Response.json({
       success: true,
-      next_phase: 'fortify',
+      next_phase: nextPhase,
+      campaign_complete: campaignComplete,
       battles_resolved: resolvedCount,
       battles_auto_resolved: autoResolvedCount,
       battles_forfeited: forfeitedCount,

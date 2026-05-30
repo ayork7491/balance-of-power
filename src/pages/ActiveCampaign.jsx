@@ -11,6 +11,7 @@ import { PLAYER_COLORS } from '@/config/theme';
 import MapRenderer from '@/components/map/MapRenderer';
 import TerritoryDetailPanel from '@/components/map/TerritoryDetailPanel';
 import AttackArrowLayer from '@/components/phases/attack/AttackArrowLayer';
+import VictoryScreen from '@/components/campaigns/VictoryScreen';
 
 // Routers
 import PhasePanelRouter from '@/components/campaigns/PhasePanelRouter';

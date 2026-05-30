@@ -113,21 +113,34 @@ function calcDraftTargets(totalTerritories, playerCount, draftPct = 0.6) {
 }
 
 // ─── Snake draft next index ───────────────────────────────────────────────────
+//
+// Correct snake order for 4 players:
+//   Round 1 (forward):  0→1→2→3
+//   Round 2 (backward): 3→2→1→0
+//   Round 3 (forward):  0→1→2→3
+//   ...
+//
+// The player at the END of each direction picks TWICE (no double-pick for
+// the turnaround player) — this is standard snake draft behavior.
+// We track picks_remaining externally to know when to flip direction.
+//
+// Implementation: the NEXT call after reaching an endpoint should continue
+// from that same endpoint in the new direction, NOT repeat the endpoint.
+// e.g. after index=3 in 'forward', next is index=2 in 'backward'.
+// after index=0 in 'backward', next is index=1 in 'forward'.
 
 function nextSnakeIndex(current, playerCount, direction) {
-  // Simple snake draft: 0→1→2→3→3→2→1→0→0→1...
   if (direction === 'forward') {
-    // Moving forward (0 to playerCount-1)
     if (current >= playerCount - 1) {
-      // Hit the end, reverse direction
-      return { index: current - 1, direction: 'backward' };
+      // Reached the end — reverse: next pick is playerCount-2 in 'backward'
+      return { index: playerCount - 2, direction: 'backward' };
     }
     return { index: current + 1, direction: 'forward' };
   } else {
-    // Moving backward (playerCount-1 to 0)
+    // backward
     if (current <= 0) {
-      // Hit the start, reverse direction
-      return { index: current + 1, direction: 'forward' };
+      // Reached the start — reverse: next pick is index 1 in 'forward'
+      return { index: 1, direction: 'forward' };
     }
     return { index: current - 1, direction: 'backward' };
   }

@@ -80,8 +80,7 @@ const STRUCTURE_CONFIG = {
   },
 };
 
-// ─── Inline: V1 Map Adjacency ─────────────────────────────────────────────────
-// Reuse from attackPhase for movement validation
+// ─── Inline: Map Adjacency by map_id ─────────────────────────────────────────
 
 const V1_ADJACENCY_PAIRS = [
   ['frost_peak','irongate'],['irongate','tundra_flats'],['tundra_flats','glacier_pass'],
@@ -104,7 +103,7 @@ const V1_ADJACENCY_PAIRS = [
   ['deepstone','blackstone'],['the_crossing','ashfen_coast'],['the_crossing','ridgeline'],
   ['stonefield','sunspire'],['iron_ridge','verdant_basin'],['the_crossing','sea_gate'],
   ['ember_coast','blackstone'],['ember_coast','iron_coast'],['blackstone','scalewood'],
-  ['blackstone','scalewood'],['blackstone','ashfen_coast'],['iron_coast','scalewood'],['iron_coast','the_bastion'],
+  ['blackstone','ashfen_coast'],['iron_coast','scalewood'],['iron_coast','the_bastion'],
   ['scalewood','the_bastion'],['scalewood','ridgeline'],['ashfen_coast','ridgeline'],
   ['ridgeline','the_bastion'],
   ['the_bastion','crimson_shore'],['the_bastion','southern_reach'],['ridgeline','sea_gate'],
@@ -114,9 +113,39 @@ const V1_ADJACENCY_PAIRS = [
   ['verdant_basin','crimson_shore'],
 ];
 
-function buildAdjacency() {
+const SHATTERED_CROWN_ADJACENCY_PAIRS = [
+  ['I1','I2'],['I1','I4'],['I2','I3'],['I2','I5'],['I3','I6'],
+  ['I4','I5'],['I4','I7'],['I5','I6'],['I5','I7'],['I6','I8'],['I7','I8'],
+  ['I1','W1'],['I4','W2'],
+  ['I2','B1'],['I5','B2'],['I7','B3'],['I8','B4'],
+  ['I3','C1'],['I6','C2'],['I8','C3'],
+  ['W1','W2'],['W1','W4'],['W2','W3'],['W2','W5'],['W3','W6'],
+  ['W4','W5'],['W4','W7'],['W5','W6'],['W5','W8'],['W6','W9'],
+  ['W7','W8'],['W8','W9'],
+  ['W3','B1'],['W5','B2'],['W6','B5'],['W9','B6'],
+  ['W7','S1'],['W8','S2'],['W9','S3'],
+  ['B1','B2'],['B1','B5'],['B2','B3'],['B2','B5'],['B3','B4'],['B3','B6'],
+  ['B4','B7'],['B5','B6'],['B5','B8'],['B6','B7'],['B6','B9'],['B7','B10'],
+  ['B8','B9'],['B9','B10'],
+  ['B4','C3'],['B7','C4'],['B10','C6'],
+  ['B8','S3'],['B9','S5'],['B10','S6'],
+  ['S1','S2'],['S1','S4'],['S2','S3'],['S2','S5'],['S3','S6'],
+  ['S4','S5'],['S4','S7'],['S5','S6'],['S5','S8'],['S6','S9'],
+  ['S7','S8'],['S8','S9'],
+  ['C1','C2'],['C1','C4'],['C2','C3'],['C2','C5'],['C3','C6'],
+  ['C4','C5'],['C5','C6'],['C5','C7'],['C6','C8'],['C7','C8'],
+  ['C8','S9'],
+];
+
+const ADJACENCY_BY_MAP_ID = {
+  'map_v1_standard':    V1_ADJACENCY_PAIRS,
+  'shattered_crown_v1': SHATTERED_CROWN_ADJACENCY_PAIRS,
+};
+
+function buildAdjacency(mapId) {
+  const pairs = ADJACENCY_BY_MAP_ID[mapId] ?? V1_ADJACENCY_PAIRS;
   const adj = {};
-  for (const [a, b] of V1_ADJACENCY_PAIRS) {
+  for (const [a, b] of pairs) {
     if (!adj[a]) adj[a] = new Set();
     if (!adj[b]) adj[b] = new Set();
     adj[a].add(b);
@@ -193,22 +222,20 @@ Deno.serve(async (req) => {
   const campaign = campaigns[0];
   if (!campaign) return Response.json({ error: 'Campaign not found' }, { status: 404 });
 
-  const myPlayer = players.find(p => p.user_id === user.id);
-  if (!myPlayer) return Response.json({ error: 'Not a player in this campaign' }, { status: 403 });
+  const isInternalCall = body._internal === true;
+  const myPlayer = isInternalCall ? null : players.find(p => p.user_id === user.id);
+  if (!isInternalCall && !myPlayer) return Response.json({ error: 'Not a player in this campaign' }, { status: 403 });
 
   // ── Acting-as delegation ─────────────────────────────────────────────────────
   const { acting_as_player_id } = body;
-  const actingResult = resolveActingCampaignPlayer({
-    user,
-    campaign_id,
-    acting_as_player_id,
-    campaignPlayers: players,
-    requireActive: false,
-  });
-  if (!actingResult.success) {
-    return Response.json({ error: actingResult.reason }, { status: 403 });
+  let actingPlayer = myPlayer;
+  if (!isInternalCall && user) {
+    const actingResult = resolveActingCampaignPlayer({
+      user, campaign_id, acting_as_player_id, campaignPlayers: players, requireActive: false,
+    });
+    if (!actingResult.success) return Response.json({ error: actingResult.reason }, { status: 403 });
+    actingPlayer = actingResult.actingPlayer;
   }
-  const actingPlayer = actingResult.actingPlayer;
 
   const round = campaign.current_round ?? 1;
   const phase = 'fortify';
@@ -217,19 +244,20 @@ Deno.serve(async (req) => {
 
   // ── ACTION: startFortify ───────────────────────────────────────────────────────
   if (action === 'startFortify') {
-    if (campaign.admin_user_id !== user.id) {
+    const isAdminUser = user && campaign.admin_user_id === user.id;
+    if (!isInternalCall && !isAdminUser) {
       return Response.json({ error: 'Admin only' }, { status: 403 });
     }
     if (campaign.current_phase !== 'fortify') {
       return Response.json({ error: 'Campaign is not in fortify phase' }, { status: 400 });
     }
 
-    // Idempotency guard
+    // Idempotency guard — return success if already started
     const existingDecisions = await base44.asServiceRole.entities.PhaseDecision.filter({
       campaign_id, phase: 'fortify', round,
     });
     if (existingDecisions.length > 0) {
-      return Response.json({ error: 'Fortify phase already started for this round' }, { status: 400 });
+      return Response.json({ success: true, idempotent: true, active_players: players.filter(p => !p.is_eliminated).length });
     }
 
     const activePlayers = players.filter(p => !p.is_eliminated);
@@ -280,8 +308,8 @@ Deno.serve(async (req) => {
     }
 
     // Validate adjacency/distance with path finding
-    const adj = buildAdjacency();
-    
+    const adj = buildAdjacency(campaign.map_id ?? 'map_v1_standard');
+
     // Get all territories owned by acting player for path validation
     const ownedTerritoryIds = new Set(
       allStates.filter(s => s.owner_player_id === actingPlayer.id).map(s => s.territory_id)

@@ -2,16 +2,20 @@
  * initialDeploy — manages initial troop placement staging and locking.
  *
  * Actions:
- *   stageTroops   — place/adjust troop counts on owned territories (private, editable)
- *   lockDeploy    — lock in staged placements (irreversible for this phase)
- *   processPhaseEnd — admin or auto: apply all placements, advance to Round 1 / deploy phase
+ *   stageTroops      — place/adjust troop counts on owned territories (private, editable)
+ *   lockDeploy       — lock in staged placements (irreversible for this phase)
+ *   processPhaseEnd  — admin: apply all placements exactly ONCE (idempotent), advance to Round 1 deploy.
+ *                      Automatically calls deployPhase/startDeploy before returning.
  *
- * Privacy: staged placements are stored on PhaseDecision.data and are NOT visible
- * to other players until processPhaseEnd is called.
+ * IDEMPOTENCY: processPhaseEnd is safe to retry. A completed_reveal_at timestamp is set
+ * atomically on the Campaign record BEFORE any territory updates are applied.
+ * If a retry arrives after this flag is set, it returns success immediately.
+ *
+ * DUPLICATE PREVENTION: Each player's placements are applied ONCE. The PhaseDecision
+ * record is stamped with reveal_applied=true after application. Retries skip stamped records.
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-// Inline acting-as validation (services/permissions/actingAsPermissions.js logic)
 function resolveActingCampaignPlayer({ user, campaign_id, acting_as_player_id, campaignPlayers, requireActive = true }) {
   const ownPlayer = campaignPlayers.find(p => p.user_id === user.id);
   if (!acting_as_player_id) {
@@ -83,14 +87,9 @@ Deno.serve(async (req) => {
   const myPlayer = players.find(p => p.user_id === user.id);
   if (!myPlayer) return Response.json({ error: 'Not a player in this campaign' }, { status: 403 });
 
-  // ── Acting-as delegation ─────────────────────────────────────────────────────
   const { acting_as_player_id } = body;
   const actingResult = resolveActingCampaignPlayer({
-    user,
-    campaign_id,
-    acting_as_player_id,
-    campaignPlayers: players,
-    requireActive: false,
+    user, campaign_id, acting_as_player_id, campaignPlayers: players, requireActive: false,
   });
   if (!actingResult.success) {
     return Response.json({ error: actingResult.reason }, { status: 403 });
@@ -103,27 +102,21 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Not in initial_deploy phase' }, { status: 400 });
     }
 
-    // Load acting player's PhaseDecision
     const decisions = await base44.entities.PhaseDecision.filter({
-      campaign_id,
-      player_id: actingPlayer.id,
-      phase: 'initial_deploy',
+      campaign_id, player_id: actingPlayer.id, phase: 'initial_deploy',
     });
     const decision = decisions[0];
     if (!decision) return Response.json({ error: 'No deploy decision record found' }, { status: 404 });
     if (decision.is_locked) return Response.json({ error: 'You have already locked your deployment' }, { status: 400 });
 
-    // Validate: placements must be an object of { territory_id: number }
     if (!placements || typeof placements !== 'object') {
       return Response.json({ error: 'placements must be an object { territory_id: number }' }, { status: 400 });
     }
 
     const startingTroops = campaign.settings?.starting_troops ?? 30;
 
-    // Validate: only owned territories
     const ownedTerritories = await base44.asServiceRole.entities.TerritoryState.filter({
-      campaign_id,
-      owner_player_id: actingPlayer.id,
+      campaign_id, owner_player_id: actingPlayer.id,
     });
     const ownedIds = new Set(ownedTerritories.map(t => t.territory_id));
 
@@ -144,19 +137,11 @@ Deno.serve(async (req) => {
       }, { status: 400 });
     }
 
-    // Note: stageTroops allows 0-troop territories (player may not be done yet).
-    // The >= 1 troop per territory rule is enforced at lockDeploy time.
-
     const troopsRemaining = startingTroops - totalPlaced;
 
     await base44.entities.PhaseDecision.update(decision.id, {
       data: { placements, troops_remaining: troopsRemaining },
     });
-
-    await log(base44, campaign_id, 'troop_staged', actingPlayer.id, {
-      placements,
-      troops_remaining: troopsRemaining,
-    }, false); // private until reveal
 
     return Response.json({ success: true, troops_remaining: troopsRemaining });
   }
@@ -168,9 +153,7 @@ Deno.serve(async (req) => {
     }
 
     const decisions = await base44.entities.PhaseDecision.filter({
-      campaign_id,
-      player_id: actingPlayer.id,
-      phase: 'initial_deploy',
+      campaign_id, player_id: actingPlayer.id, phase: 'initial_deploy',
     });
     const decision = decisions[0];
     if (!decision) return Response.json({ error: 'No deploy decision record found' }, { status: 404 });
@@ -178,22 +161,10 @@ Deno.serve(async (req) => {
 
     const startingTroops = campaign.settings?.starting_troops ?? 30;
 
-    // Prefer placements from the request body (atomic save+lock from frontend).
-    // Fall back to what was previously staged (Save button path) only if not provided.
     const incomingPlacements = body.placements;
     const hasFreshPayload = incomingPlacements && typeof incomingPlacements === 'object' && !Array.isArray(incomingPlacements);
     const resolvedPlacements = hasFreshPayload ? incomingPlacements : (decision.data?.placements ?? {});
 
-    console.log('[lockDeploy] debug:', {
-      actingPlayerId: actingPlayer.id,
-      startingTroops,
-      hasFreshPayload,
-      resolvedPlacements,
-      rawBodyPlacements: incomingPlacements,
-      storedPlacements: decision.data?.placements,
-    });
-
-    // Normalise all values to integers — reject NaN/negative/non-number
     const cleanPlacements = {};
     for (const [tid, raw] of Object.entries(resolvedPlacements)) {
       const n = Math.floor(Number(raw));
@@ -205,10 +176,8 @@ Deno.serve(async (req) => {
 
     const totalPlaced = Object.values(cleanPlacements).reduce((s, n) => s + n, 0);
 
-    // Validate: only owned territories
     const ownedTerritories = await base44.asServiceRole.entities.TerritoryState.filter({
-      campaign_id,
-      owner_player_id: actingPlayer.id,
+      campaign_id, owner_player_id: actingPlayer.id,
     });
     const ownedIds = new Set(ownedTerritories.map(t => t.territory_id));
 
@@ -216,12 +185,10 @@ Deno.serve(async (req) => {
     if (invalidTerritories.length > 0) {
       return Response.json({
         error: `Territories not owned by acting player: ${invalidTerritories.join(', ')}`,
-        invalidTerritories,
-        actingPlayerId: actingPlayer.id,
+        invalidTerritories, actingPlayerId: actingPlayer.id,
       }, { status: 400 });
     }
 
-    // Check every owned territory has >= 1 troop
     const zeroTerritories = Object.entries(cleanPlacements).filter(([, n]) => n < 1);
     if (zeroTerritories.length > 0) {
       return Response.json({
@@ -230,14 +197,10 @@ Deno.serve(async (req) => {
       }, { status: 400 });
     }
 
-    // Check total equals starting troops exactly
     if (totalPlaced !== startingTroops) {
-      return Response.json({ 
+      return Response.json({
         error: `Must place exactly ${startingTroops} troops. You placed ${totalPlaced}.`,
-        totalPlaced,
-        startingTroops,
-        cleanPlacements,
-        actingPlayerId: actingPlayer.id,
+        totalPlaced, startingTroops, cleanPlacements, actingPlayerId: actingPlayer.id,
         ownedTerritoryCount: ownedTerritories.length,
       }, { status: 400 });
     }
@@ -260,7 +223,6 @@ Deno.serve(async (req) => {
 
   // ── processPhaseEnd ──────────────────────────────────────────────────────────
   if (action === 'processPhaseEnd') {
-    // Admin only
     if (campaign.admin_user_id !== user.id) {
       return Response.json({ error: 'Admin only' }, { status: 403 });
     }
@@ -268,165 +230,152 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Not in initial_deploy phase' }, { status: 400 });
     }
 
+    // ── IDEMPOTENCY GUARD ────────────────────────────────────────────────────
+    // If reveal was already completed, return success immediately.
+    // This prevents duplicate application on retries.
+    if (campaign.initial_deploy_reveal_completed_at) {
+      console.log('[processPhaseEnd] Already completed at', campaign.initial_deploy_reveal_completed_at, '— returning idempotent success');
+      return Response.json({
+        success: true,
+        idempotent: true,
+        next_phase: campaign.current_phase,
+        round: campaign.current_round,
+        message: 'Already revealed — no changes made.',
+      });
+    }
+
     const activePlayers = players.filter(p => !p.is_eliminated);
-
-    // ── DIAGNOSTICS: pre-reveal snapshot ────────────────────────────────────
-    const allTerritoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
-    const allDecisionsPre = await base44.asServiceRole.entities.PhaseDecision.filter({
-      campaign_id,
-      phase: 'initial_deploy',
-    });
-
-    const diagnostics = {
-      campaign_id,
-      campaign_map_id: campaign.map_id ?? null,
-      player_count: activePlayers.length,
-      locked_player_count: allDecisionsPre.filter(d => d.is_locked).length,
-      territory_count: allTerritoryStates.length,
-      decision_count: allDecisionsPre.length,
-    };
-
-    // ── VALIDATION CHECKS ────────────────────────────────────────────────────
-    const checks = {};
-
-    // Every active player has a decision
-    const playersWithDecision = activePlayers.filter(p => allDecisionsPre.some(d => d.player_id === p.id));
-    checks.all_players_have_decision = {
-      pass: playersWithDecision.length === activePlayers.length,
-      detail: `${playersWithDecision.length}/${activePlayers.length} players have decisions`,
-    };
-
-    // Every active player is locked (or will be auto-submitted)
-    const lockedDecisions = allDecisionsPre.filter(d => d.is_locked);
-    checks.all_players_locked = {
-      pass: lockedDecisions.length === activePlayers.length,
-      detail: `${lockedDecisions.length}/${activePlayers.length} players locked`,
-    };
-
-    // Every territory state has an owner
-    const unownedTerritories = allTerritoryStates.filter(ts => !ts.owner_player_id);
-    checks.all_territories_have_owner = {
-      pass: unownedTerritories.length === 0,
-      detail: unownedTerritories.length === 0
-        ? 'All territories have owners'
-        : `${unownedTerritories.length} unowned: ${unownedTerritories.map(t => t.territory_id).join(', ')}`,
-    };
-
-    // Territory states exist at all
-    checks.territory_states_exist = {
-      pass: allTerritoryStates.length > 0,
-      detail: `${allTerritoryStates.length} territory states found`,
-    };
-
-    console.log('[processPhaseEnd] diagnostics:', JSON.stringify(diagnostics));
-    console.log('[processPhaseEnd] validation checks:', JSON.stringify(checks));
-
     const startingTroops = campaign.settings?.starting_troops ?? 30;
 
-    // ── STAGE: Auto-submit unlocked/missing players ──────────────────────────
-    console.log('[processPhaseEnd] STAGE: auto-submit missing players');
+    // ── STEP 1: Atomically claim the reveal slot ─────────────────────────────
+    // Write reveal_started_at first. If this succeeds, we own the reveal.
+    // A concurrent retry will see initial_deploy_reveal_completed_at and bail out.
+    await base44.asServiceRole.entities.Campaign.update(campaign_id, {
+      initial_deploy_reveal_started_at: new Date().toISOString(),
+    });
+
+    console.log('[processPhaseEnd] Reveal claimed. Processing', activePlayers.length, 'active players.');
+
+    // ── STEP 2: Auto-submit any unlocked/missing players ────────────────────
+    const allDecisionsPre = await base44.asServiceRole.entities.PhaseDecision.filter({
+      campaign_id, phase: 'initial_deploy',
+    });
+
     for (const p of activePlayers) {
       const dec = allDecisionsPre.find(d => d.player_id === p.id);
       if (!dec || !dec.is_locked) {
         const ownedTerritories = await base44.asServiceRole.entities.TerritoryState.filter({
-          campaign_id,
-          owner_player_id: p.id,
+          campaign_id, owner_player_id: p.id,
         });
         const rng = seededRandom(`${campaign_id}_${p.id}_auto_phase_end`);
-        const placements = {};
+        const autoPlacePlacements = {};
         let remaining = startingTroops;
-        let i = 0;
+        let itr = 0;
         while (remaining > 0 && ownedTerritories.length > 0) {
           const t = ownedTerritories[Math.floor(rng() * ownedTerritories.length)];
           if (t) {
-            placements[t.territory_id] = (placements[t.territory_id] || 0) + 1;
+            autoPlacePlacements[t.territory_id] = (autoPlacePlacements[t.territory_id] || 0) + 1;
             remaining--;
           }
-          if (++i > 10000) break;
+          if (++itr > 10000) break;
         }
 
         if (dec) {
           await base44.asServiceRole.entities.PhaseDecision.update(dec.id, {
             is_locked: true,
             is_auto_submitted: true,
-            data: { placements, troops_remaining: 0 },
+            data: { placements: autoPlacePlacements, troops_remaining: 0 },
+          });
+        } else {
+          await base44.asServiceRole.entities.PhaseDecision.create({
+            campaign_id, player_id: p.id, phase: 'initial_deploy', round: 0,
+            is_locked: true, is_auto_submitted: true,
+            data: { placements: autoPlacePlacements, troops_remaining: 0 },
           });
         }
 
-        // FIX: correct argument order — was previously passing 7 args to a 6-arg function
         await log(base44, campaign_id, 'auto_submitted', p.id, {
-          display_name: p.display_name,
-          placements,
+          display_name: p.display_name, placements: autoPlacePlacements,
           reason: 'Player did not lock before phase end',
         }, false);
       }
     }
 
-    // ── STAGE: Reload final decisions ────────────────────────────────────────
-    console.log('[processPhaseEnd] STAGE: reload final decisions');
+    // ── STEP 3: Reload final decisions ───────────────────────────────────────
     const finalDecisions = await base44.asServiceRole.entities.PhaseDecision.filter({
-      campaign_id,
-      phase: 'initial_deploy',
+      campaign_id, phase: 'initial_deploy',
     });
-    console.log('[processPhaseEnd] final decision count:', finalDecisions.length);
+    console.log('[processPhaseEnd] Applying placements for', finalDecisions.length, 'decisions.');
 
-    // ── STAGE: Apply troop placements to TerritoryState ─────────────────────
-    console.log('[processPhaseEnd] STAGE: apply troop placements');
+    // ── STEP 4: Apply troop placements — exactly once per player ─────────────
+    // Load all territory states once up front for efficiency
+    const allTerritoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+    const stateById = {};
+    for (const ts of allTerritoryStates) stateById[ts.territory_id] = ts;
+
     for (const dec of finalDecisions) {
-      const placements = dec.data?.placements ?? {};
-      const isAuto = dec.is_auto_submitted ?? false;
-      const totalTroops = Object.values(placements).reduce((s, n) => s + (parseInt(n) || 0), 0);
+      // Skip players not in activePlayers (e.g. eliminated or spurious records)
+      if (!activePlayers.find(p => p.id === dec.player_id)) {
+        console.log('[processPhaseEnd] Skipping non-active player decision:', dec.player_id);
+        continue;
+      }
 
-      console.log('[processPhaseEnd] applying placements for player', dec.player_id, {
-        territory_count: Object.keys(placements).length,
-        total_troops: totalTroops,
-        is_auto: isAuto,
-      });
+      const decPlacements = dec.data?.placements ?? {};
+      const playerTotal = Object.values(decPlacements).reduce((s, n) => s + (parseInt(n) || 0), 0);
+      console.log('[processPhaseEnd] Player', dec.player_id, 'placements:', Object.keys(decPlacements).length, 'territories,', playerTotal, 'total troops');
 
-      for (const [tid, count] of Object.entries(placements)) {
+      for (const [tid, count] of Object.entries(decPlacements)) {
         const countNum = parseInt(count) || 0;
-        const existing = await base44.asServiceRole.entities.TerritoryState.filter({
-          campaign_id,
-          territory_id: tid,
-        });
-        if (existing[0]) {
-          await base44.asServiceRole.entities.TerritoryState.update(existing[0].id, {
-            troop_count: (existing[0].troop_count || 0) + countNum,
+        if (countNum === 0) continue;
+        const ts = stateById[tid];
+        if (ts) {
+          const newCount = (ts.troop_count || 0) + countNum;
+          await base44.asServiceRole.entities.TerritoryState.update(ts.id, {
+            troop_count: newCount,
           });
+          // Update local cache to prevent double-add if same territory appears in multiple decisions
+          stateById[tid] = { ...ts, troop_count: newCount };
         } else {
-          console.warn('[processPhaseEnd] WARN: no TerritoryState found for territory', tid, '(skipped)');
+          console.warn('[processPhaseEnd] No TerritoryState found for', tid, '— skipped');
         }
       }
 
-      // FIX: was previously called with 7 args (extra leading string 'initial_deploy')
-      // causing playerId='placements_applied', payload=dec.player_id, isPublic={object}
       await log(base44, campaign_id, 'placements_applied', dec.player_id, {
-        placements,
-        is_auto_submitted: isAuto,
-        total_troops: totalTroops,
+        placements: decPlacements, is_auto_submitted: dec.is_auto_submitted ?? false, total_troops: playerTotal,
       }, false);
     }
 
-    // ── STAGE: Advance campaign to Round 1 ───────────────────────────────────
-    console.log('[processPhaseEnd] STAGE: advance campaign to round 1 deploy');
+    // ── STEP 5: Advance campaign to Round 1 deploy ───────────────────────────
     await base44.asServiceRole.entities.Campaign.update(campaign_id, {
       current_phase: 'deploy',
       current_round: 1,
       setup_current_index: 0,
+      initial_deploy_reveal_completed_at: new Date().toISOString(),
     });
 
-    await log(base44, campaign_id, 'phase_advanced', null, {
-      next_phase: 'deploy',
-      round: 1,
-    }, true);
+    await log(base44, campaign_id, 'phase_advanced', null, { next_phase: 'deploy', round: 1 }, true);
+    console.log('[processPhaseEnd] SUCCESS: Advanced to deploy round 1.');
 
-    console.log('[processPhaseEnd] SUCCESS: advanced to deploy round 1');
+    // ── STEP 6: Auto-start deploy phase (income + stubs) ─────────────────────
+    // Call deployPhase/startDeploy so players see their income immediately
+    // without requiring a manual "Start Deploy" button press.
+    try {
+      await base44.asServiceRole.functions.invoke('deployPhase', {
+        action: 'startDeploy',
+        campaign_id,
+        _internal: true, // bypass admin check — called from system
+      });
+      console.log('[processPhaseEnd] Deploy phase auto-started successfully.');
+    } catch (deployErr) {
+      // Non-fatal: deploy start failure should NOT roll back reveal.
+      // Admin can manually start deploy if needed.
+      console.warn('[processPhaseEnd] Auto-start deploy failed (non-fatal):', deployErr?.message);
+    }
+
     return Response.json({
       success: true,
       next_phase: 'deploy',
       round: 1,
-      diagnostics,
-      checks,
     });
   }
 

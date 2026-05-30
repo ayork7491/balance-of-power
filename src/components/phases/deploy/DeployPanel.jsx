@@ -127,21 +127,26 @@ export default function DeployPanel({
         </p>
       </div>
 
-      {/* Admin: start deploy if not started */}
-      {isAdmin && !deployStarted && (
+      {/* Deploy not started yet — auto-start automation usually handles this within seconds */}
+      {!deployStarted && (
         <div className="space-y-2">
-          <p className="text-xs text-muted-foreground">
-            Deploy phase has not been started yet. Start it to calculate income and open staging.
-          </p>
-          {startingErr && <p className="text-xs text-destructive">{startingErr}</p>}
-          <button
-            onClick={handleStartDeploy}
-            disabled={starting}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded bg-primary text-primary-foreground text-xs font-display tracking-widest uppercase hover:brightness-110 disabled:opacity-40"
-          >
-            {starting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-            Start Deploy Phase
-          </button>
+          <div className="flex items-center gap-2 px-3 py-2 rounded border border-border bg-muted/20 text-xs text-muted-foreground">
+            <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+            <span>Phase starting… Income is being calculated.</span>
+          </div>
+          {isAdmin && (
+            <>
+              {startingErr && <p className="text-xs text-destructive">{startingErr}</p>}
+              <button
+                onClick={handleStartDeploy}
+                disabled={starting}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded border border-border text-xs text-muted-foreground font-display tracking-wider uppercase hover:text-foreground transition-colors disabled:opacity-40"
+              >
+                {starting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                Start Manually
+              </button>
+            </>
+          )}
         </div>
       )}
 

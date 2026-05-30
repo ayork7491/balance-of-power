@@ -49,7 +49,7 @@ export function useCampaign(campaignId) {
 
     // Subscribe to campaign updates - only for this campaign
     const unsubCampaign = base44.entities.Campaign.subscribe((event) => {
-      if (event.id === campaignId) {
+      if (event.id === campaignId && event.data) {
         setCampaign(event.data);
       }
     });
