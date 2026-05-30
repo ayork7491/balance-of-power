@@ -513,6 +513,9 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Clear the reveal-applied guard for this new round so processPhaseEnd can run.
+    await base44.asServiceRole.entities.Campaign.update(campaign_id, { deploy_reveal_applied_at: null });
+
     const snapshot = buildSnapshot({
       campaignId: campaign_id, round, phase, snapshotType: 'phase_start',
       territoryStates: allTerritoryStates, activePlayers, deployIncomes,
@@ -625,6 +628,14 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Not in deploy phase' }, { status: 400 });
     }
 
+    // ── IDEMPOTENCY GUARD ────────────────────────────────────────────────────
+    // If deploy reveal was already applied (campaign already advanced), return early.
+    // This prevents double-troop-application on retry.
+    if (campaign.deploy_reveal_applied_at) {
+      console.log('[processPhaseEnd] Already applied at', campaign.deploy_reveal_applied_at, '— idempotent return');
+      return Response.json({ success: true, idempotent: true, next_phase: 'attack', round });
+    }
+
     const activePlayers = players.filter(p => !p.is_eliminated);
     const allDecisions  = await base44.asServiceRole.entities.PhaseDecision.filter({
       campaign_id, phase: 'deploy', round,
@@ -679,7 +690,17 @@ Deno.serve(async (req) => {
 
     for (const dec of finalDecisions) {
       const decPlacements = dec.data?.placements ?? {};
-      const playerDiag = { player_id: dec.player_id, placements_applied: [] };
+      const isAutoSubmitted = dec.is_auto_submitted ?? false;
+      const isManualDeploy  = !isAutoSubmitted && dec.is_locked;
+      const playerDiag = {
+        player_id: dec.player_id,
+        is_locked: dec.is_locked ?? false,
+        is_manual_deploy: isManualDeploy,
+        auto_distribution_used: isAutoSubmitted,
+        placements_applied: [],
+      };
+
+      console.log(`[deployPhase reveal] player=${dec.player_id} locked=${dec.is_locked} manual=${isManualDeploy} auto=${isAutoSubmitted} placements=${JSON.stringify(decPlacements)}`);
 
       for (const [tid, count] of Object.entries(decPlacements)) {
         if (!count) continue;
@@ -687,20 +708,28 @@ Deno.serve(async (req) => {
         const troopsBefore = ts?.troop_count ?? null;
         const troopsAfter  = ts ? (ts.troop_count || 0) + count : null;
 
-        // Diagnostics: log exactly what territory_id we selected and what we applied
-        console.log(`[deployPhase reveal] player=${dec.player_id} territory_selected=${tid} troops_staged=${count} territory_applied=${tid} troops_applied=${count} troop_before=${troopsBefore} troop_after=${troopsAfter}`);
-        playerDiag.placements_applied.push({ territory_id_selected: tid, troops_staged: count, territory_id_applied: tid, troops_applied: count });
+        // Diagnostics: log exactly what territory_id was staged and what was applied.
+        // These should always be identical — if they differ, there is a data integrity bug.
+        console.log(`[deployPhase reveal]   staged_territory=${tid} staged_troops=${count} applied_territory=${tid} applied_troops=${count} before=${troopsBefore} after=${troopsAfter}`);
+        playerDiag.placements_applied.push({
+          staged_territory_id: tid,
+          staged_troop_count: count,
+          applied_territory_id: tid,
+          applied_troop_count: count,
+          troop_count_before: troopsBefore,
+          troop_count_after: troopsAfter,
+        });
 
         if (ts) {
           await base44.asServiceRole.entities.TerritoryState.update(ts.id, { troop_count: troopsAfter });
           tsMapForReveal[tid] = { ...ts, troop_count: troopsAfter };
         } else {
-          console.warn(`[deployPhase reveal] No TerritoryState found for ${tid} — skipped`);
+          console.warn(`[deployPhase reveal] WARNING: No TerritoryState found for territory=${tid} — placement skipped`);
         }
       }
       revealDiagnostics.push(playerDiag);
     }
-    console.log('[deployPhase reveal] Full diagnostics:', JSON.stringify(revealDiagnostics));
+    console.log('[deployPhase reveal] Full diagnostics:', JSON.stringify(revealDiagnostics, null, 2));
 
     const finalTerritoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
     const incomeRecords = await base44.asServiceRole.entities.DeployIncome.filter({ campaign_id, round });
@@ -720,7 +749,11 @@ Deno.serve(async (req) => {
         .map(p => p.display_name),
     }, true);
 
-    await base44.asServiceRole.entities.Campaign.update(campaign_id, { current_phase: 'attack' });
+    // Stamp idempotency marker + advance phase in one update.
+    await base44.asServiceRole.entities.Campaign.update(campaign_id, {
+      current_phase: 'attack',
+      deploy_reveal_applied_at: new Date().toISOString(),
+    });
 
     return Response.json({ success: true, next_phase: 'attack', round });
   }

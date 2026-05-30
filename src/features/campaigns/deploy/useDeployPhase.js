@@ -58,8 +58,11 @@ export function useDeployPhase({ campaign, myPlayer, myTerritories }) {
       setIncome(inc);
 
       if (d?.data?.placements && Object.keys(d.data.placements).length > 0) {
+        // Restore saved placements keyed by territory_id — exact mapping preserved.
         setPlacements({ ...d.data.placements });
       } else {
+        // No saved placements yet: initialise zero-map from acting player's territories
+        // so the UI shows their territories (not the real user's when acting as someone else).
         const init = {};
         for (const t of (myTerritories ?? [])) init[t.territory_id] = 0;
         setPlacements(init);

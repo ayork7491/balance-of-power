@@ -40,12 +40,15 @@ export default function DeployPanel({
   const [advancing, setAdvancing]       = useState(false);
   const [showIncome, setShowIncome]     = useState(true);
 
+  const { getPayload, actingPlayer, actingAsId } = useActingAsPayload(myPlayer);
+
+  // CRITICAL: derive territories from actingPlayer (not myPlayer) so that
+  // admins acting as test players get the correct territory list.
   const myTerritories = useMemo(
-    () => Object.values(stateById).filter(s => s.owner_player_id === myPlayer?.id),
-    [stateById, myPlayer?.id],
+    () => Object.values(stateById).filter(s => s.owner_player_id === (actingPlayer?.id ?? myPlayer?.id)),
+    [stateById, actingPlayer?.id, myPlayer?.id],
   );
 
-  const { getPayload, actingPlayer, actingAsId } = useActingAsPayload(myPlayer);
   const {
     placements, decision, income, troopsRemaining,
     loading, submitting, saved, error,

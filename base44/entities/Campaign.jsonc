@@ -100,6 +100,10 @@
       "type": "string",
       "description": "ISO timestamp when initial deploy reveal completed. Idempotency guard \u2014 if set, processPhaseEnd is a no-op."
     },
+    "deploy_reveal_applied_at": {
+      "type": "string",
+      "description": "ISO timestamp when round deploy reveal was applied. Idempotency guard \u2014 if set, processPhaseEnd is a no-op for this round."
+    },
     "settings": {
       "type": "object",
       "description": "Per-campaign gameplay setting overrides.",
