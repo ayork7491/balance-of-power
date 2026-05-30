@@ -539,7 +539,7 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'placements must be an object { territory_id: number }' }, { status: 400 });
     }
 
-    const decisions = await base44.entities.PhaseDecision.filter({
+    const decisions = await base44.asServiceRole.entities.PhaseDecision.filter({
       campaign_id, player_id: actingPlayer.id, phase: 'deploy', round,
     });
     const decision = decisions[0];
@@ -561,7 +561,10 @@ Deno.serve(async (req) => {
     if (!validation.valid) return Response.json({ error: validation.error }, { status: 400 });
 
     const troopsRemaining = income.total - validation.totalPlaced;
-    await base44.entities.PhaseDecision.update(decision.id, {
+
+    // CRITICAL: use asServiceRole — PhaseDecision was created by service role in startDeploy,
+    // so a user-scoped update silently fails (user doesn't own the record).
+    await base44.asServiceRole.entities.PhaseDecision.update(decision.id, {
       data: { placements, troops_remaining: troopsRemaining },
     });
 
@@ -578,7 +581,9 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Not in deploy phase' }, { status: 400 });
     }
 
-    const decisions = await base44.entities.PhaseDecision.filter({
+    // CRITICAL: use asServiceRole — PhaseDecision was created by service role in startDeploy,
+    // so user-scoped queries/updates silently fail (user doesn't own the record).
+    const decisions = await base44.asServiceRole.entities.PhaseDecision.filter({
       campaign_id, player_id: actingPlayer.id, phase: 'deploy', round,
     });
     const decision = decisions[0];
@@ -596,6 +601,8 @@ Deno.serve(async (req) => {
 
     let finalPlacements = { ...currentPlacements };
     if (remaining > 0) {
+      // Only auto-fill the genuinely unallocated remainder — never replace manual placements.
+      console.log(`[lockDeploy] player=${actingPlayer.id} manual_placements=${JSON.stringify(currentPlacements)} allowed=${allowedTroops} placed=${totalPlaced} remaining_to_autofill=${remaining}`);
       const ownedStates = await base44.asServiceRole.entities.TerritoryState.filter({
         campaign_id, owner_player_id: actingPlayer.id,
       });
@@ -604,9 +611,11 @@ Deno.serve(async (req) => {
         `${campaign_id}_${actingPlayer.id}_r${round}_autolock`,
       );
       finalPlacements = mergePlacements(finalPlacements, additions);
+    } else {
+      console.log(`[lockDeploy] player=${actingPlayer.id} all troops manually placed — no auto-fill needed. placements=${JSON.stringify(currentPlacements)}`);
     }
 
-    await base44.entities.PhaseDecision.update(decision.id, {
+    await base44.asServiceRole.entities.PhaseDecision.update(decision.id, {
       is_locked: true, locked_at: new Date().toISOString(),
       data: { placements: finalPlacements, troops_remaining: 0 },
     });
