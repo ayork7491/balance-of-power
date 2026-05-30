@@ -21,10 +21,29 @@ export default function DeployIncomeCard({ income, player, isMe }) {
           +{income.total}
         </span>
       </div>
-      <div className="flex gap-3 text-muted-foreground">
-        <span>Territory: +{income.territory_bonus}</span>
-        {income.region_bonus > 0    && <span>Region: +{income.region_bonus}</span>}
-        {income.continent_bonus > 0 && <span>Continent: +{income.continent_bonus}</span>}
+      <div className="space-y-0.5 text-muted-foreground">
+        <div className="flex justify-between">
+          <span>Territory</span>
+          <span className="text-foreground">+{income.territory_bonus ?? 0}</span>
+        </div>
+        {(income.troop_bonus ?? 0) > 0 && (
+          <div className="flex justify-between">
+            <span>Troops</span>
+            <span className="text-foreground">+{income.troop_bonus}</span>
+          </div>
+        )}
+        {(income.region_bonus ?? 0) > 0 && (
+          <div className="flex justify-between">
+            <span>Region Bonus</span>
+            <span className="text-foreground">+{income.region_bonus}</span>
+          </div>
+        )}
+        {(income.continent_bonus ?? 0) > 0 && (
+          <div className="flex justify-between">
+            <span>Continent Bonus</span>
+            <span className="text-foreground">+{income.continent_bonus}</span>
+          </div>
+        )}
       </div>
     </div>
   );

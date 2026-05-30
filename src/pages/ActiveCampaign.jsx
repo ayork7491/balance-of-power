@@ -12,6 +12,7 @@ import MapRenderer from '@/components/map/MapRenderer';
 import TerritoryDetailPanel from '@/components/map/TerritoryDetailPanel';
 import AttackArrowLayer from '@/components/phases/attack/AttackArrowLayer';
 import VictoryScreen from '@/components/campaigns/VictoryScreen';
+import AttackStagingOverlay from '@/components/phases/attack/AttackStagingOverlay';
 
 // Routers
 import PhasePanelRouter from '@/components/campaigns/PhasePanelRouter';
@@ -167,7 +168,14 @@ function ActiveCampaignContent() {
   const isAdmin = myPlayer?.is_admin;
 
   // Own staged attacks — only loaded during attack phase, only own player (user-scoped)
-  const { attacks: myStagedAttacks } = useAttackPhase({
+  const {
+    attacks: myStagedAttacks,
+    handleStageAttack: stageAttack,
+    submitting: attackSubmitting,
+    error: attackError,
+    maxAttacks,
+    reload: reloadAttacks,
+  } = useAttackPhase({
     campaign: phase === 'attack' ? campaign : null,
     myPlayer,
   });
@@ -224,13 +232,17 @@ function ActiveCampaignContent() {
     return new Set(mapDef.territories.map(t => t.territory_id).filter(tid => !claimed.has(tid)));
   }, [phase, campaign, effectivePlayer, mapDef, stateById]);
 
+  // Use attackOriginId (set by map interaction, survives TerritoryDetailPanel close)
+  // so that red highlights persist even after the detail popup is dismissed.
   const attackableIds = useMemo(() => {
-    if (phase !== 'attack' || !selectedTerritoryId || !effectivePlayer || !mapDef) return new Set();
-    const isOwn = stateById[selectedTerritoryId]?.owner_player_id === effectivePlayer.id;
+    if (phase !== 'attack' || !effectivePlayer || !mapDef) return new Set();
+    const originId = attackOriginId ?? selectedTerritoryId;
+    if (!originId) return new Set();
+    const isOwn = stateById[originId]?.owner_player_id === effectivePlayer.id;
     if (!isOwn) return new Set();
-    const neighbors = adjacencyMap[selectedTerritoryId] ?? new Set();
+    const neighbors = adjacencyMap[originId] ?? new Set();
     return new Set([...neighbors].filter(tid => stateById[tid]?.owner_player_id !== effectivePlayer.id));
-  }, [phase, selectedTerritoryId, effectivePlayer, mapDef, stateById, adjacencyMap]);
+  }, [phase, attackOriginId, selectedTerritoryId, effectivePlayer, mapDef, stateById, adjacencyMap]);
 
   // Victory screen overrides everything
   if (phase === 'complete') {
@@ -315,8 +327,37 @@ function ActiveCampaignContent() {
             ) : null}
           />
 
-          {/* Only show territory detail panel outside of draft phase (draft uses left dock) */}
-          {phase !== 'territory_draft' && selectedTerritory && (
+          {/* Attack staging overlay — shown on map when origin + target are both set */}
+          {phase === 'attack' && attackOriginId && attackPreselectedTargetId && (
+            <AttackStagingOverlay
+              originId={attackOriginId}
+              targetId={attackPreselectedTargetId}
+              mapDef={mapDef}
+              stateById={stateById}
+              players={players}
+              actingPlayer={actionPlayer}
+              adjacencyMap={adjacencyMap}
+              currentAttacks={myStagedAttacks}
+              maxAttacks={maxAttacks}
+              onStage={async (attackData) => {
+                await stageAttack(attackData);
+                reloadAttacks();
+                setAttackPreselectedTargetId(null);
+              }}
+              onCancel={() => {
+                setAttackPreselectedTargetId(null);
+                setAttackOriginId(null);
+                setSelectedTerritoryId(null);
+              }}
+              submitting={attackSubmitting}
+              error={attackError}
+            />
+          )}
+
+          {/* Only show territory detail panel outside attack staging and draft */}
+          {phase !== 'territory_draft'
+            && !(phase === 'attack' && attackOriginId)
+            && selectedTerritory && (
             <TerritoryDetailPanel
               territory={selectedTerritory}
               tState={selectedTState}
