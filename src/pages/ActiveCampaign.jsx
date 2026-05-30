@@ -37,6 +37,7 @@ function ActiveCampaignContent() {
   // attackOriginId tracks the attack origin from map interactions so the panel
   // always shows AttackTargetSelector for the origin territory (not the clicked target)
   const [attackOriginId, setAttackOriginId] = useState(null);
+  const [attackPreselectedTargetId, setAttackPreselectedTargetId] = useState(null);
   const [fortifyOriginId, setFortifyOriginId] = useState(null);
   const [buildTerritoryId, setBuildTerritoryId] = useState(null);
   
@@ -194,7 +195,6 @@ function ActiveCampaignContent() {
     setSelectedTerritoryId(originId);
   }, [setSelectedTerritoryId]);
 
-  const [attackPreselectedTargetId, setAttackPreselectedTargetId] = useState(null);
   const handleAttackTargetSelect = useCallback((_originId, targetId) => {
     setAttackPreselectedTargetId(targetId);
   }, []);
