@@ -247,13 +247,14 @@ export default function MapRenderer({
     if (rafRef.current) return;
     const captureDx = dx;
     const captureDy = dy;
+    const captureOriginX = drag.current.originX;
+    const captureOriginY = drag.current.originY;
 
     rafRef.current = requestAnimationFrame(() => {
-      if (!drag.current) return;
       setTransform(prev => ({
         ...prev,
-        x: drag.current.originX + captureDx,
-        y: drag.current.originY + captureDy,
+        x: captureOriginX + captureDx,
+        y: captureOriginY + captureDy,
       }));
       rafRef.current = null;
     });
