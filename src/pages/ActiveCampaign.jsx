@@ -399,6 +399,7 @@ function ActiveCampaignContent() {
                 continentDef={selectedContinent}
                 adjacentTerritories={adjacentTerritories}
                 onClose={() => { setSelectedTerritoryId(null); setDraftClaimError(null); }}
+                isLocked={lockedIds?.has(selectedTerritoryId)}
                 phase={phase}
                 isMyDraftTurn={isMyDraftTurn}
                 onClaim={phase === 'territory_draft' ? handleDraftClaim : undefined}

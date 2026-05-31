@@ -310,6 +310,16 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'committed_troops must be a positive integer' }, { status: 400 });
     }
 
+    // ── Territory lock check ───────────────────────────────────────────────────
+    // Territories involved in delayed battles are locked — cannot attack from or into them.
+    const lockedIds = new Set(campaign.locked_territory_ids ?? []);
+    if (lockedIds.has(origin_territory_id)) {
+      return Response.json({ error: `Territory ${origin_territory_id} is locked by a delayed battle and cannot be used to attack.` }, { status: 400 });
+    }
+    if (lockedIds.has(target_territory_id)) {
+      return Response.json({ error: `Territory ${target_territory_id} is locked by a delayed battle and cannot be attacked.` }, { status: 400 });
+    }
+
     // Build adjacency from the campaign's actual map_id
     const mapId = campaign.map_id ?? 'map_v1_standard';
     const adj = buildAdjacency(mapId);
@@ -668,24 +678,40 @@ Deno.serve(async (req) => {
       const { scale_factor, tabletop_size } = calcBattleScaling(totalTroopsInBattle, avgBattleSize);
 
       if (battleType === 'skirmish') {
-        // Auto-resolve: first attacker captures, troops move in
+        // Auto-resolve: attacker captures, committed troops move in.
+        // Origin troops were already deducted in Step 1 (postCommitStateById).
+        // The DB update in Step 3 already persisted origin deduction.
+        // Here we only need to set target territory ownership + troop count.
         const attacker    = attacksOnTarget[0];
         const targetState = allTerritoryStates.find(s => s.territory_id === targetId);
+        const originStateBefore = allTerritoryStates.find(s => s.territory_id === attacker.origin_territory_id);
+        const originAfter = postCommitStateById[attacker.origin_territory_id]?.troop_count ?? 0;
+        const targetBefore = targetState?.troop_count ?? 0;
+        const targetOwnerBefore = targetState?.owner_player_id ?? 'null';
+
         if (targetState) {
           await base44.asServiceRole.entities.TerritoryState.update(targetState.id, {
             owner_player_id: attacker.player_id,
             troop_count:     attacker.committed_troops,
           });
         }
+
+        console.log(`[skirmish PROOF] battle_type=skirmish card_id=inline player=${attacker.player_id}`);
+        console.log(`[skirmish PROOF]   origin=${attacker.origin_territory_id} before=${originStateBefore?.troop_count ?? 0} committed=${attacker.committed_troops} after=${originAfter}`);
+        console.log(`[skirmish PROOF]   target=${targetId} owner_before=${targetOwnerBefore} troops_before=${targetBefore} owner_after=${attacker.player_id} troops_after=${attacker.committed_troops}`);
+
         skirmishResults.push({
           target_territory_id: targetId,
           attacker_player_id:  attacker.player_id,
           troops_moved:        attacker.committed_troops,
+          origin_troops_after: originAfter,
         });
         await log(base44, campaign_id, round, phase, 'skirmish_resolved', attacker.player_id, {
           target_territory_id: targetId,
-          troops_moved:        attacker.committed_troops,
-          auto_resolved:       true,
+          origin_territory_id: attacker.origin_territory_id,
+          committed_troops:    attacker.committed_troops,
+          origin_troops_after: originAfter,
+          target_troops_after: attacker.committed_troops,
           was_vacated:         vacatedIds.has(targetId),
         }, true);
         continue;

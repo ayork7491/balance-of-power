@@ -557,6 +557,14 @@ Deno.serve(async (req) => {
     });
     const ownedIds = new Set(ownedStates.map(t => t.territory_id));
 
+    // ── Territory lock check ───────────────────────────────────────────────────
+    const lockedIds = new Set(campaign.locked_territory_ids ?? []);
+    for (const tid of Object.keys(placements)) {
+      if (lockedIds.has(tid)) {
+        return Response.json({ error: `Territory ${tid} is locked by a delayed battle and cannot be deployed to.` }, { status: 400 });
+      }
+    }
+
     const validation = validateDeployPlacements(placements, ownedIds, income.total);
     if (!validation.valid) return Response.json({ error: validation.error }, { status: 400 });
 

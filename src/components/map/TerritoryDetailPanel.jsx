@@ -6,7 +6,7 @@
  * During territory_draft phase, shows a Claim Territory button if the territory
  * is unclaimed and it is the current player's turn.
  */
-import { X, Shield, Swords, MapPin, Check, Loader2 } from 'lucide-react';
+import { X, Shield, Swords, MapPin, Check, Loader2, Lock } from 'lucide-react';
 import { PLAYER_COLORS } from '@/config/theme';
 
 const TERRAIN_LABELS = {
@@ -37,6 +37,8 @@ export default function TerritoryDetailPanel({
   continentDef,         // MapContinent | null
   adjacentTerritories,  // TerritoryDefinition[]
   onClose,
+  // ── Lock state ──
+  isLocked,             // boolean — territory is locked by a delayed battle
   // ── Draft phase claim support ──
   phase,                // Campaign current_phase (optional)
   isMyDraftTurn,        // boolean — is it the current player's turn to pick?
@@ -80,6 +82,14 @@ export default function TerritoryDetailPanel({
         </div>
 
         <div className="p-3 space-y-3">
+          {/* Locked territory warning */}
+          {isLocked && (
+            <div className="flex items-center gap-2 px-2 py-1.5 rounded border border-orange-500/40 bg-orange-500/10 text-xs text-orange-400">
+              <Lock className="w-3 h-3 shrink-0" />
+              <span>This territory is locked by a delayed battle. Deploy, attack, fortify, and construction are blocked until the battle resolves.</span>
+            </div>
+          )}
+
           {/* Owner + troops */}
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-2">

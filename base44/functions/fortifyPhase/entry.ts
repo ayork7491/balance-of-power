@@ -299,6 +299,15 @@ Deno.serve(async (req) => {
     const originState = allStates.find(s => s.territory_id === origin_territory_id);
     const destState = allStates.find(s => s.territory_id === destination_territory_id);
 
+    // ── Territory lock check ───────────────────────────────────────────────────
+    const lockedIds = new Set(campaign.locked_territory_ids ?? []);
+    if (lockedIds.has(origin_territory_id)) {
+      return Response.json({ error: `Territory ${origin_territory_id} is locked by a delayed battle and cannot be used to fortify.` }, { status: 400 });
+    }
+    if (lockedIds.has(destination_territory_id)) {
+      return Response.json({ error: `Territory ${destination_territory_id} is locked by a delayed battle and cannot be fortified into.` }, { status: 400 });
+    }
+
     // Validate ownership (acting player)
     if (!originState || originState.owner_player_id !== actingPlayer.id) {
       return Response.json({ error: `You do not own ${origin_territory_id}` }, { status: 400 });
@@ -412,6 +421,12 @@ Deno.serve(async (req) => {
     }
     if (!STRUCTURE_CONFIG[structure_type]) {
       return Response.json({ error: `Invalid structure type: ${structure_type}` }, { status: 400 });
+    }
+
+    // ── Territory lock check ───────────────────────────────────────────────────
+    const lockedIdsConst = new Set(campaign.locked_territory_ids ?? []);
+    if (lockedIdsConst.has(territory_id)) {
+      return Response.json({ error: `Territory ${territory_id} is locked by a delayed battle and cannot be built on.` }, { status: 400 });
     }
 
     // Validate territory ownership (acting player)

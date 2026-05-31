@@ -211,6 +211,7 @@ export default function DeployPanel({
             onChange={handleChange}
             troopsRemaining={troopsRemaining}
             maxTroops={income?.total ?? 0}
+            lockedIds={new Set(campaign?.locked_territory_ids ?? [])}
           />
         </div>
       )}

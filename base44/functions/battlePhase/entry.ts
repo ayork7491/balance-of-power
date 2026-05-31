@@ -167,23 +167,27 @@ function autoResolveBattle(card, campaignId) {
  *
  * TERRITORY RESOLUTION MATRIX (full):
  *
+ * skirmish (attackPhase auto-resolve): handled inline in attackPhase — no BattleCard created.
+ *   If a skirmish BattleCard somehow exists (edge case): winner gets target + survivors.
+ *
  * siege / double_siege:
  *   - Winner gains target_territory with survivors.
- *   - If winner is attacker: survivors placed in target territory.
- *   - If winner is defender: survivors stay in target territory (they held it).
  *   - Attacker's committed troops were already removed from origin (attackPhase).
  *
  * capture_objectives (no defender — neutral/vacated territory):
  *   - Winner gains target_territory with survivors.
  *   - ALL LOSERS: their committed troops return to their origin territories.
- *     (Losers aren't fully eliminated — they just lose the contest.)
+ *     (Troops were removed at attackPhase; they must be returned to origin on loss.)
  *
  * bloodbath (is_mutual):
- *   - winner's origin territory: survivors return there.
+ *   - winner's origin territory: survivors ADDED to existing garrison (not overwrite).
  *   - loser's origin territory:
  *     - if still has garrison → loser keeps it, no change.
- *     - if vacated (loser committed all troops) → winner captures it with 0 troops there
- *       (survivors are already placed at winner's origin above).
+ *     - if vacated (loser committed all troops, troop_count==0 after attackPhase):
+ *         → winner captures that territory with survivingTroops placed there.
+ *         → winner origin gets 0 survivors (all moved to captured territory).
+ *         NOTE: if winner also has a garrison at origin it is unchanged; only committed
+ *               troops (which were already removed) are accounted for here.
  *
  * Returns an array of { id, owner_player_id, troop_count } to persist.
  */
@@ -191,35 +195,40 @@ function buildTerritoryUpdates(card, result, territoryStates) {
   const { winner_player_id, surviving_tabletop_troops } = result;
   if (!winner_player_id) return [];
 
-  const survivingTroops = scaleBackSurvivors(
-    surviving_tabletop_troops ?? 0,
-    card.tabletop_size ?? 1,
-    card.total_troops_in_battle ?? 0,
-  );
+  // Guard: if tabletop_size is 0 (shouldn't happen but possible for inline-resolved skirmishes),
+  // use committed troops as survivors directly.
+  let survivingTroops;
+  if ((card.tabletop_size ?? 0) <= 0) {
+    // Fallback: use winner's committed troops as survivors (skirmish edge case)
+    survivingTroops = getWinnerCommittedTroops(card, winner_player_id);
+    console.log(`[buildTerritoryUpdates] tabletop_size=0 fallback: survivingTroops=${survivingTroops} from committed`);
+  } else {
+    survivingTroops = scaleBackSurvivors(
+      surviving_tabletop_troops ?? 0,
+      card.tabletop_size,
+      card.total_troops_in_battle ?? 0,
+    );
+  }
 
   const updates = [];
 
+  // ── Debug header ─────────────────────────────────────────────────────────────
+  console.log(`[buildTerritoryUpdates] battle_card_id=${card.id} battle_type=${card.battle_type} is_mutual=${card.is_mutual}`);
+  console.log(`[buildTerritoryUpdates] winner=${winner_player_id} surviving_tabletop=${surviving_tabletop_troops} scaled_survivors=${survivingTroops}`);
+  console.log(`[buildTerritoryUpdates] tabletop_size=${card.tabletop_size} total_troops=${card.total_troops_in_battle} scale_factor=${card.scale_factor}`);
+
   if (card.is_mutual) {
     // ── Bloodbath ──────────────────────────────────────────────────────────────
-    // FIX #1: survivors RETURN to origin — add to existing garrison, not overwrite.
+    // Committed troops were removed from both origins in attackPhase.
+    // Winner survivors return to winner's origin (add to existing garrison).
+    // Loser: if they vacated (troop_count==0), winner captures with survivors placed there.
     const winnerEntry  = (card.attackers ?? []).find(a => a.player_id === winner_player_id);
     const loserEntries = (card.attackers ?? []).filter(a => a.player_id !== winner_player_id);
 
-    if (winnerEntry) {
-      const winnerOriginState = territoryStates.find(s => s.territory_id === winnerEntry.origin_territory_id);
-      if (winnerOriginState) {
-        const before = winnerOriginState.troop_count ?? 0;
-        const after  = before + survivingTroops;
-        console.log(`[bloodbath winner return] territory=${winnerEntry.origin_territory_id} before=${before} survivors=${survivingTroops} after=${after}`);
-        updates.push({
-          id: winnerOriginState.id,
-          territory_id: winnerEntry.origin_territory_id,
-          owner_player_id: winner_player_id,
-          troop_count: after,
-        });
-      }
-    }
+    let winnerCaptures = false;
+    let capturedTerritoryId = null;
 
+    // Check if any loser vacated their territory
     for (const loserEntry of loserEntries) {
       const loserOriginState = territoryStates.find(s => s.territory_id === loserEntry.origin_territory_id);
       if (loserOriginState) {
@@ -227,46 +236,70 @@ function buildTerritoryUpdates(card, result, territoryStates) {
           loserOriginState.owner_player_id === loserEntry.player_id;
 
         if (!loserHasGarrison) {
-          // Loser committed all troops — winner captures the empty territory (0 troops there)
-          console.log(`[bloodbath loser capture] territory=${loserEntry.origin_territory_id} now owned by winner=${winner_player_id}`);
+          // Loser vacated — winner captures with survivors placed there
+          winnerCaptures = true;
+          capturedTerritoryId = loserEntry.origin_territory_id;
+          console.log(`[bloodbath] FIX5: loser vacated territory=${loserEntry.origin_territory_id} troop_count=${loserOriginState.troop_count} — winner captures with survivors=${survivingTroops}`);
           updates.push({
-            id: loserOriginState.id,
-            territory_id: loserEntry.origin_territory_id,
+            id:              loserOriginState.id,
+            territory_id:    loserEntry.origin_territory_id,
             owner_player_id: winner_player_id,
-            troop_count: 0,
+            troop_count:     survivingTroops, // FIX: survivors placed in captured territory, not 0
           });
         }
-        // If loser has garrison: no change to loser's territory
+        // Loser has garrison: no change to loser's territory
+      }
+    }
+
+    // Winner origin: add survivors only if NOT capturing (if capturing, survivors went to captured territory)
+    if (winnerEntry) {
+      const winnerOriginState = territoryStates.find(s => s.territory_id === winnerEntry.origin_territory_id);
+      if (winnerOriginState) {
+        const before = winnerOriginState.troop_count ?? 0;
+        // If winner is capturing a territory, survivors go to captured territory (already added above).
+        // Winner's origin already had committed troops removed; garrison (remaining) stays unchanged.
+        const after = winnerCaptures ? before : before + survivingTroops;
+        console.log(`[bloodbath winner origin] territory=${winnerEntry.origin_territory_id} before=${before} captures=${winnerCaptures} survivors_added=${winnerCaptures ? 0 : survivingTroops} after=${after}`);
+        updates.push({
+          id:              winnerOriginState.id,
+          territory_id:    winnerEntry.origin_territory_id,
+          owner_player_id: winner_player_id,
+          troop_count:     after,
+        });
       }
     }
 
   } else if (card.battle_type === 'skirmish') {
     // ── Skirmish ──────────────────────────────────────────────────────────────
-    // FIX #2: dedicated skirmish branch.
-    // Attacker troops were already removed from origin in attackPhase.
-    // Winner gains target territory with survivors. Loser loses committed troops.
+    // Normally handled inline in attackPhase. If this code runs (edge case):
+    // Winner gains target territory. Survivors = committed troops (since tabletop_size may be 0).
+    // Committed troops already removed from origin in attackPhase.
     const targetState = territoryStates.find(s => s.territory_id === card.target_territory_id);
+    const troopsToPlace = survivingTroops > 0 ? survivingTroops : getWinnerCommittedTroops(card, winner_player_id);
     if (targetState) {
-      console.log(`[skirmish resolution] winner=${winner_player_id} target=${card.target_territory_id} survivors=${survivingTroops}`);
+      const before = targetState.troop_count ?? 0;
+      const ownerBefore = targetState.owner_player_id ?? 'null';
+      console.log(`[skirmish] winner=${winner_player_id} target=${card.target_territory_id} owner_before=${ownerBefore} troops_before=${before} troops_after=${troopsToPlace}`);
       updates.push({
         id:              targetState.id,
         territory_id:    card.target_territory_id,
         owner_player_id: winner_player_id,
-        troop_count:     survivingTroops,
+        troop_count:     troopsToPlace,
       });
     }
-    // Loser committed troops already removed in attackPhase — no further action needed.
 
   } else if (card.battle_type === 'capture_objectives') {
     // ── Capture Objectives ────────────────────────────────────────────────────
-    // FIX #3: winner gains target territory with survivors; losers return committed troops.
-    // Validate survivors don't exceed winner's committed troops.
+    // Winner gains target territory with clamped survivors.
+    // All losers: their committed troops RETURN to their origin (they were removed in attackPhase).
     const winnerCommitted = getWinnerCommittedTroops(card, winner_player_id);
-    const clampedSurvivors = Math.min(survivingTroops, winnerCommitted);
+    const clampedSurvivors = Math.max(1, Math.min(survivingTroops, winnerCommitted));
 
     const targetState = territoryStates.find(s => s.territory_id === card.target_territory_id);
     if (targetState) {
-      console.log(`[capture_objectives] winner=${winner_player_id} captures territory=${card.target_territory_id} with survivors=${clampedSurvivors} (raw=${survivingTroops} clamped to committed=${winnerCommitted})`);
+      const ownerBefore = targetState.owner_player_id ?? 'null';
+      const troopsBefore = targetState.troop_count ?? 0;
+      console.log(`[capture_objectives] winner=${winner_player_id} target=${card.target_territory_id} owner_before=${ownerBefore} troops_before=${troopsBefore} survivors=${clampedSurvivors} (raw=${survivingTroops} clamped to winnerCommitted=${winnerCommitted})`);
       updates.push({
         id:              targetState.id,
         territory_id:    card.target_territory_id,
@@ -275,7 +308,8 @@ function buildTerritoryUpdates(card, result, territoryStates) {
       });
     }
 
-    // Losers: committed troops return to their origin territories (added to existing garrison).
+    // Losers: return committed troops to their origin (add to existing garrison).
+    // These troops were removed in attackPhase — they must be restored on loss.
     for (const atk of (card.attackers ?? [])) {
       if (atk.player_id === winner_player_id) continue;
       const loserOriginState = territoryStates.find(s => s.territory_id === atk.origin_territory_id);
@@ -283,7 +317,7 @@ function buildTerritoryUpdates(card, result, territoryStates) {
         const loserCommitted = atk.committed_troops ?? 0;
         const before = loserOriginState.troop_count ?? 0;
         const after  = before + loserCommitted;
-        console.log(`[capture_objectives loser return] player=${atk.player_id} territory=${atk.origin_territory_id} before=${before} returning=${loserCommitted} after=${after}`);
+        console.log(`[capture_objectives loser return] player=${atk.player_id} territory=${atk.origin_territory_id} owner_before=${loserOriginState.owner_player_id} troops_before=${before} returning=${loserCommitted} troops_after=${after}`);
         updates.push({
           id:              loserOriginState.id,
           territory_id:    atk.origin_territory_id,
@@ -296,8 +330,12 @@ function buildTerritoryUpdates(card, result, territoryStates) {
   } else {
     // ── Siege / double_siege ──────────────────────────────────────────────────
     // Winner gains target_territory with survivors.
+    // Loser's committed troops already removed from origin in attackPhase.
     const targetState = territoryStates.find(s => s.territory_id === card.target_territory_id);
     if (targetState) {
+      const ownerBefore = targetState.owner_player_id ?? 'null';
+      const troopsBefore = targetState.troop_count ?? 0;
+      console.log(`[siege] winner=${winner_player_id} target=${card.target_territory_id} owner_before=${ownerBefore} troops_before=${troopsBefore} survivors=${survivingTroops}`);
       updates.push({
         id:              targetState.id,
         territory_id:    card.target_territory_id,
@@ -305,9 +343,9 @@ function buildTerritoryUpdates(card, result, territoryStates) {
         troop_count:     survivingTroops,
       });
     }
-    // Loser's committed troops were already removed from origin in attackPhase — no further action.
   }
 
+  console.log(`[buildTerritoryUpdates] updates=${JSON.stringify(updates)}`);
   return updates;
 }
 
