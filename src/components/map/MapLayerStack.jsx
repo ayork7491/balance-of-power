@@ -16,10 +16,6 @@ import RouteHintLayer from './RouteHintLayer';
 import AdjacencyLines from './AdjacencyLines';
 import TerritoryPolygon from './TerritoryPolygon';
 
-// Scale factors: polygon coords are 1000×1400, canvas is 10240×10240
-const SX = 10240 / 1000; // 10.24
-const SY = 10240 / 1400; // 7.3143
-
 export default function MapLayerStack({
   mapDef,
   width,
@@ -57,8 +53,8 @@ export default function MapLayerStack({
         }
       </g>
 
-      {/* ── 01: Territory polygons — scaled from 1000×1400 → 10240×10240 ── */}
-      <g id="layer-01-territory-polygons" transform={`scale(${SX}, ${SY})`}>
+      {/* ── 01: Territory polygons — native 10240×10240 coords ── */}
+      <g id="layer-01-territory-polygons">
         {mapDef.territories.map(territory => {
           const tid = territory.territory_id;
           const tState = stateById[tid];
@@ -83,12 +79,12 @@ export default function MapLayerStack({
         })}
       </g>
 
-      {/* ── 02: Labels + routes — also scaled ── */}
-      <g id="layer-02-labels-routes" transform={`scale(${SX}, ${SY})`} style={DECORATIVE}>
+      {/* ── 02: Labels + routes — native 10240×10240 coords ── */}
+      <g id="layer-02-labels-routes" style={DECORATIVE}>
 
         {/* Territory name labels */}
         {scale >= 0.05 && mapDef.territories.map(territory => {
-          const fontSize = Math.max(4, Math.min(14, 11 / scale / Math.max(SX, SY)));
+          const fontSize = Math.max(60, Math.min(200, 120 / scale));
           const lx = territory.label_x ?? territory.cx;
           const ly = territory.label_y ?? (territory.cy + 18);
           return (
