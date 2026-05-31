@@ -595,14 +595,31 @@ Deno.serve(async (req) => {
     });
     const allowedTroops = incomeRecords[0]?.total ?? 0;
 
-    const currentPlacements = decision.data?.placements ?? {};
-    const totalPlaced = Object.values(currentPlacements).reduce((s, n) => s + n, 0);
+    // If the frontend sent placements in the lock payload, validate and use them directly.
+    // This ensures "Lock without Save" works correctly — the UI state is authoritative.
+    // Fall back to the saved PhaseDecision placements only if no payload was provided.
+    let basePlacements;
+    if (placements && typeof placements === 'object' && Object.keys(placements).length > 0) {
+      const ownedStates = await base44.asServiceRole.entities.TerritoryState.filter({
+        campaign_id, owner_player_id: actingPlayer.id,
+      });
+      const ownedIds = new Set(ownedStates.map(t => t.territory_id));
+      const validation = validateDeployPlacements(placements, ownedIds, allowedTroops);
+      if (!validation.valid) return Response.json({ error: validation.error }, { status: 400 });
+      basePlacements = placements;
+      console.log(`[lockDeploy] player=${actingPlayer.id} using PAYLOAD placements=${JSON.stringify(basePlacements)} allowed=${allowedTroops} placed=${validation.totalPlaced}`);
+    } else {
+      basePlacements = decision.data?.placements ?? {};
+      console.log(`[lockDeploy] player=${actingPlayer.id} using SAVED placements=${JSON.stringify(basePlacements)} allowed=${allowedTroops}`);
+    }
+
+    const totalPlaced = Object.values(basePlacements).reduce((s, n) => s + (n || 0), 0);
     let remaining = allowedTroops - totalPlaced;
 
-    let finalPlacements = { ...currentPlacements };
+    let finalPlacements = { ...basePlacements };
     if (remaining > 0) {
-      // Only auto-fill the genuinely unallocated remainder — never replace manual placements.
-      console.log(`[lockDeploy] player=${actingPlayer.id} manual_placements=${JSON.stringify(currentPlacements)} allowed=${allowedTroops} placed=${totalPlaced} remaining_to_autofill=${remaining}`);
+      // Only auto-fill genuinely unallocated remainder — never replace manual placements.
+      console.log(`[lockDeploy] player=${actingPlayer.id} auto-filling remaining=${remaining} troops`);
       const ownedStates = await base44.asServiceRole.entities.TerritoryState.filter({
         campaign_id, owner_player_id: actingPlayer.id,
       });
@@ -612,7 +629,7 @@ Deno.serve(async (req) => {
       );
       finalPlacements = mergePlacements(finalPlacements, additions);
     } else {
-      console.log(`[lockDeploy] player=${actingPlayer.id} all troops manually placed — no auto-fill needed. placements=${JSON.stringify(currentPlacements)}`);
+      console.log(`[lockDeploy] player=${actingPlayer.id} all troops placed — no auto-fill. final=${JSON.stringify(finalPlacements)}`);
     }
 
     await base44.asServiceRole.entities.PhaseDecision.update(decision.id, {

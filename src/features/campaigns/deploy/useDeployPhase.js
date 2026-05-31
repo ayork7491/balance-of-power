@@ -120,9 +120,21 @@ export function useDeployPhase({ campaign, myPlayer, myTerritories }) {
     setSubmitting(true);
     setError(null);
     try {
+      // Build clean placements from current UI state — same as handleSave.
+      // This ensures Lock always reflects what the player sees, even if they
+      // never pressed Save first.
+      const clean = {};
+      for (const [tid, v] of Object.entries(placements)) {
+        clean[tid] = parseInt(v) || 0;
+      }
+
+      console.log('[handleLock] UI placements:', placements);
+      console.log('[handleLock] Payload placements:', clean);
+
       await base44.functions.invoke('deployPhase', {
         action:      'lockDeploy',
         campaign_id: campaign.id,
+        placements:  clean,
         ...(actingAsPlayerId ? { acting_as_player_id: actingAsPlayerId } : getPayload()),
       });
       await reload();
@@ -132,7 +144,7 @@ export function useDeployPhase({ campaign, myPlayer, myTerritories }) {
     } finally {
       setSubmitting(false);
     }
-  }, [campaign?.id, reload, getPayload]);
+  }, [campaign?.id, placements, reload, getPayload]);
 
   return {
     placements, decision, income, troopsRemaining,
