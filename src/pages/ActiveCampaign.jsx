@@ -41,6 +41,8 @@ function ActiveCampaignContent() {
   const [attackPreselectedTargetId, setAttackPreselectedTargetId] = useState(null);
   const [fortifyOriginId, setFortifyOriginId] = useState(null);
   const [buildTerritoryId, setBuildTerritoryId] = useState(null);
+  const [draftClaimSubmitting, setDraftClaimSubmitting] = useState(false);
+  const [draftClaimError, setDraftClaimError] = useState(null);
   
   // Use centralized test context (includes selectedTerritoryId)
   const { 
@@ -354,20 +356,51 @@ function ActiveCampaignContent() {
             />
           )}
 
-          {/* Only show territory detail panel outside attack staging and draft */}
-          {phase !== 'territory_draft'
-            && !(phase === 'attack' && attackOriginId)
-            && selectedTerritory && (
-            <TerritoryDetailPanel
-              territory={selectedTerritory}
-              tState={selectedTState}
-              players={players}
-              regionDef={selectedRegion}
-              continentDef={selectedContinent}
-              adjacentTerritories={adjacentTerritories}
-              onClose={() => setSelectedTerritoryId(null)}
-            />
-          )}
+          {/* Territory detail panel — shown in all phases except during attack staging */}
+          {!(phase === 'attack' && attackOriginId)
+            && selectedTerritory && (() => {
+            // Draft phase: compute if it's the acting player's turn
+            const setupOrder     = campaign?.setup_order ?? [];
+            const currentPickerId = setupOrder[campaign?.setup_current_index ?? 0];
+            const isMyDraftTurn  = phase === 'territory_draft' && currentPickerId === actionPlayer?.id;
+
+            const handleDraftClaim = async () => {
+              if (!selectedTerritoryId || !actionPlayer) return;
+              setDraftClaimSubmitting(true);
+              setDraftClaimError(null);
+              try {
+                await base44.functions.invoke('setupPhase', {
+                  action: 'pickTerritory',
+                  campaign_id: id,
+                  territory_id: selectedTerritoryId,
+                  acting_as_player_id: actingAsCampaignPlayerId || null,
+                });
+                setSelectedTerritoryId(null);
+                handlePhaseChanged();
+              } catch (err) {
+                setDraftClaimError(err?.response?.data?.error || 'Failed to claim territory.');
+              } finally {
+                setDraftClaimSubmitting(false);
+              }
+            };
+
+            return (
+              <TerritoryDetailPanel
+                territory={selectedTerritory}
+                tState={selectedTState}
+                players={players}
+                regionDef={selectedRegion}
+                continentDef={selectedContinent}
+                adjacentTerritories={adjacentTerritories}
+                onClose={() => { setSelectedTerritoryId(null); setDraftClaimError(null); }}
+                phase={phase}
+                isMyDraftTurn={isMyDraftTurn}
+                onClaim={phase === 'territory_draft' ? handleDraftClaim : undefined}
+                claimSubmitting={draftClaimSubmitting}
+                claimError={draftClaimError}
+              />
+            );
+          })()}
         </>
       )}
 

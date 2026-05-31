@@ -23,8 +23,8 @@ export default function BattlePanel({ campaign, players, myPlayer, mapDef, onPha
   });
 
   const pendingCount  = cards.filter(c => ['pending','awaiting_result','result_submitted','awaiting_approval'].includes(c.status)).length;
-  const resolvedCount = cards.filter(c => ['resolved','auto_resolved','forfeited'].includes(c.status)).length;
-  const allResolved   = cards.length > 0 && resolvedCount === cards.length;
+  const resolvedCount = cards.filter(c => ['resolved','auto_resolved','forfeited','delayed'].includes(c.status)).length;
+  const allResolved   = cards.length > 0 && pendingCount === 0;
 
   const handleProcessEnd = async () => {
     setProcessing(true);

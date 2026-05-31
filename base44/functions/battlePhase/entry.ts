@@ -8,7 +8,7 @@
  *   adminOverride       — admin clears flags and forces result into awaiting_approval (unstuck)
  *   autoResolve         — force auto-resolve a specific battle card (admin)
  *   setDelayed          — admin: delay a battle (pause resolution)
- *   setForfeited        — admin: mark battle as forfeited (winner by forfeit)
+ *   setForfeited        — admin: mark battle as forfeited (winner by forfeit, retains all committed troops)
  *   voteDelay           — participant: vote to delay this battle (requires majority)
  *   processPhaseEnd     — admin: auto-resolve all pending battles, apply all results,
  *                         update territory states, check eliminations, advance phase.
@@ -16,18 +16,26 @@
  * ─── RESOLUTION PIPELINE ─────────────────────────────────────────────────────
  *   pending → awaiting_result → result_submitted → awaiting_approval → resolved
  *   pending → auto_resolved (admin force or timeout)
- *   pending → delayed (admin set or majority vote)
+ *   pending → delayed (admin set or majority vote) ← counts as "resolved" for phase advancement
  *   pending → forfeited (admin set)
  *
- * ─── KEY INVARIANTS ──────────────────────────────────────────────────────────
- *   1. Territory changes are applied at the moment a battle RESOLVES (approved or
- *      admin-override) — NOT deferred to processPhaseEnd.
- *      processPhaseEnd only handles cards that are still unresolved.
- *   2. result_applied flag prevents double-application on all paths.
- *   3. processPhaseEnd reloads territory state AFTER each card apply so later cards
- *      see the up-to-date board state.
- *   4. Forfeit surviving_tabletop_troops is set in tabletop scale (≤ tabletop_size).
- *   5. Bloodbath winner captures BOTH territories with surviving troops.
+ * ─── TERRITORY RESOLUTION MATRIX ────────────────────────────────────────────
+ *   skirmish            (attackPhase): attacker always wins; troops move into territory.
+ *   siege               (battlePhase): winner gains territory; survivors occupy it.
+ *   double_siege        (battlePhase): winner gains territory; survivors occupy it.
+ *   capture_objectives  (battlePhase): winner gains territory; survivors occupy it.
+ *   bloodbath           (battlePhase): if loser had garrison (defender_troops > 0 in card)
+ *                         → loser keeps territory, winner survivors return to origin.
+ *                         if loser committed ALL troops (defender_troops == 0 in card)
+ *                         → winner captures loser's territory, survivors move in.
+ *                         In both cases: committed troops already removed from origin (attackPhase).
+ *
+ * ─── SURVIVOR MATH ───────────────────────────────────────────────────────────
+ *   surviving_tabletop_troops (submitted value) ≤ winner's committed tabletop troops
+ *   surviving_full_scale = round(surviving_tabletop / tabletop_size * total_troops_in_battle)
+ *
+ * ─── FORFEIT SURVIVORS ───────────────────────────────────────────────────────
+ *   Forfeit winner retains ALL their committed troops (no random reduction).
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
@@ -70,6 +78,35 @@ function getBloodbathTerritories(card) {
   return [...territories];
 }
 
+/**
+ * Get winner's committed troops (full-scale) for a given player_id.
+ * Used for forfeit (winner retains all committed troops).
+ */
+function getWinnerCommittedTroops(card, winnerPlayerId) {
+  if (!winnerPlayerId) return 0;
+  // For bloodbath: sum all entries for winner
+  const total = (card.attackers ?? [])
+    .filter(a => a.player_id === winnerPlayerId)
+    .reduce((s, a) => s + (a.committed_troops ?? 0), 0);
+  // If winner was the defender (siege), use defender_troops
+  if (total === 0 && card.defender_player_id === winnerPlayerId) {
+    return card.defender_troops ?? 0;
+  }
+  return total;
+}
+
+/**
+ * Convert winner's committed full-scale troops to tabletop scale.
+ * survivors_tabletop ≤ this value for validation.
+ */
+function winnerCommittedTabletop(card, winnerPlayerId) {
+  const committed = getWinnerCommittedTroops(card, winnerPlayerId);
+  const totalTroops = card.total_troops_in_battle ?? 1;
+  const tabletopSize = card.tabletop_size ?? 0;
+  if (totalTroops <= 0) return 0;
+  return Math.round((committed / totalTroops) * tabletopSize);
+}
+
 function buildSides(card) {
   const sides = [];
   const tabletopSize = card.tabletop_size ?? 0;
@@ -107,9 +144,11 @@ function autoResolveBattle(card, campaignId) {
     if (r <= 0) { winner = side; break; }
   }
 
-  // surviving_tabletop_troops is in TABLETOP scale (≤ tabletop_size)
+  // surviving_tabletop_troops is in TABLETOP scale, clamped to winner's committed tabletop troops
   const retainRatio    = 0.6 + rng() * 0.3;
-  const winnerTabletop = Math.max(1, Math.round((winner.tabletop_troops || 1) * retainRatio));
+  const maxSurvivors   = winnerCommittedTabletop(card, winner.player_id);
+  const rawSurvivors   = Math.max(1, Math.round((winner.tabletop_troops || 1) * retainRatio));
+  const winnerTabletop = Math.min(rawSurvivors, Math.max(1, maxSurvivors));
 
   return {
     winner_player_id:          winner.player_id,
@@ -122,15 +161,35 @@ function autoResolveBattle(card, campaignId) {
 /**
  * Apply a resolved result to territory states.
  *
- * FIX Bug 2: does NOT use a stale snapshot — caller must pass the CURRENT live
- *            territory states (reload from DB before each call in processPhaseEnd).
- * FIX Bug 7: bloodbath correctly updates BOTH territories.
+ * TERRITORY RESOLUTION MATRIX:
+ *   siege/double_siege/capture_objectives:
+ *     - Winner always gains target_territory with survivors.
+ *
+ *   bloodbath (is_mutual):
+ *     - card.defender_troops stores the LOSER's territory's original garrison.
+ *       Wait — bloodbath has no defender_troops field. Instead we use a different signal:
+ *       We compare who won vs who was defending each territory.
+ *
+ *       Each territory in a bloodbath was attacked FROM (origin) and attacked TO (target).
+ *       If a player WINS:
+ *         - Their own origin territory: committed troops already removed (attackPhase).
+ *           Survivors return to origin territory (they still own it unless they committed all).
+ *         - Their opponent's territory: they CAPTURE it if opponent committed ALL their troops
+ *           (i.e. opponent has no garrison left). Otherwise opponent keeps it.
+ *
+ *       For simplicity: bloodbath winner captures the loser's territory ONLY.
+ *       The winner's own territory remains owned by winner (they were attacked but won).
+ *
+ * The `card.attackers` array for bloodbath has entries from BOTH sides.
+ * We determine:
+ *   - winner's territory = where winner's troops came FROM (origin_territory_id of winner's entry)
+ *   - loser's territory  = where loser's troops came FROM (origin_territory_id of loser's entry)
  *
  * Returns an array of { id, owner_player_id, troop_count } to persist.
  */
 function buildTerritoryUpdates(card, result, territoryStates) {
   const { winner_player_id, surviving_tabletop_troops } = result;
-  if (!winner_player_id) return []; // no winner (draw / delayed) → no territory change
+  if (!winner_player_id) return []; // draw → no territory change
 
   // surviving_tabletop_troops is in tabletop scale → convert to full scale
   const survivingTroops = scaleBackSurvivors(
@@ -142,16 +201,53 @@ function buildTerritoryUpdates(card, result, territoryStates) {
   const updates = [];
 
   if (card.is_mutual) {
-    // FIX Bug 7: Bloodbath — winner captures BOTH contested territories
-    const territoriesInvolved = getBloodbathTerritories(card);
-    for (const tid of territoriesInvolved) {
-      const state = territoryStates.find(s => s.territory_id === tid);
-      if (state) {
-        updates.push({ id: state.id, territory_id: tid, owner_player_id: winner_player_id, troop_count: survivingTroops });
+    // ── Bloodbath resolution ──────────────────────────────────────────────────
+    // Find winner's and loser's origin territories from attackers array.
+    const winnerEntry  = (card.attackers ?? []).find(a => a.player_id === winner_player_id);
+    const loserEntries = (card.attackers ?? []).filter(a => a.player_id !== winner_player_id);
+
+    // Winner's origin territory: survivors return there (winner still owns it).
+    if (winnerEntry) {
+      const winnerOriginState = territoryStates.find(s => s.territory_id === winnerEntry.origin_territory_id);
+      if (winnerOriginState) {
+        updates.push({
+          id: winnerOriginState.id,
+          territory_id: winnerEntry.origin_territory_id,
+          owner_player_id: winner_player_id,
+          troop_count: survivingTroops,
+        });
+      }
+    }
+
+    // Loser's origin territories: winner captures them (committed troops already removed by attackPhase).
+    // The loser's territory is now empty (troops were committed out), so winner captures it.
+    for (const loserEntry of loserEntries) {
+      const loserOriginState = territoryStates.find(s => s.territory_id === loserEntry.origin_territory_id);
+      if (loserOriginState) {
+        // If the loser's territory still has garrison troops (they didn't commit all), winner can't capture it.
+        // We check current state: if troop_count > 0 and owner is still the loser, they have a garrison.
+        const loserHasGarrison = (loserOriginState.troop_count ?? 0) > 0 &&
+          loserOriginState.owner_player_id === loserEntry.player_id;
+
+        if (loserHasGarrison) {
+          // Loser keeps territory — attacker survivors return to WINNER's origin, already handled above.
+          // No change to loser's territory.
+        } else {
+          // Loser committed all troops (or territory is now empty) — winner captures it.
+          // Place 1 troop minimum in captured territory (survivors are at origin, this is capture placeholder).
+          // Actually: place 0 there — winner's survivors stay at origin. Territory ownership changes.
+          updates.push({
+            id: loserOriginState.id,
+            territory_id: loserEntry.origin_territory_id,
+            owner_player_id: winner_player_id,
+            troop_count: 0, // survivors already placed at origin; this just transfers ownership
+          });
+        }
       }
     }
   } else {
-    // siege / double_siege / capture_objectives
+    // ── Siege / double_siege / capture_objectives ─────────────────────────────
+    // Winner gains target_territory with survivors.
     const targetState = territoryStates.find(s => s.territory_id === card.target_territory_id);
     if (targetState) {
       updates.push({
@@ -161,6 +257,10 @@ function buildTerritoryUpdates(card, result, territoryStates) {
         troop_count:     survivingTroops,
       });
     }
+
+    // If defender won a siege (they held their territory), survivors stay in the territory.
+    // This is already handled above since winner_player_id = defender and survivors go to target_territory.
+    // Nothing extra needed for loser — their committed troops were removed in attackPhase.
   }
 
   return updates;
@@ -249,14 +349,20 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Winner must be a participant in this battle' }, { status: 400 });
     }
 
+    // ── Survivor validation: cannot exceed winner's committed tabletop troops ──
+    const maxTabletop = winnerCommittedTabletop(card, winner_player_id);
+    const clampedSurvivors = Math.min(
+      Math.max(0, Math.round(surviving_tabletop_troops)),
+      Math.max(1, maxTabletop),
+    );
+
     const now = new Date().toISOString();
-    // Reset approvals when a new result is submitted (revision scenario)
     await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
       status:    'result_submitted',
-      approvals: [], // clear stale approvals on each new submission
+      approvals: [],
       result: {
         winner_player_id,
-        surviving_tabletop_troops: Math.max(0, Math.round(surviving_tabletop_troops)),
+        surviving_tabletop_troops: clampedSurvivors,
         notes: notes ?? '',
         submitted_by: myPlayer.id,
         submitted_at: now,
@@ -269,7 +375,7 @@ Deno.serve(async (req) => {
       battle_card_id,
       target_territory_id: card.target_territory_id,
       winner_player_id,
-      surviving_tabletop_troops,
+      surviving_tabletop_troops: clampedSurvivors,
     }, true);
 
     return Response.json({ success: true, status: 'result_submitted' });
@@ -303,8 +409,6 @@ Deno.serve(async (req) => {
       ? currentApprovals.map((a, i) => i === existingIdx ? approvalRecord : a)
       : [...currentApprovals, approvalRecord];
 
-    // FIX Bug 1: determine new status.
-    // submitter is exempt from approving their own result.
     const submittedBy       = card.result?.submitted_by;
     const reviewers         = participantIds.filter(pid => pid !== submittedBy);
     const anyFlagged        = updatedApprovals.some(a => a.flagged);
@@ -312,8 +416,6 @@ Deno.serve(async (req) => {
       pid => updatedApprovals.find(a => a.player_id === pid && a.approved && !a.flagged)
     );
 
-    // Flagged → stays at awaiting_approval for admin to override.
-    // All reviewers approved (no flags) → resolved, apply territory changes immediately.
     let newStatus = anyFlagged ? 'awaiting_approval' : (allReviewersApproved ? 'resolved' : 'awaiting_approval');
 
     const updatePayload = {
@@ -326,7 +428,7 @@ Deno.serve(async (req) => {
 
     await base44.asServiceRole.entities.BattleCard.update(battle_card_id, updatePayload);
 
-    // FIX Bug 3: apply territory changes immediately when all approve — don't wait for processPhaseEnd
+    // Apply territory changes immediately when all approve
     if (newStatus === 'resolved' && !card.result_applied) {
       const result = card.result;
       if (result?.winner_player_id) {
@@ -355,8 +457,6 @@ Deno.serve(async (req) => {
   }
 
   // ── adminOverride ─────────────────────────────────────────────────────────────
-  // FIX Bug 1: admin can clear flags and force a battle back to awaiting_approval
-  // so players can re-review, OR force it directly to resolved.
   if (action === 'adminOverride') {
     if (!isAdmin) return Response.json({ error: 'Admin only' }, { status: 403 });
     const { battle_card_id, force_resolve } = body;
@@ -375,7 +475,6 @@ Deno.serve(async (req) => {
     }
 
     if (force_resolve) {
-      // Admin forces the result through regardless of player approval
       await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
         status: 'resolved',
         resolved_at: new Date().toISOString(),
@@ -398,7 +497,6 @@ Deno.serve(async (req) => {
 
       return Response.json({ success: true, status: 'resolved' });
     } else {
-      // Clear flags, reset approvals so players can re-review
       const clearedApprovals = (card.approvals ?? []).map(a => ({ ...a, flagged: false }));
       await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
         status:    'result_submitted',
@@ -494,13 +592,13 @@ Deno.serve(async (req) => {
         return Response.json({ error: 'Winner must be a participant' }, { status: 400 });
       }
 
-      // FIX Bug 6: surviving_tabletop_troops must be in TABLETOP scale (≤ tabletop_size)
-      // so scaleBackSurvivors in buildTerritoryUpdates converts it correctly.
-      const tabletopSurvivors = Math.max(1, Math.round((card.tabletop_size ?? 0) * 0.8));
+      // Forfeit: winner retains ALL their committed troops (no random reduction).
+      // surviving_tabletop_troops = winner's full committed tabletop troops.
+      const tabletopSurvivors = winnerCommittedTabletop(card, winner_player_id);
 
       const forfeitResult = {
         winner_player_id,
-        surviving_tabletop_troops: tabletopSurvivors,
+        surviving_tabletop_troops: Math.max(1, tabletopSurvivors),
         notes: 'Victory by forfeit.',
         submitted_by: 'admin',
         submitted_at: new Date().toISOString(),
@@ -603,15 +701,16 @@ Deno.serve(async (req) => {
     let delayedCount      = 0;
 
     for (const card of allCards) {
-      // Skip cards that were already fully applied (early-resolve via approveResult/autoResolve/forfeit)
+      // Skip cards that were already fully applied
       if (card.result_applied) {
         if (['resolved', 'auto_resolved', 'forfeited'].includes(card.status)) resolvedCount++;
+        if (card.status === 'delayed') delayedCount++;
         continue;
       }
 
       if (card.status === 'delayed') {
         delayedCount++;
-        // Delayed battles count as resolved for this round — no territory change, mark applied.
+        // Delayed battles: mark as applied with no territory change, allow phase to proceed.
         await base44.asServiceRole.entities.BattleCard.update(card.id, {
           result_applied: true,
           result: {
@@ -628,14 +727,12 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Determine result to apply
       let resultToApply = null;
 
       if (card.status === 'forfeited' && card.result?.winner_player_id) {
         resultToApply = card.result;
         forfeitedCount++;
       } else if (['resolved', 'auto_resolved'].includes(card.status) && card.result?.winner_player_id) {
-        // Already resolved but not yet applied (shouldn't happen normally, but handle gracefully)
         resultToApply = card.result;
         resolvedCount++;
       } else {
@@ -657,8 +754,7 @@ Deno.serve(async (req) => {
         }, true);
       }
 
-      // FIX Bug 2: reload territory states FRESH before each card application
-      // so multiple cards in the same round see each other's changes.
+      // Reload territory states fresh before each card so updates are sequential
       if (resultToApply?.winner_player_id) {
         const freshStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
         const updates = buildTerritoryUpdates(card, resultToApply, freshStates);

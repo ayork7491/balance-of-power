@@ -4,11 +4,25 @@
  */
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Loader2, Check, AlertTriangle, Flag, Clock, Zap } from 'lucide-react';
+import { ArrowLeft, Loader2, Check, AlertTriangle, Flag, Clock, Zap, User, TestTube } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import AppShell from '@/components/layout/AppShell';
 import { PLAYER_COLORS } from '@/config/theme';
 import { getMap } from '@/features/maps';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+
+/** Max tabletop survivors for the selected winner */
+function winnerMaxTabletop(card, winnerId) {
+  if (!card || !winnerId) return 0;
+  const totalTroops  = card.total_troops_in_battle ?? 1;
+  const tabletopSize = card.tabletop_size ?? 0;
+  const attackerTroops = (card.attackers ?? [])
+    .filter(a => a.player_id === winnerId)
+    .reduce((s, a) => s + (a.committed_troops ?? 0), 0);
+  const defenderTroops = card.defender_player_id === winnerId ? (card.defender_troops ?? 0) : 0;
+  const committed = attackerTroops + defenderTroops;
+  return totalTroops > 0 ? Math.round((committed / totalTroops) * tabletopSize) : 0;
+}
 
 function getPlayerHex(players, playerId) {
   const p = players?.find(pl => pl.id === playerId);
@@ -27,6 +41,8 @@ export default function AdminBattleResultEntry() {
   const [error, setError]       = useState(null);
   const [success, setSuccess]   = useState(null);
 
+  const [myPlayer, setMyPlayer] = useState(null);
+  const [actingAsId, setActingAsId] = useState(null);
   const [winnerId, setWinnerId]           = useState('');
   const [survivors, setSurvivors]         = useState('');
   const [notes, setNotes]                 = useState('');
@@ -34,13 +50,15 @@ export default function AdminBattleResultEntry() {
   useEffect(() => {
     async function load() {
       setLoading(true);
-      const [camps, plrs] = await Promise.all([
+      const [me, camps, plrs] = await Promise.all([
+        base44.auth.me(),
         base44.entities.Campaign.filter({ id: campaignId }),
         base44.entities.CampaignPlayer.filter({ campaign_id: campaignId }),
       ]);
       const camp = camps[0] ?? null;
       setCampaign(camp);
       setPlayers(plrs);
+      setMyPlayer(plrs.find(p => p.user_id === me?.id) ?? null);
 
       const res = await base44.functions.invoke('battlePhase', {
         action: 'getBattleCards',
@@ -186,21 +204,53 @@ export default function AdminBattleResultEntry() {
 
   const isDelayed = card.status === 'delayed';
   const isForfeited = card.status === 'forfeited';
+  const testPlayers = players.filter(p => p.is_test_player);
+
+  const maxTabletop = winnerMaxTabletop(card, winnerId);
+  const survivorsNum = survivors !== '' ? Number(survivors) : null;
+  const survivorError = survivorsNum !== null && winnerId && survivorsNum > maxTabletop
+    ? `Max survivors for this winner: ${maxTabletop} tabletop pts`
+    : null;
 
   return (
     <AppShell title="Admin Battle Control">
       <div className="max-w-2xl mx-auto p-4 space-y-5">
-        {/* Back */}
-        <button
-          onClick={() => navigate(`/campaigns/${campaignId}/battles/${battleId}`)}
-          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ArrowLeft className="w-3.5 h-3.5" /> Back to Battle Card
-        </button>
+        {/* Back + Perspective */}
+        <div className="flex items-center justify-between gap-3">
+          <button
+            onClick={() => navigate(`/campaigns/${campaignId}/battles/${battleId}`)}
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to Battle Card
+          </button>
+          {testPlayers.length > 0 && (
+            <div className="flex items-center gap-1.5 bg-status-pending/10 border border-status-pending/40 px-2 py-1 rounded">
+              <TestTube className="w-3.5 h-3.5 text-status-pending shrink-0" />
+              <span className="text-[10px] text-status-pending uppercase tracking-wider hidden sm:inline">Perspective</span>
+              <Select value={actingAsId ?? 'self'} onValueChange={v => setActingAsId(v === 'self' ? null : v)}>
+                <SelectTrigger className="h-7 text-xs w-32 sm:w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="self"><span className="flex items-center gap-1.5"><User className="w-3 h-3" /> My Player</span></SelectItem>
+                  {testPlayers.map(p => (
+                    <SelectItem key={p.id} value={p.id}>
+                      <span className="flex items-center gap-1.5"><TestTube className="w-3 h-3 text-status-pending" /> {p.display_name}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+        </div>
 
         {/* Header */}
         <div className="panel p-4 space-y-2">
           <p className="font-display text-lg font-semibold text-foreground">{targetName}</p>
+          <div className="flex gap-4 text-xs text-muted-foreground">
+            <span>BOP Troops: <span className="font-mono text-foreground">{card.total_troops_in_battle ?? 0}</span></span>
+            <span>Tabletop: <span className="font-mono text-primary">{card.tabletop_size ?? 0} pts</span></span>
+          </div>
           <p className="text-xs text-muted-foreground">
             Status: <span className={`font-medium ${isDelayed ? 'text-warning' : isForfeited ? 'text-destructive' : 'text-foreground'}`}>
               {card.status}
@@ -246,6 +296,7 @@ export default function AdminBattleResultEntry() {
                   const isAttacker = (card.attackers ?? []).some(a => a.player_id === pid);
                   const isDefender = card.defender_player_id === pid;
                   const role = isAttacker && isDefender ? 'both' : isAttacker ? 'attacker' : isDefender ? 'defender' : '';
+                  const playerTabletop = winnerMaxTabletop(card, pid);
                   return (
                     <label key={pid} className={`flex items-center gap-3 px-3 py-2 rounded border cursor-pointer transition-colors ${checked ? 'border-primary/40 bg-primary/10' : 'border-border bg-muted/10 hover:bg-muted/20'}`}>
                       <input
@@ -253,13 +304,14 @@ export default function AdminBattleResultEntry() {
                         name="winner"
                         value={pid}
                         checked={checked}
-                        onChange={() => setWinnerId(pid)}
+                        onChange={() => { setWinnerId(pid); setSurvivors(''); }}
                         className="sr-only"
                       />
                       <span className="w-3 h-3 rounded-full" style={{ backgroundColor: hex }} />
                       <span className="text-sm text-foreground">{p?.display_name ?? '?'}</span>
                       {role && <span className="text-xs text-muted-foreground">({role})</span>}
-                      {checked && <Check className="w-3.5 h-3.5 text-primary ml-auto" />}
+                      <span className="text-xs text-muted-foreground ml-auto">{playerTabletop} TT pts</span>
+                      {checked && <Check className="w-3.5 h-3.5 text-primary" />}
                     </label>
                   );
                 })}
@@ -267,20 +319,24 @@ export default function AdminBattleResultEntry() {
             </div>
 
             {/* Surviving troops */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-display tracking-wider uppercase text-muted-foreground">
-                Surviving Tabletop Troops
-              </label>
-              <input
-                type="number"
-                min="0"
-                max={card.tabletop_size}
-                value={survivors}
-                onChange={e => setSurvivors(e.target.value)}
-                placeholder="e.g. 450"
-                className="w-full bg-input border border-border rounded px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-              />
-            </div>
+            {winnerId && (
+              <div className="space-y-1.5">
+                <label className="text-xs font-display tracking-wider uppercase text-muted-foreground">
+                  Surviving Tabletop Troops
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  max={maxTabletop}
+                  value={survivors}
+                  onChange={e => setSurvivors(e.target.value)}
+                  placeholder={`0 – ${maxTabletop}`}
+                  className="w-full bg-input border border-border rounded px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+                <p className="text-xs text-muted-foreground">Max for this winner: <span className="font-mono text-foreground">{maxTabletop}</span> pts</p>
+                {survivorError && <p className="text-xs text-destructive">{survivorError}</p>}
+              </div>
+            )}
 
             {/* Notes */}
             <div className="space-y-1.5">
@@ -300,7 +356,7 @@ export default function AdminBattleResultEntry() {
 
           <button
             type="submit"
-            disabled={actionLoading || survivors === '' || winnerId === ''}
+            disabled={actionLoading || survivors === '' || winnerId === '' || !!survivorError}
             className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded bg-primary text-primary-foreground text-xs font-display tracking-widest uppercase hover:brightness-110 transition-all disabled:opacity-40"
           >
             {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}

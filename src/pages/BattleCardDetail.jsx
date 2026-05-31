@@ -1,17 +1,19 @@
 /**
  * BattleCardDetail — full detail view for a single battle card.
  * Shows: battle type, territory, participants, attacker/defender roles,
- * troop counts, scaling, status, result, approvals, and action buttons.
+ * troop counts (BOP + Tabletop), scaling, status, result, approvals, and action buttons.
+ * Includes Perspective Selector for admin test mode.
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Swords, Loader2, Check, Flag, AlertTriangle, Clock, Zap, Settings } from 'lucide-react';
+import { ArrowLeft, Swords, Loader2, Check, Flag, AlertTriangle, Clock, Settings, User, TestTube } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import AppShell from '@/components/layout/AppShell';
 import BattleTypeTag from '@/components/phases/battle/BattleTypeTag';
 import BattleStatusTag from '@/components/phases/battle/BattleStatusTag';
 import { PLAYER_COLORS } from '@/config/theme';
 import { getMap } from '@/features/maps';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 function getPlayerHex(players, playerId) {
   const p = players?.find(pl => pl.id === playerId);
@@ -30,11 +32,12 @@ function PlayerChip({ players, playerId, showRole }) {
   );
 }
 
-function StatBox({ label, value, accent }) {
+function StatBox({ label, value, sub, accent }) {
   return (
     <div className={`px-3 py-2 rounded border text-center ${accent ? 'border-primary/30 bg-primary/10' : 'border-border bg-muted/20'}`}>
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className={`font-mono font-bold text-lg ${accent ? 'text-primary' : 'text-foreground'}`}>{value}</p>
+      {sub && <p className="text-[10px] text-muted-foreground">{sub}</p>}
     </div>
   );
 }
@@ -55,18 +58,50 @@ function ApprovalRow({ approval, players }) {
   );
 }
 
+/** Inline perspective selector — works without CampaignTestModeProvider context */
+function InlinePerspectiveSelector({ players, myPlayer, actingAsId, onActingAsChange }) {
+  const testPlayers = players.filter(p => p.is_test_player);
+  if (!myPlayer?.is_admin || testPlayers.length === 0) return null;
+
+  const currentValue = actingAsId ?? 'self';
+  return (
+    <div className="flex items-center gap-1.5 bg-status-pending/10 border border-status-pending/40 px-2 py-1 rounded">
+      <TestTube className="w-3.5 h-3.5 text-status-pending shrink-0" />
+      <span className="text-[10px] text-status-pending uppercase tracking-wider hidden sm:inline">Perspective</span>
+      <Select value={currentValue} onValueChange={v => onActingAsChange(v === 'self' ? null : v)}>
+        <SelectTrigger className="h-7 text-xs w-32 sm:w-36">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="self">
+            <span className="flex items-center gap-1.5"><User className="w-3 h-3" /> My Player (Self)</span>
+          </SelectItem>
+          {testPlayers.map(p => (
+            <SelectItem key={p.id} value={p.id}>
+              <span className="flex items-center gap-1.5">
+                <TestTube className="w-3 h-3 text-status-pending" /> {p.display_name} (Test)
+              </span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
 export default function BattleCardDetail() {
   const { id: campaignId, battleId } = useParams();
   const navigate = useNavigate();
 
-  const [card, setCard]       = useState(null);
-  const [players, setPlayers] = useState([]);
+  const [card, setCard]         = useState(null);
+  const [players, setPlayers]   = useState([]);
   const [campaign, setCampaign] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading]   = useState(true);
   const [myPlayer, setMyPlayer] = useState(null);
+  const [actingAsId, setActingAsId] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [myVote, setMyVote] = useState(null);
+  const [error, setError]       = useState(null);
+  const [myVote, setMyVote]     = useState(null);
 
   useEffect(() => {
     async function load() {
@@ -95,33 +130,68 @@ export default function BattleCardDetail() {
     load();
   }, [campaignId, battleId]);
 
+  // Effective acting player (for approval/vote actions)
+  const effectivePlayer = useMemo(() => {
+    if (actingAsId && players.length) {
+      return players.find(p => p.id === actingAsId) ?? myPlayer;
+    }
+    return myPlayer;
+  }, [actingAsId, players, myPlayer]);
+
   const mapDef     = getMap(campaign?.map_id ?? 'map_v1_standard');
   const targetName = mapDef?.territories.find(t => t.territory_id === card?.target_territory_id)?.name
     ?? card?.target_territory_id ?? '—';
 
-  const isAdmin = myPlayer?.is_admin;
-
+  const isAdmin    = myPlayer?.is_admin;
   const attackerIds = [...new Set((card?.attackers ?? []).map(a => a.player_id))];
   const participantIds = [...new Set([...attackerIds, ...(card?.defender_player_id ? [card.defender_player_id] : [])])];
 
   const canSubmit  = isAdmin && card &&
     ['pending', 'awaiting_result', 'delayed', 'result_submitted', 'awaiting_approval'].includes(card.status);
 
-  const canApprove = myPlayer && card &&
-    participantIds.includes(myPlayer.id) &&
-    card.status === 'result_submitted' &&
-    card.result?.submitted_by !== myPlayer.id;
+  const canApprove = effectivePlayer && card &&
+    participantIds.includes(effectivePlayer.id) &&
+    ['result_submitted', 'awaiting_approval'].includes(card.status) &&
+    card.result?.submitted_by !== effectivePlayer.id;
 
-  const canVote    = myPlayer && card &&
-    participantIds.includes(myPlayer.id) &&
+  const canVote    = effectivePlayer && card &&
+    participantIds.includes(effectivePlayer.id) &&
     ['pending', 'awaiting_result'].includes(card.status);
 
-  // Get my existing vote
+  // Troop breakdown for display
+  const totalTroops   = card?.total_troops_in_battle ?? 0;
+  const tabletopSize  = card?.tabletop_size ?? 0;
+  const scaleFactor   = card?.scale_factor ?? 1;
+
+  // Per-participant BOP + tabletop committed troops
+  const participantTroopInfo = useMemo(() => {
+    if (!card) return [];
+    return participantIds.map(pid => {
+      const isAttacker = (card.attackers ?? []).some(a => a.player_id === pid);
+      const isDefender = card.defender_player_id === pid;
+      const bopTroops = isAttacker
+        ? (card.attackers ?? []).filter(a => a.player_id === pid).reduce((s, a) => s + (a.committed_troops ?? 0), 0)
+        : (isDefender ? (card.defender_troops ?? 0) : 0);
+      const tabletopTroops = totalTroops > 0 ? Math.round((bopTroops / totalTroops) * tabletopSize) : 0;
+      return { pid, bopTroops, tabletopTroops, isAttacker, isDefender };
+    });
+  }, [card, participantIds, totalTroops, tabletopSize]);
+
+  // Get existing vote
   useEffect(() => {
-    if (card?.delay_votes && myPlayer?.id) {
-      setMyVote(card.delay_votes[myPlayer.id] ?? null);
+    if (card?.delay_votes && effectivePlayer?.id) {
+      setMyVote(card.delay_votes[effectivePlayer.id] ?? null);
     }
-  }, [card?.delay_votes, myPlayer?.id]);
+  }, [card?.delay_votes, effectivePlayer?.id]);
+
+  const reloadCard = async () => {
+    const cardsRes = await base44.functions.invoke('battlePhase', {
+      action: 'getBattleCards',
+      campaign_id: campaignId,
+      round: campaign?.current_round ?? 1,
+    });
+    setCard(cardsRes.data?.battle_cards?.find(c => c.id === battleId) ?? null);
+  };
 
   const handleApprove = async (approved, flagged = false) => {
     setActionLoading(true);
@@ -132,22 +202,12 @@ export default function BattleCardDetail() {
       battle_card_id: battleId,
       approved,
       flagged,
+      acting_as_player_id: actingAsId ?? null,
     });
     setActionLoading(false);
-    if (res.data?.error) {
-      setError(res.data.error);
-    } else {
-      // Reload card
-      const cardsRes = await base44.functions.invoke('battlePhase', {
-        action: 'getBattleCards',
-        campaign_id: campaignId,
-        round: campaign?.current_round ?? 1,
-      });
-      setCard(cardsRes.data?.battle_cards?.find(c => c.id === battleId) ?? null);
-    }
+    if (res.data?.error) { setError(res.data.error); } else { await reloadCard(); }
   };
 
-  // FIX Bug 5: admin delay/resume uses setDelayed, not voteDelay
   const handleAdminDelay = async (delayed) => {
     setActionLoading(true);
     setError(null);
@@ -158,16 +218,7 @@ export default function BattleCardDetail() {
       delayed,
     });
     setActionLoading(false);
-    if (res.data?.error) {
-      setError(res.data.error);
-    } else {
-      const cardsRes = await base44.functions.invoke('battlePhase', {
-        action: 'getBattleCards',
-        campaign_id: campaignId,
-        round: campaign?.current_round ?? 1,
-      });
-      setCard(cardsRes.data?.battle_cards?.find(c => c.id === battleId) ?? null);
-    }
+    if (res.data?.error) { setError(res.data.error); } else { await reloadCard(); }
   };
 
   const handleAdminOverride = async (forceResolve) => {
@@ -180,16 +231,7 @@ export default function BattleCardDetail() {
       force_resolve: forceResolve,
     });
     setActionLoading(false);
-    if (res.data?.error) {
-      setError(res.data.error);
-    } else {
-      const cardsRes = await base44.functions.invoke('battlePhase', {
-        action: 'getBattleCards',
-        campaign_id: campaignId,
-        round: campaign?.current_round ?? 1,
-      });
-      setCard(cardsRes.data?.battle_cards?.find(c => c.id === battleId) ?? null);
-    }
+    if (res.data?.error) { setError(res.data.error); } else { await reloadCard(); }
   };
 
   const handleVoteDelay = async (vote) => {
@@ -200,20 +242,10 @@ export default function BattleCardDetail() {
       campaign_id: campaignId,
       battle_card_id: battleId,
       vote,
+      acting_as_player_id: actingAsId ?? null,
     });
     setActionLoading(false);
-    if (res.data?.error) {
-      setError(res.data.error);
-    } else {
-      setMyVote(vote);
-      // Reload card
-      const cardsRes = await base44.functions.invoke('battlePhase', {
-        action: 'getBattleCards',
-        campaign_id: campaignId,
-        round: campaign?.current_round ?? 1,
-      });
-      setCard(cardsRes.data?.battle_cards?.find(c => c.id === battleId) ?? null);
-    }
+    if (res.data?.error) { setError(res.data.error); } else { setMyVote(vote); await reloadCard(); }
   };
 
   if (loading) {
@@ -240,13 +272,21 @@ export default function BattleCardDetail() {
   return (
     <AppShell title="Battle Card">
       <div className="max-w-3xl mx-auto p-4 space-y-5">
-        {/* Back */}
-        <button
-          onClick={() => navigate(`/campaigns/${campaignId}`)}
-          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ArrowLeft className="w-3.5 h-3.5" /> Back to Campaign
-        </button>
+        {/* Back + Perspective */}
+        <div className="flex items-center justify-between gap-3">
+          <button
+            onClick={() => navigate(`/campaigns/${campaignId}`)}
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to Campaign
+          </button>
+          <InlinePerspectiveSelector
+            players={players}
+            myPlayer={myPlayer}
+            actingAsId={actingAsId}
+            onActingAsChange={setActingAsId}
+          />
+        </div>
 
         {/* Header */}
         <div className="panel p-4 space-y-3">
@@ -266,37 +306,43 @@ export default function BattleCardDetail() {
             </div>
           </div>
 
-          {/* Participants */}
+          {/* Participants with BOP + Tabletop troop breakdown */}
           <div className="space-y-2">
             <p className="text-xs font-display tracking-wider uppercase text-muted-foreground">Participants</p>
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs text-muted-foreground w-16">Attackers</span>
-              {card.attackers?.map((a, i) => {
-                const origin = mapDef?.territories.find(t => t.territory_id === a.origin_territory_id)?.name ?? a.origin_territory_id;
+            <div className="space-y-1.5">
+              {participantTroopInfo.map(({ pid, bopTroops, tabletopTroops, isAttacker, isDefender }) => {
+                const origin = isAttacker
+                  ? (mapDef?.territories.find(t => t.territory_id === (card.attackers ?? []).find(a => a.player_id === pid)?.origin_territory_id)?.name
+                    ?? (card.attackers ?? []).find(a => a.player_id === pid)?.origin_territory_id)
+                  : null;
+                const role = isAttacker && isDefender ? 'both' : isAttacker ? 'attacker' : 'defender';
                 return (
-                  <div key={i} className="flex items-center gap-1">
-                    <PlayerChip players={players} playerId={a.player_id} />
-                    <span className="text-xs text-muted-foreground">from {origin}</span>
-                    <span className="text-xs font-mono text-status-danger">({a.committed_troops})</span>
+                  <div key={pid} className="flex items-center gap-2 flex-wrap text-xs bg-muted/10 rounded px-2 py-1.5">
+                    <PlayerChip players={players} playerId={pid} showRole={role} />
+                    {origin && <span className="text-muted-foreground">from {origin}</span>}
+                    <span className="ml-auto flex items-center gap-3 text-xs font-mono">
+                      <span title="BOP troops committed" className="text-status-danger">{bopTroops} BOP</span>
+                      <span className="text-border">·</span>
+                      <span title="Tabletop troops" className="text-primary">{tabletopTroops} TT</span>
+                    </span>
                   </div>
                 );
               })}
             </div>
-            {card.defender_player_id && (
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground w-16">Defender</span>
-                <PlayerChip players={players} playerId={card.defender_player_id} />
-                <span className="text-xs font-mono text-status-info">({card.defender_troops} troops)</span>
-              </div>
-            )}
           </div>
         </div>
 
-        {/* Scaling stats */}
-        <div className="grid grid-cols-3 gap-2">
-          <StatBox label="Total Troops" value={card.total_troops_in_battle} />
-          <StatBox label="Scale Factor" value={`×${card.scale_factor?.toFixed(2)}`} />
-          <StatBox label="Tabletop Size" value={`${card.tabletop_size} pts`} accent />
+        {/* Scaling stats — clearly labeled BOP vs Tabletop */}
+        <div className="panel p-3 space-y-2">
+          <p className="text-xs font-display tracking-wider uppercase text-muted-foreground">Battle Scale</p>
+          <div className="grid grid-cols-3 gap-2">
+            <StatBox label="BOP Troops" value={totalTroops} sub="full-scale" />
+            <StatBox label="Scale Factor" value={`×${scaleFactor?.toFixed(2)}`} sub="reduction" />
+            <StatBox label="Tabletop Size" value={`${tabletopSize} pts`} sub="play this on table" accent />
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            Enter tabletop survivors when submitting results. BOP converts automatically.
+          </p>
         </div>
 
         {/* Result (if submitted) */}
@@ -310,11 +356,23 @@ export default function BattleCardDetail() {
                 : <span className="text-xs text-muted-foreground">Draw / No winner</span>
               }
             </div>
-            {card.result.surviving_tabletop_troops != null && (
-              <p className="text-xs text-muted-foreground">
-                Surviving tabletop troops: <span className="text-foreground font-mono">{card.result.surviving_tabletop_troops}</span>
-              </p>
-            )}
+            {card.result.surviving_tabletop_troops != null && card.result.winner_player_id && (() => {
+              const bopSurvivors = Math.round(
+                (card.result.surviving_tabletop_troops / Math.max(1, tabletopSize)) * totalTroops
+              );
+              return (
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="px-2 py-1.5 rounded border border-border bg-muted/10">
+                    <p className="text-muted-foreground">Tabletop Survivors</p>
+                    <p className="font-mono font-bold text-primary">{card.result.surviving_tabletop_troops} pts</p>
+                  </div>
+                  <div className="px-2 py-1.5 rounded border border-border bg-muted/10">
+                    <p className="text-muted-foreground">BOP Survivors</p>
+                    <p className="font-mono font-bold text-foreground">{bopSurvivors} troops</p>
+                  </div>
+                </div>
+              );
+            })()}
             {card.result.result_source && (
               <p className="text-xs text-muted-foreground">
                 Source: <span className={`font-medium ${card.result.result_source === 'manual' ? 'text-status-locked' : 'text-warning'}`}>
@@ -323,14 +381,9 @@ export default function BattleCardDetail() {
               </p>
             )}
             {card.result.notes && <p className="text-xs text-muted-foreground">Notes: {card.result.notes}</p>}
-            {card.result.submitted_at && (
-              <p className="text-xs text-muted-foreground">
-                Submitted by: <span className="text-foreground">{new Date(card.result.submitted_at).toLocaleString()}</span>
-              </p>
-            )}
             {card.result.applied_at && (
               <p className="text-xs text-status-locked flex items-center gap-1">
-                <Check className="w-3 h-3" /> Result applied to territories: {new Date(card.result.applied_at).toLocaleString()}
+                <Check className="w-3 h-3" /> Territories updated: {new Date(card.result.applied_at).toLocaleString()}
               </p>
             )}
 
@@ -348,9 +401,8 @@ export default function BattleCardDetail() {
 
         {/* Action buttons */}
         {error && <p className="text-xs text-destructive">{error}</p>}
-        
+
         <div className="space-y-2">
-          {/* Primary actions */}
           <div className="flex gap-2">
             {canSubmit && (
               <Link
@@ -360,7 +412,7 @@ export default function BattleCardDetail() {
                 Submit Result
               </Link>
             )}
-            
+
             {canApprove && (
               <>
                 <button
@@ -387,17 +439,14 @@ export default function BattleCardDetail() {
           {canVote && (
             <div className="panel p-3 space-y-2">
               <p className="text-xs font-display tracking-wider uppercase text-muted-foreground flex items-center gap-2">
-                <Clock className="w-3 h-3" />
-                Vote to Delay
+                <Clock className="w-3 h-3" /> Vote to Delay
               </p>
               <div className="flex gap-2">
                 <button
                   onClick={() => handleVoteDelay('yes')}
                   disabled={actionLoading || myVote === 'yes'}
                   className={`flex-1 px-3 py-2 rounded text-xs font-display tracking-widest uppercase transition-all ${
-                    myVote === 'yes' 
-                      ? 'bg-warning/20 text-warning border border-warning' 
-                      : 'bg-muted/20 text-muted-foreground border border-border hover:bg-warning/10'
+                    myVote === 'yes' ? 'bg-warning/20 text-warning border border-warning' : 'bg-muted/20 text-muted-foreground border border-border hover:bg-warning/10'
                   } disabled:opacity-40`}
                 >
                   Yes ({card.delay_votes ? Object.values(card.delay_votes).filter(v => v === 'yes').length : 0})
@@ -406,9 +455,7 @@ export default function BattleCardDetail() {
                   onClick={() => handleVoteDelay('no')}
                   disabled={actionLoading || myVote === 'no'}
                   className={`flex-1 px-3 py-2 rounded text-xs font-display tracking-widest uppercase transition-all ${
-                    myVote === 'no' 
-                      ? 'bg-status-locked/20 text-status-locked border border-status-locked' 
-                      : 'bg-muted/20 text-muted-foreground border border-border hover:bg-status-locked/10'
+                    myVote === 'no' ? 'bg-status-locked/20 text-status-locked border border-status-locked' : 'bg-muted/20 text-muted-foreground border border-border hover:bg-status-locked/10'
                   } disabled:opacity-40`}
                 >
                   No ({card.delay_votes ? Object.values(card.delay_votes).filter(v => v === 'no').length : 0})
@@ -424,8 +471,7 @@ export default function BattleCardDetail() {
           {isAdmin && (
             <div className="panel p-3 space-y-2">
               <p className="text-xs font-display tracking-wider uppercase text-muted-foreground flex items-center gap-2">
-                <Settings className="w-3 h-3" />
-                Admin Controls
+                <Settings className="w-3 h-3" /> Admin Controls
               </p>
               <div className="flex gap-2 flex-wrap">
                 <Link
@@ -442,7 +488,7 @@ export default function BattleCardDetail() {
                   {card.status === 'delayed' ? 'Resume' : 'Delay'}
                 </button>
               </div>
-              {/* Override stuck battle (flagged/disputed) */}
+              {/* Override stuck battle */}
               {['awaiting_approval', 'result_submitted'].includes(card.status) && card.result?.winner_player_id && (
                 <div className="flex gap-2 pt-1">
                   <button

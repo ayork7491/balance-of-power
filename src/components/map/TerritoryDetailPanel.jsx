@@ -2,8 +2,11 @@
  * TerritoryDetailPanel — slide-up panel showing selected territory details.
  * Appears at the bottom-center of the map viewport when a territory is selected.
  * Reads from territory schema (static) + territory state (dynamic).
+ *
+ * During territory_draft phase, shows a Claim Territory button if the territory
+ * is unclaimed and it is the current player's turn.
  */
-import { X, Shield, Swords, Users, MapPin } from 'lucide-react';
+import { X, Shield, Swords, MapPin, Check, Loader2 } from 'lucide-react';
 import { PLAYER_COLORS } from '@/config/theme';
 
 const TERRAIN_LABELS = {
@@ -34,6 +37,12 @@ export default function TerritoryDetailPanel({
   continentDef,         // MapContinent | null
   adjacentTerritories,  // TerritoryDefinition[]
   onClose,
+  // ── Draft phase claim support ──
+  phase,                // Campaign current_phase (optional)
+  isMyDraftTurn,        // boolean — is it the current player's turn to pick?
+  onClaim,              // async fn — called to claim this territory
+  claimSubmitting,      // boolean
+  claimError,           // string | null
 }) {
   if (!territory) return null;
 
@@ -44,6 +53,10 @@ export default function TerritoryDetailPanel({
     ? PLAYER_COLORS.find(c => c.id === owner.color)
     : null;
   const primaryResource = topResource(territory.resource_distribution);
+
+  const isDraftPhase = phase === 'territory_draft';
+  const isClaimed    = !!tState?.owner_player_id;
+  const canClaim     = isDraftPhase && isMyDraftTurn && !isClaimed && !!onClaim;
 
   return (
     <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 w-full max-w-sm px-2 pointer-events-none">
@@ -140,6 +153,33 @@ export default function TerritoryDetailPanel({
                   </span>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* ── Draft Phase Claim Button ── */}
+          {isDraftPhase && (
+            <div className="pt-2 border-t border-border">
+              {isClaimed ? (
+                <p className="text-xs text-destructive">
+                  Already claimed by {owner?.display_name ?? 'another player'}
+                </p>
+              ) : canClaim ? (
+                <>
+                  {claimError && <p className="text-xs text-destructive mb-1">{claimError}</p>}
+                  <button
+                    onClick={onClaim}
+                    disabled={claimSubmitting}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded bg-primary text-primary-foreground text-xs font-display tracking-wider uppercase hover:brightness-110 disabled:opacity-40 transition-all"
+                  >
+                    {claimSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                    Claim Territory
+                  </button>
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground italic">
+                  {!isMyDraftTurn ? "Not your turn to pick." : "Tap an unclaimed territory to claim it."}
+                </p>
+              )}
             </div>
           )}
         </div>

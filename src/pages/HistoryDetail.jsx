@@ -5,6 +5,8 @@ import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import AppShell from '@/components/layout/AppShell';
 import { useCampaign } from '@/features/campaigns';
+import { getMap } from '@/features/maps';
+import { PLAYER_COLORS } from '@/config/theme';
 import { useHistoryLogs } from '@/features/campaigns/history/useHistoryLogs';
 import { usePhaseSnapshots } from '@/features/campaigns/history/usePhaseSnapshots';
 import { useBattleHistory } from '@/features/campaigns/history/useBattleHistory';
@@ -29,6 +31,7 @@ const EVENT_ICONS = {
 export default function HistoryDetail() {
   const { id } = useParams();
   const { campaign, players } = useCampaign(id);
+  const mapDef = getMap(campaign?.map_id ?? 'map_v1_standard');
   
   const [activeTab, setActiveTab] = useState('logs');
   const [filterRound, setFilterRound] = useState('all');
@@ -74,6 +77,14 @@ export default function HistoryDetail() {
     const player = players.find(p => p.id === playerId);
     return player?.display_name || 'Unknown';
   };
+
+  const getPlayerHex = (playerId) => {
+    const player = players?.find(p => p.id === playerId);
+    return PLAYER_COLORS.find(c => c.id === player?.color)?.hex ?? '#888';
+  };
+
+  const getTerritoryName = (tid) =>
+    mapDef?.territories.find(t => t.territory_id === tid)?.name ?? tid ?? '—';
 
   return (
     <AppShell showBack title="Campaign History">
@@ -259,36 +270,87 @@ export default function HistoryDetail() {
                   </div>
                 ) : (
                   <div className="divide-y divide-border">
-                    {battles.map((battle, idx) => (
-                      <div key={battle.id || idx} className="p-4">
-                        <div className="flex items-start justify-between mb-2">
-                          <div>
-                            <p className="font-medium text-sm capitalize">{battle.battle_type.replace('_', ' ')}</p>
-                            <p className="text-xs text-muted-foreground">
-                              Territory: {battle.target_territory_id}
-                            </p>
+                    {battles.map((battle, idx) => {
+                      const attackerIds = [...new Set((battle.attackers ?? []).map(a => a.player_id))];
+                      const totalTroops  = battle.total_troops_in_battle ?? 0;
+                      const tabletopSize = battle.tabletop_size ?? 0;
+                      const bopSurvivors = battle.result?.surviving_tabletop_troops != null && tabletopSize > 0
+                        ? Math.round((battle.result.surviving_tabletop_troops / tabletopSize) * totalTroops)
+                        : null;
+                      return (
+                        <div key={battle.id || idx} className="p-4 space-y-2">
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="font-medium text-sm capitalize">{battle.battle_type?.replace(/_/g, ' ')}</p>
+                                <span className={`text-xs px-1.5 py-0.5 rounded font-mono capitalize ${
+                                  battle.status === 'resolved' || battle.status === 'auto_resolved' ? 'bg-status-locked/20 text-status-locked' :
+                                  battle.status === 'forfeited' ? 'bg-destructive/20 text-destructive' :
+                                  battle.status === 'delayed'   ? 'bg-warning/20 text-warning' :
+                                  'bg-muted text-muted-foreground'
+                                }`}>{battle.status}</span>
+                              </div>
+                              <p className="text-xs text-muted-foreground">
+                                {getTerritoryName(battle.target_territory_id)} · Round {battle.round}
+                              </p>
+                            </div>
+                            <div className="text-right text-xs text-muted-foreground">
+                              <p>{totalTroops} BOP troops</p>
+                              <p className="text-primary font-mono">{tabletopSize} TT pts</p>
+                            </div>
                           </div>
-                          <div className="text-right">
-                            <p className="text-xs font-medium capitalize">{battle.status}</p>
-                            <p className="text-xs text-muted-foreground">Round {battle.round}</p>
+
+                          {/* Attackers & Defender */}
+                          <div className="flex flex-wrap gap-1.5 text-xs">
+                            {attackerIds.map(pid => (
+                              <span key={pid} className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-border bg-muted/10">
+                                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: getPlayerHex(pid) }} />
+
+                                {getPlayerName(pid)}
+                                {(battle.attackers ?? []).filter(a => a.player_id === pid).length > 0 && (
+                                  <span className="text-destructive font-mono">
+                                    ({(battle.attackers ?? []).filter(a => a.player_id === pid).reduce((s, a) => s + (a.committed_troops ?? 0), 0)})
+                                  </span>
+                                )}
+                              </span>
+                            ))}
+                            {battle.defender_player_id && (
+                              <>
+                                <span className="text-muted-foreground self-center">vs</span>
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-border bg-muted/10">
+                                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: getPlayerHex(battle.defender_player_id) }} />
+                                  {getPlayerName(battle.defender_player_id)}
+                                  <span className="text-accent font-mono">({battle.defender_troops ?? 0})</span>
+                                </span>
+                              </>
+                            )}
                           </div>
+
+                          {/* Result */}
+                          {battle.result?.winner_player_id && (
+                            <div className="flex items-center gap-3 text-xs bg-muted/20 rounded px-2 py-1.5">
+                              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: getPlayerHex(battle.result.winner_player_id) }} />
+                              <span className="font-medium text-foreground">{getPlayerName(battle.result.winner_player_id)} wins</span>
+                              {battle.result.surviving_tabletop_troops != null && (
+                                <>
+                                  <span className="text-border">·</span>
+                                  <span className="text-primary font-mono">{battle.result.surviving_tabletop_troops} TT survivors</span>
+                                  {bopSurvivors != null && (
+                                    <span className="text-muted-foreground">({bopSurvivors} BOP)</span>
+                                  )}
+                                </>
+                              )}
+                              {battle.result.result_source && (
+                                <span className="text-muted-foreground ml-auto capitalize">{battle.result.result_source}</span>
+                              )}
+                            </div>
+                          )}
+                          {battle.result?.notes && (
+                            <p className="text-xs text-muted-foreground italic">{battle.result.notes}</p>
+                          )}
                         </div>
-                        
-                        {/* Participants */}
-                        <div className="text-xs text-muted-foreground">
-                          <p>Attackers: {battle.attackers?.length || 0}</p>
-                          <p>Total troops: {battle.total_troops_in_battle || 0}</p>
-                          <p>Tabletop size: {battle.tabletop_size || 0}</p>
-                        </div>
-                        
-                        {battle.result && (
-                          <div className="mt-2 text-xs bg-muted/20 rounded p-2">
-                            <p>Winner: {battle.result.winner_player_id ? getPlayerName(battle.result.winner_player_id) : 'N/A'}</p>
-                            <p>Survivors: {battle.result.surviving_tabletop_troops || 0}</p>
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </ScrollArea>
