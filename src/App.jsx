@@ -41,6 +41,7 @@ import HistoryDetail          from './pages/HistoryDetail';
 import AdminTestMode          from './pages/AdminTestMode';
 import MapExport              from './pages/MapExport';
 import MapValidation          from './pages/MapValidation';
+import MapGeometryAudit       from './pages/MapGeometryAudit';
 
 function App() {
   return (
@@ -87,6 +88,7 @@ function App() {
               <Route path="/campaigns/:id/admin"                    element={<AdminTestMode />} />
               <Route path="/map-export"                             element={<MapExport />} />
               <Route path="/map-validation"                         element={<MapValidation />} />
+              <Route path="/map-geometry-audit"                    element={<MapGeometryAudit />} />
             </Route>
 
             {/* 404 */}
