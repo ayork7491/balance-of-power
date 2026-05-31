@@ -82,10 +82,18 @@ export interface TerritoryDefinition {
   continent_id: string;
   /** SVG polygon points string: "x1,y1 x2,y2 ..." in logical coordinate space */
   points: string;
-  /** Label anchor X — center of the territory */
+  /** Center anchor X — geometric center of the territory */
   cx: number;
-  /** Label anchor Y — center of the territory */
+  /** Center anchor Y — geometric center of the territory */
   cy: number;
+  /** Troop badge anchor X (defaults to cx if not specified) */
+  troop_x?: number;
+  /** Troop badge anchor Y (defaults to cy if not specified) */
+  troop_y?: number;
+  /** Label anchor X (defaults to cx if not specified) */
+  label_x?: number;
+  /** Label anchor Y (defaults to cy if not specified) */
+  label_y?: number;
   terrain: TerrainType;
   resource_distribution: ResourceDistribution;
 }
@@ -121,12 +129,20 @@ export interface MapDefinition {
   adjacency: [string, string][];
   min_players: number;
   max_players: number;
-  /**
-   * Optional URL of a pre-authored SVG terrain/landmass underlay.
-   * Must share the same logical coordinate space (width × height) as this map.
-   * Rendered below territory polygons as a non-interactive background layer.
-   */
+  /** Ocean background SVG URL */
+  ocean_background_url?: string;
+  /** Landmass underlay SVG URL */
   underlay_url?: string;
+  /** Geography detail SVG URL */
+  geography_detail_url?: string;
+  /** Atlas labels SVG URL */
+  atlas_labels_url?: string;
+  /** Atmosphere/vignette effects SVG URL */
+  atmosphere_url?: string;
+  /** Continent label anchors: continent_id → {x, y} in logical coordinate space */
+  continent_label_anchors?: Record<string, { x: number; y: number }>;
+  /** World title label anchor in logical coordinate space */
+  world_title_anchor?: { x: number; y: number };
 }
 
 // ─── Campaign Territory State (dynamic) ──────────────────────────────────────

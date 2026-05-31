@@ -48,7 +48,10 @@ export default function TerritoryPolygon({
   isAttackable,
   isLocked,
 }) {
-  const { points, cx, cy, terrain, territory_id, continent_id } = territory;
+  const { points, cx, cy, troop_x, troop_y, terrain, territory_id, continent_id } = territory;
+  // Use explicit troop anchor if provided by production map package; fall back to center
+  const tx = troop_x ?? cx;
+  const ty = troop_y ?? cy;
   const terrainKey = terrain ?? 'plains';
 
   const baseFill   = TERRAIN_FILL[terrainKey]   ?? DEFAULT_FILL;
@@ -148,19 +151,19 @@ export default function TerritoryPolygon({
         />
       )}
 
-      {/* Troop count badge */}
+      {/* Troop count badge — positioned at troop_anchor from production map package */}
       {troopCount > 0 && (
         <>
-          <circle data-tid={territory_id} cx={cx} cy={cy} r={13}
+          <circle data-tid={territory_id} cx={tx} cy={ty} r={13}
             fill="rgba(0,0,0,0.0)" stroke={ownerColor ?? baseStroke}
             strokeWidth={1.8} strokeOpacity={0.70}
           />
-          <circle data-tid={territory_id} cx={cx} cy={cy} r={11}
+          <circle data-tid={territory_id} cx={tx} cy={ty} r={11}
             fill="rgba(6,10,18,0.85)" stroke="none"
           />
           <text
             data-tid={territory_id}
-            x={cx} y={cy + 4}
+            x={tx} y={ty + 4}
             textAnchor="middle"
             fontSize={9}
             fontFamily="'Orbitron', monospace"

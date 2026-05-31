@@ -191,11 +191,13 @@ export default function MapLayerStack({
       <g id="layer-05-territory-labels" style={DECORATIVE}>
         {scale >= 0.45 && mapDef.territories.map(territory => {
           const fontSize = Math.max(8, Math.min(14, 11 / scale));
+          const lx = territory.label_x ?? territory.cx;
+          const ly = territory.label_y ?? (territory.cy + 18);
           return (
             <text
               key={`label-${territory.territory_id}`}
-              x={territory.cx}
-              y={territory.cy + 18}
+              x={lx}
+              y={ly}
               textAnchor="middle"
               fontSize={fontSize}
               fontFamily="'Rajdhani', sans-serif"
