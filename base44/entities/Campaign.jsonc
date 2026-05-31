@@ -21,10 +21,11 @@
         "active",
         "paused",
         "complete",
-        "archived"
+        "archived",
+        "deleted"
       ],
       "default": "lobby",
-      "description": "Campaign lifecycle status."
+      "description": "Campaign lifecycle status. archived = hidden from Home but data preserved. deleted = permanently hidden from all normal app views."
     },
     "game_profile_id": {
       "type": "string",

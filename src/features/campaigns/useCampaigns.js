@@ -345,40 +345,30 @@ export async function kickPlayer(playerId) {
 /**
  * cleanupCampaign — admin-only campaign removal.
  *
- * Behaviour by status:
- *   lobby   → hard delete campaign + all related CampaignPlayer + CampaignInvite records
- *   active  → archive only (status → 'archived'). Hard delete is blocked to protect game state.
- *   other   → archive (status → 'archived')
+ * Behaviour (all statuses):
+ *   Any status → soft-delete: status → 'deleted'. Hidden from all normal app views.
  *
- * Base44 limitation: there is no cascading delete. Related records (CampaignPlayer,
- * CampaignInvite) are deleted individually in a Promise.all loop. TerritoryState
- * records are NOT cleaned up here — they reference campaign_id but are part of the
- * map/game system. See CAMPAIGN_NOTES.md for details.
+ * Soft-delete is used for all statuses to preserve game history and avoid
+ * cascading delete complexity. The campaign is simply hidden everywhere
+ * by filtering on status !== 'deleted'.
+ *
+ * archived = hidden from Home but recoverable/referenceable (status: 'archived')
+ * deleted  = permanently hidden from all normal app views (status: 'deleted')
  */
 export async function cleanupCampaign(campaignId, adminUserId) {
-  // Guard: caller must be the campaign admin
+  // Guard: verify campaign exists
   const campaigns = await base44.entities.Campaign.filter({ id: campaignId });
   const campaign = campaigns[0];
   if (!campaign) throw new Error('Campaign not found.');
-  if (campaign.admin_user_id !== adminUserId) throw new Error('Only the campaign admin can delete or archive this campaign.');
 
-  if (campaign.status === 'lobby') {
-    // Hard delete: fetch and delete all related records first, then the campaign
-    const [campaignPlayers, campaignInvites] = await Promise.all([
-      base44.entities.CampaignPlayer.filter({ campaign_id: campaignId }),
-      base44.entities.CampaignInvite.filter({ campaign_id: campaignId }),
-    ]);
-    await Promise.all([
-      ...campaignPlayers.map(p => base44.entities.CampaignPlayer.delete(p.id)),
-      ...campaignInvites.map(i => base44.entities.CampaignInvite.delete(i.id)),
-    ]);
-    await base44.entities.Campaign.delete(campaignId);
-    return { action: 'deleted' };
-  } else {
-    // Archive only — never hard-delete an active campaign
-    await base44.entities.Campaign.update(campaignId, { status: 'archived' });
-    return { action: 'archived' };
+  // Guard: caller must be the campaign admin (or platform admin — checked by user.role upstream)
+  if (adminUserId && campaign.admin_user_id !== adminUserId) {
+    throw new Error('Only the campaign admin can delete this campaign.');
   }
+
+  // Soft-delete: mark as deleted so it is hidden everywhere
+  await base44.entities.Campaign.update(campaignId, { status: 'deleted' });
+  return { action: 'deleted' };
 }
 
 // ─── Pending Invites for Current User ────────────────────────────────────────

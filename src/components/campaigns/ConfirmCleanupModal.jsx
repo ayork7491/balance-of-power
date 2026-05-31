@@ -3,14 +3,10 @@
  * Shown to admins only. Describes exactly what will happen based on campaign status.
  */
 import { useState } from 'react';
-import { AlertTriangle, Loader2, Trash2, Archive } from 'lucide-react';
+import { AlertTriangle, Loader2, Trash2 } from 'lucide-react';
 
 export default function ConfirmCleanupModal({ campaign, onConfirm, onCancel }) {
   const [busy, setBusy] = useState(false);
-
-  const isLobby = campaign.status === 'lobby';
-  const action  = isLobby ? 'Delete' : 'Archive';
-  const Icon    = isLobby ? Trash2 : Archive;
 
   const handleConfirm = async () => {
     setBusy(true);
@@ -28,34 +24,22 @@ export default function ConfirmCleanupModal({ campaign, onConfirm, onCancel }) {
         <div className="panel-header flex items-center gap-2">
           <AlertTriangle className="w-4 h-4 text-destructive shrink-0" />
           <h2 className="font-display text-sm tracking-wider uppercase text-destructive">
-            {action} Campaign
+            Delete Campaign Permanently
           </h2>
         </div>
 
         {/* Body */}
         <div className="p-5 space-y-4">
           <p className="text-sm text-foreground">
-            You are about to <strong>{action.toLowerCase()}</strong> the campaign:
+            Delete campaign permanently? <strong>This cannot be undone.</strong>
           </p>
-          <div className="px-3 py-2 rounded border border-border bg-muted text-sm font-display tracking-wide text-foreground">
+          <div className="px-3 py-2 rounded border border-destructive/40 bg-destructive/5 text-sm font-display tracking-wide text-foreground">
             {campaign.name}
           </div>
-
-          {isLobby ? (
-            <div className="space-y-2 text-xs text-muted-foreground">
-              <p>This will <span className="text-destructive font-semibold">permanently delete</span> the campaign and remove it from the dashboard.</p>
-              <p>The following will also be deleted:</p>
-              <ul className="list-disc list-inside space-y-0.5 ml-1">
-                <li>All player slots</li>
-                <li>All pending invites and join requests</li>
-              </ul>
-              <p className="text-destructive/80">This action cannot be undone.</p>
-            </div>
-          ) : (
-            <div className="space-y-2 text-xs text-muted-foreground">
-              <p>Active campaigns cannot be hard-deleted. This will <span className="text-status-pending font-semibold">archive</span> the campaign — it will be hidden from the active dashboard but its data will be preserved.</p>
-            </div>
-          )}
+          <div className="space-y-1 text-xs text-muted-foreground">
+            <p>The campaign will be permanently hidden from all app views and cannot be recovered.</p>
+            <p className="text-destructive/80 font-medium">This action cannot be undone.</p>
+          </div>
         </div>
 
         {/* Actions */}
@@ -72,11 +56,8 @@ export default function ConfirmCleanupModal({ campaign, onConfirm, onCancel }) {
             disabled={busy}
             className="flex items-center gap-2 px-4 py-2 rounded bg-destructive text-destructive-foreground text-xs font-display tracking-wider uppercase hover:brightness-110 transition-all disabled:opacity-50"
           >
-            {busy
-              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              : <Icon className="w-3.5 h-3.5" />
-            }
-            {busy ? 'Working…' : `${action} Campaign`}
+            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+            {busy ? 'Deleting…' : 'Delete Campaign'}
           </button>
         </div>
       </div>

@@ -20,8 +20,9 @@ export function useMyCampaigns() {
       const res = await base44.functions.invoke('getMyCampaigns', {});
       const { campaigns: userCampaigns, players: playerRecords } = res.data;
 
-      // Filter out archived campaigns client-side as well
-      const activeCampaigns = (userCampaigns ?? []).filter(c => c.status !== 'archived');
+      // Filter out archived and deleted campaigns — only show active/lobby/setup/in-progress
+      const HIDDEN_STATUSES = new Set(['archived', 'deleted']);
+      const activeCampaigns = (userCampaigns ?? []).filter(c => !HIDDEN_STATUSES.has(c.status));
       setCampaigns(activeCampaigns);
       setPlayers(playerRecords ?? []);
       setLoading(false);
