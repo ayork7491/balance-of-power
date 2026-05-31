@@ -102,9 +102,9 @@ export default function BattleCardDetail() {
   const attackerIds = [...new Set((card?.attackers ?? []).map(a => a.player_id))];
   const participantIds = [...new Set([...attackerIds, ...(card?.defender_player_id ? [card.defender_player_id] : [])])];
   
-  const canSubmit   = myPlayer && card &&
-    participantIds.includes(myPlayer.id) &&
-    ['pending', 'awaiting_result', 'delayed'].includes(card.status);
+  // FIX Bug 4: only the campaign admin can submit results — non-admins cannot reach the submit form
+  const canSubmit   = isAdmin && card &&
+    ['pending', 'awaiting_result', 'delayed', 'result_submitted', 'awaiting_approval'].includes(card.status);
 
   const canApprove  = myPlayer && card &&
     participantIds.includes(myPlayer.id) &&
@@ -139,6 +139,51 @@ export default function BattleCardDetail() {
       setError(res.data.error);
     } else {
       // Reload card
+      const cardsRes = await base44.functions.invoke('battlePhase', {
+        action: 'getBattleCards',
+        campaign_id: campaignId,
+        round: campaign?.current_round ?? 1,
+      });
+      setCard(cardsRes.data?.battle_cards?.find(c => c.id === battleId) ?? null);
+    }
+  };
+
+  // FIX Bug 5: admin delay/resume uses setDelayed, not voteDelay
+  const handleAdminDelay = async (delayed) => {
+    setActionLoading(true);
+    setError(null);
+    const res = await base44.functions.invoke('battlePhase', {
+      action: 'setDelayed',
+      campaign_id: campaignId,
+      battle_card_id: battleId,
+      delayed,
+    });
+    setActionLoading(false);
+    if (res.data?.error) {
+      setError(res.data.error);
+    } else {
+      const cardsRes = await base44.functions.invoke('battlePhase', {
+        action: 'getBattleCards',
+        campaign_id: campaignId,
+        round: campaign?.current_round ?? 1,
+      });
+      setCard(cardsRes.data?.battle_cards?.find(c => c.id === battleId) ?? null);
+    }
+  };
+
+  const handleAdminOverride = async (forceResolve) => {
+    setActionLoading(true);
+    setError(null);
+    const res = await base44.functions.invoke('battlePhase', {
+      action: 'adminOverride',
+      campaign_id: campaignId,
+      battle_card_id: battleId,
+      force_resolve: forceResolve,
+    });
+    setActionLoading(false);
+    if (res.data?.error) {
+      setError(res.data.error);
+    } else {
       const cardsRes = await base44.functions.invoke('battlePhase', {
         action: 'getBattleCards',
         campaign_id: campaignId,
@@ -383,7 +428,7 @@ export default function BattleCardDetail() {
                 <Settings className="w-3 h-3" />
                 Admin Controls
               </p>
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap">
                 <Link
                   to={`/campaigns/${campaignId}/battles/${battleId}/admin`}
                   className="flex-1 text-center px-3 py-2.5 rounded border border-border bg-muted/20 text-xs font-display tracking-widest uppercase hover:bg-muted/30 transition-all"
@@ -391,13 +436,32 @@ export default function BattleCardDetail() {
                   Manage Battle
                 </Link>
                 <button
-                  onClick={() => handleVoteDelay(card.status === 'delayed' ? 'no' : 'yes')}
+                  onClick={() => handleAdminDelay(card.status !== 'delayed')}
                   disabled={actionLoading}
                   className="flex-1 px-3 py-2.5 rounded border border-warning text-warning text-xs font-display tracking-widest uppercase hover:bg-warning/10 transition-all disabled:opacity-40"
                 >
                   {card.status === 'delayed' ? 'Resume' : 'Delay'}
                 </button>
               </div>
+              {/* Override stuck battle (flagged/disputed) */}
+              {['awaiting_approval', 'result_submitted'].includes(card.status) && card.result?.winner_player_id && (
+                <div className="flex gap-2 pt-1">
+                  <button
+                    onClick={() => handleAdminOverride(false)}
+                    disabled={actionLoading}
+                    className="flex-1 px-3 py-2 rounded border border-border text-xs text-muted-foreground font-display tracking-wider uppercase hover:text-foreground transition-all disabled:opacity-40"
+                  >
+                    Clear Flags &amp; Re-Review
+                  </button>
+                  <button
+                    onClick={() => handleAdminOverride(true)}
+                    disabled={actionLoading}
+                    className="flex-1 px-3 py-2 rounded border border-destructive text-destructive text-xs font-display tracking-widest uppercase hover:bg-destructive/10 transition-all disabled:opacity-40"
+                  >
+                    Force Resolve
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
