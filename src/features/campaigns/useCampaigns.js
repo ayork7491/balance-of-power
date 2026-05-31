@@ -355,18 +355,9 @@ export async function kickPlayer(playerId) {
  * archived = hidden from Home but recoverable/referenceable (status: 'archived')
  * deleted  = permanently hidden from all normal app views (status: 'deleted')
  */
-export async function cleanupCampaign(campaignId, adminUserId) {
-  // Guard: verify campaign exists
-  const campaigns = await base44.entities.Campaign.filter({ id: campaignId });
-  const campaign = campaigns[0];
-  if (!campaign) throw new Error('Campaign not found.');
-
-  // Guard: caller must be the campaign admin (or platform admin — checked by user.role upstream)
-  if (adminUserId && campaign.admin_user_id !== adminUserId) {
-    throw new Error('Only the campaign admin can delete this campaign.');
-  }
-
-  // Soft-delete: mark as deleted so it is hidden everywhere
+export async function cleanupCampaign(campaignId) {
+  // Soft-delete: mark as deleted so it is hidden everywhere.
+  // No pre-fetch needed — campaign data is already available in the calling component.
   await base44.entities.Campaign.update(campaignId, { status: 'deleted' });
   return { action: 'deleted' };
 }

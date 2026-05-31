@@ -34,8 +34,7 @@ export default function CampaignCard({ campaign, myPlayer, onRemoved }) {
 
   // Modal confirmed — now actually delete
   const handleConfirmCleanup = async () => {
-    const user = await import('@/api/base44Client').then(m => m.base44.auth.me());
-    await cleanupCampaign(campaign.id, user?.id);
+    await cleanupCampaign(campaign.id);
     setShowModal(false);
     onRemoved?.();
   };
