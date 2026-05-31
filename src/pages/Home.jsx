@@ -2,7 +2,8 @@
  * Home Dashboard — user's command center.
  * Shows: active campaigns, pending invites, action indicators.
  */
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
+import { useEffect } from 'react';
 import { Plus, LogIn, Shield, Bell, Swords, Loader2, Settings } from 'lucide-react';
 import AppShell from '@/components/layout/AppShell';
 import EmptyState from '@/components/ui/EmptyState';
@@ -11,10 +12,16 @@ import { useUserProfile } from '@/features/auth/useUserProfile';
 import { useMyCampaigns, useMyInvites } from '@/features/campaigns';
 
 export default function Home() {
+  const location = useLocation();
   const { user } = useUserProfile();
   const name = user?.display_name || user?.full_name || 'Commander';
-  const { campaigns, players, loading: loadingCampaigns, removeCampaign } = useMyCampaigns();
+  const { campaigns, players, loading: loadingCampaigns, removeCampaign, reload } = useMyCampaigns();
   const { invites, loading: loadingInvites } = useMyInvites();
+
+  // Reload campaigns every time the user navigates back to Home
+  useEffect(() => {
+    reload();
+  }, [location.key]);
 
   // Build a quick lookup: campaign_id → my CampaignPlayer record
   const myPlayerByCampaign = Object.fromEntries(players.map(p => [p.campaign_id, p]));
