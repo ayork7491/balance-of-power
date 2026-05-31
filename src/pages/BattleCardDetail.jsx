@@ -99,23 +99,22 @@ export default function BattleCardDetail() {
   const targetName = mapDef?.territories.find(t => t.territory_id === card?.target_territory_id)?.name
     ?? card?.target_territory_id ?? '—';
 
+  const isAdmin = myPlayer?.is_admin;
+
   const attackerIds = [...new Set((card?.attackers ?? []).map(a => a.player_id))];
   const participantIds = [...new Set([...attackerIds, ...(card?.defender_player_id ? [card.defender_player_id] : [])])];
-  
-  // FIX Bug 4: only the campaign admin can submit results — non-admins cannot reach the submit form
-  const canSubmit   = isAdmin && card &&
+
+  const canSubmit  = isAdmin && card &&
     ['pending', 'awaiting_result', 'delayed', 'result_submitted', 'awaiting_approval'].includes(card.status);
 
-  const canApprove  = myPlayer && card &&
+  const canApprove = myPlayer && card &&
     participantIds.includes(myPlayer.id) &&
     card.status === 'result_submitted' &&
     card.result?.submitted_by !== myPlayer.id;
 
-  const canVote     = myPlayer && card &&
+  const canVote    = myPlayer && card &&
     participantIds.includes(myPlayer.id) &&
     ['pending', 'awaiting_result'].includes(card.status);
-
-  const isAdmin = myPlayer?.is_admin;
 
   // Get my existing vote
   useEffect(() => {
