@@ -308,11 +308,6 @@ function ActiveCampaignContent() {
             attackableIds={attackableIds}
             lockedIds={lockedIds}
             onSelect={setSelectedTerritoryId}
-            oceanBackgroundUrl={mapDef.ocean_background_url ?? null}
-            underlayUrl={mapDef.underlay_url ?? null}
-            geographyDetailUrl={mapDef.geography_detail_url ?? null}
-            atlasLabelsUrl={mapDef.atlas_labels_url ?? null}
-            atmosphereUrl={mapDef.atmosphere_url ?? null}
             currentPhase={phase}
             actingPlayer={actionPlayer}
             onAttackOriginSelect={handleAttackOriginSelect}

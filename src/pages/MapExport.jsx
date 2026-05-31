@@ -15,7 +15,7 @@ export default function MapExport() {
     height: MAP_SHATTERED_CROWN.height,
     min_players: MAP_SHATTERED_CROWN.min_players,
     max_players: MAP_SHATTERED_CROWN.max_players,
-    underlay_url: MAP_SHATTERED_CROWN.underlay_url,
+    background_image_url: MAP_SHATTERED_CROWN.background_image_url,
     continents: MAP_SHATTERED_CROWN.continents,
     regions: MAP_SHATTERED_CROWN.regions,
     territories: MAP_SHATTERED_CROWN.territories,

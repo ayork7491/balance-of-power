@@ -312,17 +312,13 @@ export const MAP_SHATTERED_CROWN: MapDefinition = {
   id: 'shattered_crown_v1',
   name: 'The Shattered Crown',
   description: '44-territory campaign map across 5 continents. Recommended 5–7 players. Production package v0.381-final.',
-  width:  1000,
-  height: 1400,
+  width:  10240,
+  height: 10240,
   min_players: 5,
   max_players: 7,
 
-  // ── Art layers (existing artwork, unchanged) ────────────────────────────────
-  ocean_background_url:  'https://media.base44.com/images/public/6a1504188a2a3ce4c5d33e1b/2a2d79aa8_00_ocean_background_v10.svg',
-  underlay_url:          'https://media.base44.com/images/public/6a1504188a2a3ce4c5d33e1b/1d9e65aeb_01_world_landmasses_v21_clean.svg',
-  geography_detail_url:  'https://media.base44.com/images/public/6a1504188a2a3ce4c5d33e1b/6cdf1c4e3_02_geography_detail_v20_landforms.svg',
-  atlas_labels_url:      'https://media.base44.com/images/public/6a1504188a2a3ce4c5d33e1b/6c6f260af_03_atlas_labels_v10.svg',
-  atmosphere_url:        'https://media.base44.com/images/public/6a1504188a2a3ce4c5d33e1b/8fbae6fd1_09_atmosphere_v10.svg',
+  // ── Background art (single 10240×10240 PNG) ────────────────────────────────
+  background_image_url: 'https://media.base44.com/images/public/6a1504188a2a3ce4c5d33e1b/7af44e9bf_SHATTERED_CROWN_MAP_PNG.png',
 
   // ── Continents ─────────────────────────────────────────────────────────────
   continents: [

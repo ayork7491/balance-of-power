@@ -61,16 +61,6 @@ export default function MapRenderer({
   attackableIds = new Set(),
   onSelect,
   arrowLayer = null,
-  // 00_ocean_background — Ocean Background v1.0 SVG URL
-  oceanBackgroundUrl = null,
-  // 01_world_landmasses — World Landmasses v2.1 clean SVG URL
-  underlayUrl = null,
-  // 02_geography_detail — Geography Detail v2.0 SVG URL
-  geographyDetailUrl = null,
-  // 03_atlas_labels — Atlas Labels v1.0 SVG URL
-  atlasLabelsUrl = null,
-  // 03_atmosphere_effects — Atmosphere Effects v1.0 SVG URL (sublayer)
-  atmosphereUrl = null,
   // Phase interaction props
   currentPhase = null,
   actingPlayer = null,
@@ -403,11 +393,6 @@ export default function MapRenderer({
             mapDef={mapDef}
             width={mapDef.width}
             height={mapDef.height}
-            oceanBackgroundUrl={oceanBackgroundUrl}
-            underlayUrl={underlayUrl}
-            geographyDetailUrl={geographyDetailUrl}
-            atlasLabelsUrl={atlasLabelsUrl}
-            atmosphereUrl={atmosphereUrl}
             stateById={stateById}
             players={players}
             selectedId={selectedId}

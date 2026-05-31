@@ -129,16 +129,8 @@ export interface MapDefinition {
   adjacency: [string, string][];
   min_players: number;
   max_players: number;
-  /** Ocean background SVG URL */
-  ocean_background_url?: string;
-  /** Landmass underlay SVG URL */
-  underlay_url?: string;
-  /** Geography detail SVG URL */
-  geography_detail_url?: string;
-  /** Atlas labels SVG URL */
-  atlas_labels_url?: string;
-  /** Atmosphere/vignette effects SVG URL */
-  atmosphere_url?: string;
+  /** Single background image URL (PNG/SVG). Rendered at full width×height. */
+  background_image_url?: string;
   /** Continent label anchors: continent_id → {x, y} in logical coordinate space */
   continent_label_anchors?: Record<string, { x: number; y: number }>;
   /** World title label anchor in logical coordinate space */
