@@ -34,7 +34,11 @@ export function useMyCampaigns() {
       const all = await Promise.all(
         campaignIds.map(id => base44.entities.Campaign.filter({ id }).then(r => r[0]).catch(() => null))
       );
-      setCampaigns(all.filter(Boolean).sort((a, b) => new Date(b.updated_date) - new Date(a.updated_date)));
+      const HIDDEN = new Set(['archived', 'deleted']);
+      setCampaigns(
+        all.filter(c => c && !HIDDEN.has(c.status))
+           .sort((a, b) => new Date(b.updated_date) - new Date(a.updated_date))
+      );
     } catch {
       setError('Failed to load campaigns.');
     } finally {
