@@ -201,17 +201,21 @@ function buildTerritoryUpdates(card, result, territoryStates) {
 
   if (card.is_mutual) {
     // ── Bloodbath ──────────────────────────────────────────────────────────────
+    // FIX #1: survivors RETURN to origin — add to existing garrison, not overwrite.
     const winnerEntry  = (card.attackers ?? []).find(a => a.player_id === winner_player_id);
     const loserEntries = (card.attackers ?? []).filter(a => a.player_id !== winner_player_id);
 
     if (winnerEntry) {
       const winnerOriginState = territoryStates.find(s => s.territory_id === winnerEntry.origin_territory_id);
       if (winnerOriginState) {
+        const before = winnerOriginState.troop_count ?? 0;
+        const after  = before + survivingTroops;
+        console.log(`[bloodbath winner return] territory=${winnerEntry.origin_territory_id} before=${before} survivors=${survivingTroops} after=${after}`);
         updates.push({
           id: winnerOriginState.id,
           territory_id: winnerEntry.origin_territory_id,
           owner_player_id: winner_player_id,
-          troop_count: survivingTroops,
+          troop_count: after,
         });
       }
     }
@@ -223,7 +227,8 @@ function buildTerritoryUpdates(card, result, territoryStates) {
           loserOriginState.owner_player_id === loserEntry.player_id;
 
         if (!loserHasGarrison) {
-          // Loser committed all troops — winner captures the empty territory
+          // Loser committed all troops — winner captures the empty territory (0 troops there)
+          console.log(`[bloodbath loser capture] territory=${loserEntry.origin_territory_id} now owned by winner=${winner_player_id}`);
           updates.push({
             id: loserOriginState.id,
             territory_id: loserEntry.origin_territory_id,
@@ -235,11 +240,14 @@ function buildTerritoryUpdates(card, result, territoryStates) {
       }
     }
 
-  } else if (card.battle_type === 'capture_objectives') {
-    // ── Capture Objectives ────────────────────────────────────────────────────
-    // Winner gains target territory with survivors.
+  } else if (card.battle_type === 'skirmish') {
+    // ── Skirmish ──────────────────────────────────────────────────────────────
+    // FIX #2: dedicated skirmish branch.
+    // Attacker troops were already removed from origin in attackPhase.
+    // Winner gains target territory with survivors. Loser loses committed troops.
     const targetState = territoryStates.find(s => s.territory_id === card.target_territory_id);
     if (targetState) {
+      console.log(`[skirmish resolution] winner=${winner_player_id} target=${card.target_territory_id} survivors=${survivingTroops}`);
       updates.push({
         id:              targetState.id,
         territory_id:    card.target_territory_id,
@@ -247,22 +255,40 @@ function buildTerritoryUpdates(card, result, territoryStates) {
         troop_count:     survivingTroops,
       });
     }
+    // Loser committed troops already removed in attackPhase — no further action needed.
 
-    // Losers: committed troops return to their origin territories.
-    // Losers are all attackers except the winner.
+  } else if (card.battle_type === 'capture_objectives') {
+    // ── Capture Objectives ────────────────────────────────────────────────────
+    // FIX #3: winner gains target territory with survivors; losers return committed troops.
+    // Validate survivors don't exceed winner's committed troops.
+    const winnerCommitted = getWinnerCommittedTroops(card, winner_player_id);
+    const clampedSurvivors = Math.min(survivingTroops, winnerCommitted);
+
+    const targetState = territoryStates.find(s => s.territory_id === card.target_territory_id);
+    if (targetState) {
+      console.log(`[capture_objectives] winner=${winner_player_id} captures territory=${card.target_territory_id} with survivors=${clampedSurvivors} (raw=${survivingTroops} clamped to committed=${winnerCommitted})`);
+      updates.push({
+        id:              targetState.id,
+        territory_id:    card.target_territory_id,
+        owner_player_id: winner_player_id,
+        troop_count:     clampedSurvivors,
+      });
+    }
+
+    // Losers: committed troops return to their origin territories (added to existing garrison).
     for (const atk of (card.attackers ?? [])) {
       if (atk.player_id === winner_player_id) continue;
-      // Return loser's committed troops to their origin territory
       const loserOriginState = territoryStates.find(s => s.territory_id === atk.origin_territory_id);
       if (loserOriginState) {
-        // Scale loser survivors: full committed troops (they lost the battle but weren't eliminated)
-        // Loser survivors = their committed troops (no reduction — they just lose the capture contest)
-        const loserSurvivors = atk.committed_troops ?? 0;
+        const loserCommitted = atk.committed_troops ?? 0;
+        const before = loserOriginState.troop_count ?? 0;
+        const after  = before + loserCommitted;
+        console.log(`[capture_objectives loser return] player=${atk.player_id} territory=${atk.origin_territory_id} before=${before} returning=${loserCommitted} after=${after}`);
         updates.push({
           id:              loserOriginState.id,
           territory_id:    atk.origin_territory_id,
           owner_player_id: atk.player_id,
-          troop_count:     (loserOriginState.troop_count ?? 0) + loserSurvivors,
+          troop_count:     after,
         });
       }
     }
@@ -367,16 +393,17 @@ Deno.serve(async (req) => {
     const queryRound = body.round ?? round;
     const currentCards = await base44.asServiceRole.entities.BattleCard.filter({ campaign_id, round: queryRound });
 
-    // Also fetch delayed cards from prior rounds that haven't been resolved yet
+    // FIX #4: fetch delayed cards from prior rounds.
+    // Bug was: breaking when delayed.length===0 even if priorCards had non-delayed cards,
+    // skipping older rounds that might have delayed cards.
+    // Fix: only break if the round had NO cards at all (truly empty round).
     let delayedFromPriorRounds = [];
     if (queryRound > 1) {
-      // Fetch all cards for this campaign (we'll filter client-side for delayed status)
-      // Use a simple approach: check recent prior rounds (up to 10 rounds back)
       for (let r = queryRound - 1; r >= Math.max(1, queryRound - 10); r--) {
         const priorCards = await base44.asServiceRole.entities.BattleCard.filter({ campaign_id, round: r });
         const delayed = priorCards.filter(c => c.status === 'delayed' && !c.result_applied);
         delayedFromPriorRounds = [...delayedFromPriorRounds, ...delayed];
-        if (delayed.length === 0 && priorCards.length === 0) break; // no cards in this round, stop searching
+        if (priorCards.length === 0) break; // no cards at all in this round — stop searching
       }
     }
 
@@ -781,13 +808,13 @@ Deno.serve(async (req) => {
     // Fetch current-round cards + any active delayed cards from prior rounds
     const currentRoundCards = await base44.asServiceRole.entities.BattleCard.filter({ campaign_id, round });
 
-    // Fetch delayed cards from prior rounds
+    // Fetch delayed cards from prior rounds (same fix: only break on truly empty round)
     let priorDelayedCards = [];
     for (let r = round - 1; r >= Math.max(1, round - 10); r--) {
       const priorCards = await base44.asServiceRole.entities.BattleCard.filter({ campaign_id, round: r });
       const delayed = priorCards.filter(c => c.status === 'delayed' && !c.result_applied);
       priorDelayedCards = [...priorDelayedCards, ...delayed];
-      if (priorCards.length === 0) break;
+      if (priorCards.length === 0) break; // truly empty round — stop
     }
 
     const allCards = [...currentRoundCards, ...priorDelayedCards];

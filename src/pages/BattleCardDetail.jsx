@@ -421,7 +421,7 @@ export default function BattleCardDetail() {
                   className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded bg-status-locked text-white text-xs font-display tracking-widest uppercase hover:brightness-110 transition-all disabled:opacity-40"
                 >
                   {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                  Approve
+                  Approve{effectivePlayer && actingAsId ? ` as ${effectivePlayer.display_name}` : ''}
                 </button>
                 <button
                   onClick={() => handleApprove(false, true)}
@@ -429,7 +429,7 @@ export default function BattleCardDetail() {
                   className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded border border-warning text-warning text-xs font-display tracking-widest uppercase hover:bg-warning/10 transition-all disabled:opacity-40"
                 >
                   <Flag className="w-4 h-4" />
-                  Flag
+                  Reject{effectivePlayer && actingAsId ? ` as ${effectivePlayer.display_name}` : ''}
                 </button>
               </>
             )}
@@ -449,7 +449,7 @@ export default function BattleCardDetail() {
                     myVote === 'yes' ? 'bg-warning/20 text-warning border border-warning' : 'bg-muted/20 text-muted-foreground border border-border hover:bg-warning/10'
                   } disabled:opacity-40`}
                 >
-                  Yes ({card.delay_votes ? Object.values(card.delay_votes).filter(v => v === 'yes').length : 0})
+                  Delay{actingAsId && effectivePlayer ? ` as ${effectivePlayer.display_name}` : ''} ({card.delay_votes ? Object.values(card.delay_votes).filter(v => v === 'yes').length : 0})
                 </button>
                 <button
                   onClick={() => handleVoteDelay('no')}
@@ -458,7 +458,7 @@ export default function BattleCardDetail() {
                     myVote === 'no' ? 'bg-status-locked/20 text-status-locked border border-status-locked' : 'bg-muted/20 text-muted-foreground border border-border hover:bg-status-locked/10'
                   } disabled:opacity-40`}
                 >
-                  No ({card.delay_votes ? Object.values(card.delay_votes).filter(v => v === 'no').length : 0})
+                  No Delay{actingAsId && effectivePlayer ? ` as ${effectivePlayer.display_name}` : ''} ({card.delay_votes ? Object.values(card.delay_votes).filter(v => v === 'no').length : 0})
                 </button>
               </div>
               <p className="text-xs text-muted-foreground">
