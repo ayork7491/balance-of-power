@@ -46,6 +46,7 @@ export default function TerritoryPolygon({
   isSelected,
   isHighlighted,
   isAttackable,
+  isLocked,
 }) {
   const { points, cx, cy, terrain, territory_id, continent_id } = territory;
   const terrainKey = terrain ?? 'plains';
@@ -78,12 +79,18 @@ export default function TerritoryPolygon({
     strokeWidth   = 2.2;
     strokeOpacity = 1.0;
   }
+  if (isLocked) {
+    strokeColor   = '#f97316'; // orange
+    strokeWidth   = 2.4;
+    strokeOpacity = 1.0;
+  }
 
   // Glow filter
   let filterAttr;
   if (isSelected)    filterAttr = 'url(#glow-selected)';
   if (isHighlighted) filterAttr = 'url(#glow-highlight)';
   if (isAttackable)  filterAttr = 'url(#glow-attack)';
+  if (isLocked)      filterAttr = 'url(#glow-attack)'; // reuse red glow, orange stroke distinguishes it
 
   const ownedEdgeStroke = ownerColor && !isSelected && !isHighlighted && !isAttackable
     ? ownerColor : null;
@@ -125,6 +132,18 @@ export default function TerritoryPolygon({
           fill="none"
           stroke="rgba(255,255,255,0.06)"
           strokeWidth={3}
+          style={{ pointerEvents: 'none' }}
+        />
+      )}
+
+      {/* Locked territory overlay — orange diagonal hatch */}
+      {isLocked && (
+        <polygon
+          data-tid={territory_id}
+          points={points}
+          fill="url(#locked-hatch)"
+          fillOpacity={0.35}
+          stroke="none"
           style={{ pointerEvents: 'none' }}
         />
       )}

@@ -234,6 +234,11 @@ function ActiveCampaignContent() {
     return new Set(mapDef.territories.map(t => t.territory_id).filter(tid => !claimed.has(tid)));
   }, [phase, campaign, effectivePlayer, mapDef, stateById]);
 
+  // Locked territories from delayed battles (stored on campaign)
+  const lockedIds = useMemo(() => {
+    return new Set(campaign?.locked_territory_ids ?? []);
+  }, [campaign?.locked_territory_ids]);
+
   // Use attackOriginId (set by map interaction, survives TerritoryDetailPanel close)
   // so that red highlights persist even after the detail popup is dismissed.
   const attackableIds = useMemo(() => {
@@ -301,6 +306,7 @@ function ActiveCampaignContent() {
             selectedId={selectedTerritoryId}
             highlightIds={highlightIds}
             attackableIds={attackableIds}
+            lockedIds={lockedIds}
             onSelect={setSelectedTerritoryId}
             oceanBackgroundUrl={mapDef.ocean_background_url ?? null}
             underlayUrl={mapDef.underlay_url ?? null}

@@ -105,6 +105,14 @@
       "type": "string",
       "description": "ISO timestamp when round deploy reveal was applied. Idempotency guard \u2014 if set, processPhaseEnd is a no-op for this round."
     },
+    "locked_territory_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Territory IDs locked due to unresolved delayed battles. Territories in this list cannot be deployed to, attacked from/to, fortified, or built on until the delayed battle is resolved."
+    },
     "settings": {
       "type": "object",
       "description": "Per-campaign gameplay setting overrides.",

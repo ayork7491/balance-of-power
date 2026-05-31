@@ -79,6 +79,7 @@ export default function MapLayerStack({
   selectedId,
   highlightIds,
   attackableIds,
+  lockedIds = new Set(),
   hoveredId,
   attackOriginId,
   fortifyOriginId,
@@ -175,6 +176,7 @@ export default function MapLayerStack({
               isSelected={selectedId === tid}
               isHighlighted={highlightIds.has(tid)}
               isAttackable={attackableIds.has(tid)}
+              isLocked={lockedIds.has(tid)}
             />
           );
         })}

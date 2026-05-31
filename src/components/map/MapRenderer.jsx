@@ -81,6 +81,8 @@ export default function MapRenderer({
   onBuildTerritorySelect = null,
   onDraftTerritorySelect = null,
   onDeployTerritorySelect = null,
+  // Locked territory IDs (delayed battle)
+  lockedIds = new Set(),
   // Debug
   debugMode = false,
   // Validation-only: suppress adjacency lines and route hints
@@ -391,6 +393,10 @@ export default function MapRenderer({
             <filter id="glow-owner" x="-30%" y="-30%" width="160%" height="160%">
               <feGaussianBlur stdDeviation="6" result="blur" />
             </filter>
+            {/* Locked territory hatch pattern */}
+            <pattern id="locked-hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+              <line x1="0" y1="0" x2="0" y2="8" stroke="#f97316" strokeWidth="2.5" strokeOpacity="0.8" />
+            </pattern>
           </defs>
 
           <MapLayerStack
@@ -407,6 +413,7 @@ export default function MapRenderer({
             selectedId={selectedId}
             highlightIds={highlightIds}
             attackableIds={attackableIds}
+            lockedIds={lockedIds}
             hoveredId={hoveredId}
             attackOriginId={attackOriginId}
             fortifyOriginId={fortifyOriginId}
