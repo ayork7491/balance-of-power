@@ -36,18 +36,21 @@ export function useMyCampaigns() {
   useEffect(() => {
     loadData();
 
+    const HIDDEN_STATUSES = new Set(['archived', 'deleted']);
+
     // Subscribe to campaign changes - filter client-side to user's campaigns
     const unsubCampaigns = base44.entities.Campaign.subscribe((event) => {
       setCampaigns(prev => {
         const isUserCampaign = prev.some(c => c.id === event.id);
-        if (!isUserCampaign && event.type !== 'delete') {
-          return prev; // Ignore campaigns user doesn't belong to
-        }
+        if (!isUserCampaign) return prev;
         if (event.type === 'delete') {
           return prev.filter(c => c.id !== event.id);
         }
-        const exists = prev.find(c => c.id === event.id);
-        if (exists) {
+        if (event.type === 'update') {
+          // Remove from list if it's been archived or deleted
+          if (HIDDEN_STATUSES.has(event.data?.status)) {
+            return prev.filter(c => c.id !== event.id);
+          }
           return prev.map(c => c.id === event.id ? event.data : c);
         }
         return prev;
@@ -79,11 +82,16 @@ export function useMyCampaigns() {
     };
   }, [loadData]);
 
+  const removeCampaign = useCallback((campaignId) => {
+    setCampaigns(prev => prev.filter(c => c.id !== campaignId));
+  }, []);
+
   return {
     campaigns,
     players,
     loading,
     error,
     reload: loadData,
+    removeCampaign,
   };
 }

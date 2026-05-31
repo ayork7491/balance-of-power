@@ -13,7 +13,7 @@ import { useMyCampaigns, useMyInvites } from '@/features/campaigns';
 export default function Home() {
   const { user } = useUserProfile();
   const name = user?.display_name || user?.full_name || 'Commander';
-  const { campaigns, players, loading: loadingCampaigns, reload: load } = useMyCampaigns();
+  const { campaigns, players, loading: loadingCampaigns, removeCampaign } = useMyCampaigns();
   const { invites, loading: loadingInvites } = useMyInvites();
 
   // Build a quick lookup: campaign_id → my CampaignPlayer record
@@ -121,7 +121,7 @@ export default function Home() {
                   key={campaign.id}
                   campaign={campaign}
                   myPlayer={myPlayerByCampaign[campaign.id]}
-                  onRemoved={load}
+                  onRemoved={() => removeCampaign(campaign.id)}
                 />
               ))}
             </div>
