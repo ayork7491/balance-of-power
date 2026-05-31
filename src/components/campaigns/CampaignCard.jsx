@@ -27,8 +27,15 @@ export default function CampaignCard({ campaign, myPlayer, onRemoved }) {
     ? `/campaigns/${campaign.id}/lobby`
     : `/campaigns/${campaign.id}`;
 
-  const handleCleanup = async (campaignId, userId) => {
-    await cleanupCampaign(campaignId, userId);
+  // AdminMenu calls this to open the confirmation modal — does NOT delete immediately
+  const handleRequestCleanup = () => {
+    setShowModal(true);
+  };
+
+  // Modal confirmed — now actually delete
+  const handleConfirmCleanup = async () => {
+    const user = await import('@/api/base44Client').then(m => m.base44.auth.me());
+    await cleanupCampaign(campaign.id, user?.id);
     setShowModal(false);
     onRemoved?.();
   };
@@ -88,7 +95,7 @@ export default function CampaignCard({ campaign, myPlayer, onRemoved }) {
 
             <AdminMenu
               campaign={campaign}
-              onCleanup={handleCleanup}
+              onCleanup={handleRequestCleanup}
               isOpen={menuOpen}
               onOpenChange={setMenuOpen}
             />
@@ -99,7 +106,7 @@ export default function CampaignCard({ campaign, myPlayer, onRemoved }) {
       {showModal && (
         <ConfirmCleanupModal
           campaign={campaign}
-          onConfirm={() => handleCleanup(campaign.id, null)}
+          onConfirm={handleConfirmCleanup}
           onCancel={() => setShowModal(false)}
         />
       )}

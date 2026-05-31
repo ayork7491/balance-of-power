@@ -2,9 +2,7 @@
  * AdminMenu — Reusable admin overflow menu for campaign actions.
  * Extracted from CampaignCard for reusability.
  */
-import { useState, useEffect } from 'react';
 import { Trash2 } from 'lucide-react';
-import { base44 } from '@/api/base44Client';
 
 export default function AdminMenu({
   campaign,
@@ -12,18 +10,9 @@ export default function AdminMenu({
   isOpen,
   onOpenChange,
 }) {
-  const [userId, setUserId] = useState(null);
-
-  useEffect(() => {
-    if (isOpen && !userId) {
-      base44.auth.me().then(u => setUserId(u?.id));
-    }
-  }, [isOpen, userId]);
-
-  const handleCleanup = async () => {
-    const u = userId || (await base44.auth.me().then(u => u?.id));
-    onCleanup?.(campaign.id, u);
+  const handleCleanup = () => {
     onOpenChange?.(false);
+    onCleanup?.();
   };
 
   if (!isOpen) return null;
