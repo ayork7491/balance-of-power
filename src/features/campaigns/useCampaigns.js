@@ -44,7 +44,11 @@ export function useMyCampaigns() {
 
   useEffect(() => { load(); }, [load]);
 
-  return { campaigns, players, loading, error, reload: load };
+  const removeCampaign = useCallback((campaignId) => {
+    setCampaigns(prev => prev.filter(c => c.id !== campaignId));
+  }, []);
+
+  return { campaigns, players, loading, error, reload: load, removeCampaign };
 }
 
 // ─── Single Campaign Hook ─────────────────────────────────────────────────────
