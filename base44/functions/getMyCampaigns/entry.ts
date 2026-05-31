@@ -25,7 +25,7 @@ Deno.serve(async (req) => {
 
     // Fetch only campaigns user belongs to (batch fetch)
     const allCampaigns = await base44.entities.Campaign.list();
-    const userCampaigns = allCampaigns.filter(c => campaignIds.includes(c.id) && c.status !== 'archived');
+    const userCampaigns = allCampaigns.filter(c => campaignIds.includes(c.id) && c.status !== 'archived' && c.status !== 'deleted');
 
     return Response.json({
       campaigns: userCampaigns,
