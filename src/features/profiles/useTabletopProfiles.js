@@ -33,12 +33,13 @@ export function useTabletopProfiles() {
       const user = await base44.auth.me();
       // Always filter by owner_user_id — never load other users' profiles
       const data = await base44.entities.TabletopGameProfile.filter(
-        { owner_user_id: user.id },
-        '-created_date'
+        { owner_user_id: user.id }
       );
+      // Sort client-side by created_date descending
+      data.sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
       setProfiles(data);
-    } catch {
-      setError('Failed to load profiles. Please refresh and try again.');
+    } catch (err) {
+      setError(`Failed to load profiles: ${err?.message ?? 'Unknown error'}. Please refresh and try again.`);
     } finally {
       setLoading(false);
     }
