@@ -697,11 +697,9 @@ Deno.serve(async (req) => {
           });
         } else {
           // Territory has never been owned — no TerritoryState record exists yet. Create one.
-          const mapId = campaign.map_id ?? 'map_v1_standard';
-          const mapDefs = await base44.asServiceRole.entities.MapDefinition.filter({ id: mapId });
           await base44.asServiceRole.entities.TerritoryState.create({
             campaign_id,
-            map_id:          mapId,
+            map_id:          campaign.map_id ?? '',
             territory_id:    targetId,
             owner_player_id: attacker.player_id,
             troop_count:     attacker.committed_troops,
