@@ -101,7 +101,6 @@ export default function BattleCardDetail() {
   const [actingAsId, setActingAsId] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError]       = useState(null);
-  const [myVote, setMyVote]     = useState(null);
 
   useEffect(() => {
     async function load() {
@@ -124,7 +123,20 @@ export default function BattleCardDetail() {
         round: camp?.current_round ?? 1,
       });
       const cards = res.data?.battle_cards ?? [];
-      setCard(cards.find(c => c.id === battleId) ?? null);
+      let found = cards.find(c => c.id === battleId) ?? null;
+      // Fallback: if not in current-round results (delayed from prior round not found),
+      // search all rounds by fetching with round=1 up to current
+      if (!found && camp?.current_round > 1) {
+        for (let r = (camp.current_round - 1); r >= 1 && !found; r--) {
+          const fallback = await base44.functions.invoke('battlePhase', {
+            action: 'getBattleCards',
+            campaign_id: campaignId,
+            round: r,
+          });
+          found = (fallback.data?.battle_cards ?? []).find(c => c.id === battleId) ?? null;
+        }
+      }
+      setCard(found);
       setLoading(false);
     }
     load();
@@ -177,20 +189,28 @@ export default function BattleCardDetail() {
     });
   }, [card, participantIds, totalTroops, tabletopSize]);
 
-  // Get existing vote
-  useEffect(() => {
-    if (card?.delay_votes && effectivePlayer?.id) {
-      setMyVote(card.delay_votes[effectivePlayer.id] ?? null);
-    }
-  }, [card?.delay_votes, effectivePlayer?.id]);
+  // Derive current vote directly from card state (no stale useState)
+  const myVote = card?.delay_votes?.[effectivePlayer?.id] ?? null;
 
   const reloadCard = async () => {
+    // Try current round first, then search prior rounds for delayed cards
     const cardsRes = await base44.functions.invoke('battlePhase', {
       action: 'getBattleCards',
       campaign_id: campaignId,
       round: campaign?.current_round ?? 1,
     });
-    setCard(cardsRes.data?.battle_cards?.find(c => c.id === battleId) ?? null);
+    let found = cardsRes.data?.battle_cards?.find(c => c.id === battleId) ?? null;
+    if (!found && (campaign?.current_round ?? 1) > 1) {
+      for (let r = (campaign.current_round - 1); r >= 1 && !found; r--) {
+        const fallback = await base44.functions.invoke('battlePhase', {
+          action: 'getBattleCards',
+          campaign_id: campaignId,
+          round: r,
+        });
+        found = (fallback.data?.battle_cards ?? []).find(c => c.id === battleId) ?? null;
+      }
+    }
+    setCard(found);
   };
 
   const handleApprove = async (approved, flagged = false) => {
@@ -245,7 +265,7 @@ export default function BattleCardDetail() {
       acting_as_player_id: actingAsId ?? null,
     });
     setActionLoading(false);
-    if (res.data?.error) { setError(res.data.error); } else { setMyVote(vote); await reloadCard(); }
+    if (res.data?.error) { setError(res.data.error); } else { await reloadCard(); }
   };
 
   if (loading) {

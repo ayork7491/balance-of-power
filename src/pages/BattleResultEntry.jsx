@@ -61,7 +61,18 @@ export default function BattleResultEntry() {
         round: camp?.current_round ?? 1,
       });
       const cards = res.data?.battle_cards ?? [];
-      setCard(cards.find(c => c.id === battleId) ?? null);
+      let found = cards.find(c => c.id === battleId) ?? null;
+      if (!found && camp?.current_round > 1) {
+        for (let r = (camp.current_round - 1); r >= 1 && !found; r--) {
+          const fallback = await base44.functions.invoke('battlePhase', {
+            action: 'getBattleCards',
+            campaign_id: campaignId,
+            round: r,
+          });
+          found = (fallback.data?.battle_cards ?? []).find(c => c.id === battleId) ?? null;
+        }
+      }
+      setCard(found);
       setLoading(false);
     }
     load();
