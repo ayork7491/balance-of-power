@@ -35,6 +35,7 @@ export default function MapLayerStack({
   regionColorById,
   getPlayerHex,
   mapView = 'artistic', // 'artistic' | 'tactical'
+  showBorders = false,
 }) {
   const DECORATIVE = { pointerEvents: 'none', userSelect: 'none' };
   const bgUrl = mapView === 'tactical' ? TACTICAL_BG : ARTISTIC_BG;
@@ -72,6 +73,7 @@ export default function MapLayerStack({
               isAttackable={attackableIds.has(tid)}
               isLocked={lockedIds.has(tid)}
               mapView={mapView}
+              showBorders={showBorders}
             />
           );
         })}

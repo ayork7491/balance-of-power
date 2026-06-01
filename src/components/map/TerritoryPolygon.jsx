@@ -28,26 +28,29 @@ const CONTINENT_STROKE_ACCENT = {
 const DEFAULT_STROKE = '#4a5a6a';
 
 // Badge radius in native map coords (10240×10240 space)
-const BADGE_R = 90;
+const BADGE_R = 100;
 
 function TroopBadge({ cx, cy, troopCount, color, tid }) {
+  // Scale font to always fit at least 4 digits inside the badge
+  const digits = String(troopCount).length;
+  const fontSize = digits <= 2 ? BADGE_R * 0.9 : digits === 3 ? BADGE_R * 0.72 : BADGE_R * 0.58;
   return (
     <>
       {/* Outer colored ring */}
       <circle
         data-tid={tid}
         cx={cx} cy={cy} r={BADGE_R}
-        fill="rgba(0,0,0,0.72)"
+        fill="rgba(0,0,0,0.78)"
         stroke={color}
-        strokeWidth={22}
+        strokeWidth={20}
         strokeOpacity={0.95}
       />
       {/* Troop count text */}
       <text
         data-tid={tid}
-        x={cx} y={cy + BADGE_R * 0.38}
+        x={cx} y={cy + fontSize * 0.38}
         textAnchor="middle"
-        fontSize={BADGE_R * 1.1}
+        fontSize={fontSize}
         fontFamily="'Orbitron', monospace"
         fontWeight="700"
         fill={color}
@@ -69,6 +72,7 @@ export default function TerritoryPolygon({
   isAttackable,
   isLocked,
   mapView = 'artistic',
+  showBorders = false,
 }) {
   const { points, cx, cy, troop_x, troop_y, terrain, territory_id, continent_id } = territory;
   const tx = troop_x ?? cx;
@@ -77,8 +81,12 @@ export default function TerritoryPolygon({
   const baseStroke = TERRAIN_STROKE[terrainKey] ?? CONTINENT_STROKE_ACCENT[continent_id] ?? DEFAULT_STROKE;
   const troopColor = ownerColor ?? '#e8eef8';
 
-  // ── Artistic view — borders only, no fill (color PNG provides visual) ─────
+  // ── Artistic view — borders optional (toggle), no fill — color PNG provides visual ─────
   if (mapView === 'artistic') {
+    // Always show borders if the territory has state (selected/highlighted/attackable/locked/owned)
+    const hasState = isSelected || isHighlighted || isAttackable || isLocked || !!ownerColor;
+    const renderBorder = showBorders || hasState;
+
     let strokeColor   = ownerColor ?? baseStroke;
     let strokeWidth   = isSelected ? 40 : (ownerColor ? 28 : 18);
     let strokeOpacity = isSelected ? 1.0 : (ownerColor ? 0.85 : 0.50);
@@ -86,6 +94,13 @@ export default function TerritoryPolygon({
     if (isHighlighted) { strokeColor = '#fde047'; strokeWidth = 38; strokeOpacity = 1.0; }
     if (isAttackable)  { strokeColor = '#f87171'; strokeWidth = 32; strokeOpacity = 1.0; }
     if (isLocked)      { strokeColor = '#f97316'; strokeWidth = 36; strokeOpacity = 1.0; }
+
+    // When borders are toggled on but territory has no state, use a subtle neutral border
+    if (showBorders && !hasState) {
+      strokeColor   = baseStroke;
+      strokeWidth   = 14;
+      strokeOpacity = 0.45;
+    }
 
     let filterAttr;
     if (isSelected)    filterAttr = 'url(#glow-selected)';
@@ -95,16 +110,22 @@ export default function TerritoryPolygon({
 
     return (
       <g data-tid={territory_id} style={{ cursor: 'pointer' }}>
-        <polygon
-          data-tid={territory_id}
-          points={points}
-          fill="transparent"
-          fillOpacity={0}
-          stroke={strokeColor}
-          strokeWidth={strokeWidth}
-          strokeOpacity={strokeOpacity}
-          filter={filterAttr}
-        />
+        {renderBorder && (
+          <polygon
+            data-tid={territory_id}
+            points={points}
+            fill="transparent"
+            fillOpacity={0}
+            stroke={strokeColor}
+            strokeWidth={strokeWidth}
+            strokeOpacity={strokeOpacity}
+            filter={filterAttr}
+          />
+        )}
+        {!renderBorder && (
+          // invisible hit area so territory is still clickable
+          <polygon data-tid={territory_id} points={points} fill="transparent" fillOpacity={0} stroke="none" />
+        )}
         {isLocked && (
           <polygon data-tid={territory_id} points={points} fill="url(#locked-hatch)" fillOpacity={0.35} stroke="none" style={{ pointerEvents: 'none' }} />
         )}

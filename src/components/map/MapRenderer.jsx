@@ -7,11 +7,40 @@
  *     (avoids pointer capture issues on mobile)
  */
 import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
-import { motion } from 'framer-motion';
 import { PLAYER_COLORS } from '@/config/theme';
 import MapLayerStack from './MapLayerStack';
 import { useMapInteraction } from '@/features/maps/useMapInteraction';
-import { Map, Eye } from 'lucide-react';
+import { Map, Eye, Layers } from 'lucide-react';
+
+// Helper: button that works on both desktop and mobile by using pointer events
+// directly. Stops propagation so the map's native touch handlers never see it.
+function MapButton({ onClick, className, children, 'aria-label': ariaLabel, title }) {
+  const handlePointer = useCallback((e) => {
+    e.stopPropagation();
+    e.preventDefault();
+  }, []);
+  const handlePointerUp = useCallback((e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    onClick();
+  }, [onClick]);
+  return (
+    <button
+      onPointerDown={handlePointer}
+      onPointerUp={handlePointerUp}
+      onTouchStart={handlePointer}
+      onTouchEnd={(e) => { e.stopPropagation(); e.preventDefault(); onClick(); }}
+      onMouseDown={handlePointer}
+      onClick={(e) => e.stopPropagation()}
+      className={className}
+      aria-label={ariaLabel}
+      title={title}
+      style={{ touchAction: 'none', userSelect: 'none' }}
+    >
+      {children}
+    </button>
+  );
+}
 
 function getPlayerHex(players, playerId) {
   if (!playerId) return null;
@@ -84,6 +113,7 @@ export default function MapRenderer({
   const containerRef = useRef(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
   const [mapView, setMapView] = useState('artistic');
+  const [showBorders, setShowBorders] = useState(false);
 
   // Computed initial/min scale (updated on mount)
   const fitScaleRef = useRef(0.04);
@@ -417,6 +447,7 @@ export default function MapRenderer({
             regionColorById={regionColorById}
             getPlayerHex={getPlayerHex}
             mapView={mapView}
+            showBorders={showBorders}
           />
         </svg>
       </div>
@@ -435,46 +466,52 @@ export default function MapRenderer({
         </div>
       )}
 
-      {/* Map view toggle */}
-      <button
-        onMouseDown={e => e.stopPropagation()}
-        onTouchStart={e => e.stopPropagation()}
-        onClick={() => setMapView(v => v === 'artistic' ? 'tactical' : 'artistic')}
-        className="absolute top-3 right-3 z-10 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-panel-header/90 border border-panel-border text-foreground text-xs font-display tracking-wider uppercase hover:bg-secondary hover:border-primary/50 active:scale-95 transition-all shadow-lg touch-manipulation backdrop-blur-sm"
-        aria-label="Toggle map view"
-        style={{ pointerEvents: 'auto' }}
-      >
-        {mapView === 'artistic' ? <Eye className="w-3.5 h-3.5" /> : <Map className="w-3.5 h-3.5" />}
-        {mapView === 'artistic' ? 'Tactical' : 'Artistic'}
-      </button>
+      {/* Top-right controls */}
+      <div className="absolute top-3 right-3 z-10 flex items-center gap-1.5" style={{ pointerEvents: 'auto' }}>
+        {/* Borders toggle — only shown in artistic view */}
+        {mapView === 'artistic' && (
+          <MapButton
+            onClick={() => setShowBorders(v => !v)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-display tracking-wider uppercase transition-all shadow-lg touch-manipulation backdrop-blur-sm ${
+              showBorders
+                ? 'bg-primary/20 border-primary text-primary'
+                : 'bg-panel-header/90 border-panel-border text-foreground hover:bg-secondary hover:border-primary/50'
+            }`}
+            aria-label="Toggle territory borders"
+          >
+            <Layers className="w-3.5 h-3.5" />
+            Borders
+          </MapButton>
+        )}
+        {/* View mode toggle */}
+        <MapButton
+          onClick={() => setMapView(v => v === 'artistic' ? 'tactical' : 'artistic')}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-panel-header/90 border border-panel-border text-foreground text-xs font-display tracking-wider uppercase hover:bg-secondary hover:border-primary/50 active:scale-95 transition-all shadow-lg touch-manipulation backdrop-blur-sm"
+          aria-label="Toggle map view"
+        >
+          {mapView === 'artistic' ? <Eye className="w-3.5 h-3.5" /> : <Map className="w-3.5 h-3.5" />}
+          {mapView === 'artistic' ? 'Tactical' : 'Artistic'}
+        </MapButton>
+      </div>
 
       {/* Zoom controls */}
-      <div
-        className="absolute bottom-4 right-4 flex flex-col gap-1.5 z-10"
-        style={{ pointerEvents: 'auto' }}
-      >
-        <button
-          onMouseDown={e => e.stopPropagation()}
-          onTouchStart={e => e.stopPropagation()}
+      <div className="absolute bottom-4 right-4 flex flex-col gap-1.5 z-10" style={{ pointerEvents: 'auto' }}>
+        <MapButton
           onClick={() => zoomAroundCenter(1.25)}
           className="w-9 h-9 rounded-lg bg-panel-header border border-panel-border text-foreground text-lg font-light flex items-center justify-center hover:bg-secondary hover:border-primary/50 active:scale-95 transition-all shadow-lg touch-manipulation"
           aria-label="Zoom in"
-        >+</button>
-        <button
-          onMouseDown={e => e.stopPropagation()}
-          onTouchStart={e => e.stopPropagation()}
+        >+</MapButton>
+        <MapButton
           onClick={() => zoomAroundCenter(0.8)}
           className="w-9 h-9 rounded-lg bg-panel-header border border-panel-border text-foreground text-lg font-light flex items-center justify-center hover:bg-secondary hover:border-primary/50 active:scale-95 transition-all shadow-lg touch-manipulation"
           aria-label="Zoom out"
-        >−</button>
-        <button
-          onMouseDown={e => e.stopPropagation()}
-          onTouchStart={e => e.stopPropagation()}
+        >−</MapButton>
+        <MapButton
           onClick={resetView}
           className="w-9 h-9 rounded-lg bg-panel-header border border-panel-border text-foreground text-sm flex items-center justify-center hover:bg-secondary hover:border-primary/50 active:scale-95 transition-all shadow-lg touch-manipulation"
           aria-label="Reset zoom"
           title="Reset view"
-        >⊡</button>
+        >⊡</MapButton>
       </div>
     </div>
   );
