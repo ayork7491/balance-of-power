@@ -63,14 +63,14 @@ function ArrowMarker({ id, color }) {
   return (
     <marker
       id={id}
-      markerWidth="8"
-      markerHeight="8"
-      refX="6"
-      refY="3"
+      markerWidth="5"
+      markerHeight="5"
+      refX="4"
+      refY="2.5"
       orient="auto"
       markerUnits="strokeWidth"
     >
-      <path d="M0,0 L0,6 L8,3 z" fill={color} />
+      <path d="M0,0 L0,5 L5,2.5 z" fill={color} />
     </marker>
   );
 }
@@ -80,7 +80,6 @@ export default function AttackArrowLayer({
   mapDef,
   players,
   myPlayerId,
-  viewBox = '0 0 1000 700',
   revealed = false,
 }) {
   // Group arrows by route key (origin→target) to offset overlapping ones
@@ -122,12 +121,15 @@ export default function AttackArrowLayer({
   // Collect unique colors for marker defs
   const uniqueColors = [...new Set(arrowData.map(a => getPlayerHex(players, a.player_id)))];
 
+  // Rendered as SVG <g> elements inside the map's own <svg> so they
+  // inherit the pan/zoom transform automatically. Arrow sizes are in
+  // native map coords (10240×10240 space).
+  const STROKE_W   = 60;   // line thickness in map coords
+  const BADGE_R    = 120;  // label badge half-size
+  const FONT_SIZE  = 90;
+
   return (
-    <svg
-      style={{ width: '100%', height: '100%', position: 'absolute', inset: 0 }}
-      viewBox={viewBox}
-      preserveAspectRatio="xMidYMid meet"
-    >
+    <g id="layer-arrows" style={{ pointerEvents: 'none' }}>
       <defs>
         {uniqueColors.map(color => (
           <ArrowMarker
@@ -139,11 +141,10 @@ export default function AttackArrowLayer({
       </defs>
 
       {arrowData.map((atk, idx) => {
-        const color     = getPlayerHex(players, atk.player_id);
-        const markerId  = `arrow-${color.replace('#', '')}`;
-        const isOwn     = atk.player_id === myPlayerId;
-        const isDashed  = !revealed && isOwn;
-        const strokeW   = 2.5;
+        const color    = getPlayerHex(players, atk.player_id);
+        const markerId = `arrow-${color.replace('#', '')}`;
+        const isOwn    = atk.player_id === myPlayerId;
+        const isDashed = !revealed && isOwn;
 
         // Label position: 60% along the arrow
         const lx = atk.x1 + (atk.x2 - atk.x1) * 0.6;
@@ -155,24 +156,26 @@ export default function AttackArrowLayer({
               x1={atk.x1} y1={atk.y1}
               x2={atk.x2} y2={atk.y2}
               stroke={color}
-              strokeWidth={strokeW}
-              strokeDasharray={isDashed ? '6 4' : undefined}
+              strokeWidth={STROKE_W}
+              strokeDasharray={isDashed ? '200 120' : undefined}
               strokeOpacity={0.9}
               markerEnd={`url(#${markerId})`}
             />
             {/* Troop count label */}
             <g transform={`translate(${lx}, ${ly})`}>
               <rect
-                x="-13" y="-9" width="26" height="16" rx="4"
+                x={-BADGE_R * 1.4} y={-BADGE_R * 0.75}
+                width={BADGE_R * 2.8} height={BADGE_R * 1.5}
+                rx={BADGE_R * 0.4}
                 fill="#0a0f1e"
-                fillOpacity={0.75}
+                fillOpacity={0.82}
                 stroke={color}
-                strokeWidth="1"
+                strokeWidth={18}
               />
               <text
-                x="0" y="3"
+                x="0" y={FONT_SIZE * 0.38}
                 textAnchor="middle"
-                fontSize="9"
+                fontSize={FONT_SIZE}
                 fontFamily="'Orbitron', monospace"
                 fill={color}
                 fontWeight="700"
@@ -183,6 +186,6 @@ export default function AttackArrowLayer({
           </g>
         );
       })}
-    </svg>
+    </g>
   );
 }

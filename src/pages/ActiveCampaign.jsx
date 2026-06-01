@@ -324,7 +324,6 @@ function ActiveCampaignContent() {
                 mapDef={mapDef}
                 players={players}
                 myPlayerId={effectivePlayer?.id}
-                viewBox={`0 0 ${mapDef.width} ${mapDef.height}`}
                 revealed={phase !== 'attack'}
               />
             ) : null}

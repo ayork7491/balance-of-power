@@ -96,7 +96,7 @@ export default function MapRenderer({
   highlightIds = new Set(),
   attackableIds = new Set(),
   onSelect,
-  arrowLayer = null,
+  arrowLayer = null,  // now rendered inside the SVG transform (must be SVG elements, not an <svg>)
   currentPhase = null,
   actingPlayer = null,
   onAttackOriginSelect = null,
@@ -449,12 +449,10 @@ export default function MapRenderer({
             mapView={mapView}
             showBorders={showBorders}
           />
-        </svg>
-      </div>
 
-      {/* Attack arrow overlay */}
-      <div style={{ pointerEvents: 'none', position: 'absolute', inset: 0 }}>
-        {arrowLayer}
+          {/* Arrow layer rendered inside the same SVG so it inherits the pan/zoom transform */}
+          {arrowLayer}
+        </svg>
       </div>
 
       {/* Debug overlay */}
