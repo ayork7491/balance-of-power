@@ -26,6 +26,7 @@ import { motion } from 'framer-motion';
 import { PLAYER_COLORS } from '@/config/theme';
 import MapLayerStack from './MapLayerStack';
 import { useMapInteraction } from '@/features/maps/useMapInteraction';
+import { Map, Eye } from 'lucide-react';
 
 function getPlayerHex(players, playerId) {
   if (!playerId) return null;
@@ -80,6 +81,7 @@ export default function MapRenderer({
 }) {
   const containerRef = useRef(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
+  const [mapView, setMapView] = useState('artistic'); // 'artistic' | 'tactical'
   // drag.current is nulled AFTER territory selection in onPointerUp
   const drag = useRef(null);
   const rafRef = useRef(null);
@@ -198,19 +200,19 @@ export default function MapRenderer({
   const onPointerDown = useCallback((e) => {
     if (e.button !== 0) return;
 
-    // CRITICAL: Only capture pointer events that originate INSIDE this container.
-    // setPointerCapture() hijacks ALL subsequent pointer events globally — if we
-    // capture without checking bounds, the pointer capture will intercept taps on
-    // the top bar, bottom nav, and any overlapping UI even after layout fixes.
-    const el = containerRef.current;
-    if (el) {
-      const rect = el.getBoundingClientRect();
-      const inside =
-        e.clientX >= rect.left &&
-        e.clientX <= rect.right &&
-        e.clientY >= rect.top &&
-        e.clientY <= rect.bottom;
-      if (!inside) return; // not our event — don't capture or prevent
+    // For touch events, always allow drag to start anywhere inside the SVG/image.
+    // For mouse, still guard against events outside our container boundary.
+    if (e.pointerType === 'mouse') {
+      const el = containerRef.current;
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        const inside =
+          e.clientX >= rect.left &&
+          e.clientX <= rect.right &&
+          e.clientY >= rect.top &&
+          e.clientY <= rect.bottom;
+        if (!inside) return;
+      }
     }
 
     e.preventDefault();
@@ -405,7 +407,7 @@ export default function MapRenderer({
             scale={transform.scale}
             regionColorById={regionColorById}
             getPlayerHex={getPlayerHex}
-            suppressConnectionLines={_suppressConnectionLines}
+            mapView={mapView}
           />
         </svg>
       </div>
@@ -428,6 +430,21 @@ export default function MapRenderer({
           <div className="text-muted-foreground">{debugInfo.timestamp?.split('T')[1]?.slice(0,8)}</div>
         </div>
       )}
+
+      {/* Map view toggle */}
+      <motion.button
+        onPointerDown={e => e.stopPropagation()}
+        onClick={() => setMapView(v => v === 'artistic' ? 'tactical' : 'artistic')}
+        className="absolute top-3 right-3 z-10 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-panel-header/90 border border-panel-border text-foreground text-xs font-display tracking-wider uppercase hover:bg-secondary hover:border-primary/50 active:scale-95 transition-all shadow-lg touch-manipulation backdrop-blur-sm"
+        aria-label="Toggle map view"
+        initial={{ y: -20, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ duration: 0.3, delay: 0.2 }}
+        style={{ pointerEvents: 'auto' }}
+      >
+        {mapView === 'artistic' ? <Eye className="w-3.5 h-3.5" /> : <Map className="w-3.5 h-3.5" />}
+        {mapView === 'artistic' ? 'Tactical' : 'Artistic'}
+      </motion.button>
 
       {/* Zoom controls */}
       <motion.div

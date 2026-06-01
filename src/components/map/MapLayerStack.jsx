@@ -12,9 +12,9 @@
  * All clicks handled by MapRenderer via data-tid delegation — no onClick on children.
  */
 
-import RouteHintLayer from './RouteHintLayer';
-import AdjacencyLines from './AdjacencyLines';
 import TerritoryPolygon from './TerritoryPolygon';
+
+const GRAYSCALE_BG = 'https://media.base44.com/images/public/6a1504188a2a3ce4c5d33e1b/f782aa7ba_SHATTERED_CROWN_MAP_PNG_GRAYSCALE.png';
 
 export default function MapLayerStack({
   mapDef,
@@ -32,23 +32,18 @@ export default function MapLayerStack({
   scale,
   regionColorById,
   getPlayerHex,
-  suppressConnectionLines,
+  mapView = 'artistic', // 'artistic' | 'tactical'
 }) {
   const DECORATIVE = { pointerEvents: 'none', userSelect: 'none' };
+  const bgUrl = mapView === 'tactical' ? GRAYSCALE_BG : mapDef.background_image_url;
 
   return (
     <g>
 
       {/* ── 00: Background PNG ── */}
       <g id="layer-00-background" style={DECORATIVE}>
-        {mapDef.background_image_url
-          ? <image
-              href={mapDef.background_image_url}
-              x={0} y={0}
-              width={width} height={height}
-              preserveAspectRatio="xMidYMid meet"
-              style={{ pointerEvents: 'none', userSelect: 'none' }}
-            />
+        {bgUrl
+          ? <image href={bgUrl} x={0} y={0} width={width} height={height} preserveAspectRatio="xMidYMid meet" style={{ pointerEvents: 'none', userSelect: 'none' }} />
           : <rect x={0} y={0} width={width} height={height} fill="#04111e" />
         }
       </g>
@@ -74,15 +69,14 @@ export default function MapLayerStack({
               isHighlighted={highlightIds.has(tid)}
               isAttackable={attackableIds.has(tid)}
               isLocked={lockedIds.has(tid)}
+              mapView={mapView}
             />
           );
         })}
       </g>
 
-      {/* ── 02: Labels + routes — native 10240×10240 coords ── */}
-      <g id="layer-02-labels-routes" style={DECORATIVE}>
-
-        {/* Territory name labels */}
+      {/* ── 02: Labels — routes always suppressed ── */}
+      <g id="layer-02-labels" style={DECORATIVE}>
         {scale >= 0.05 && mapDef.territories.map(territory => {
           const fontSize = Math.max(60, Math.min(200, 120 / scale));
           const lx = territory.label_x ?? territory.cx;
@@ -106,17 +100,6 @@ export default function MapLayerStack({
             </text>
           );
         })}
-
-        {/* Adjacency lines + route hints */}
-        {!suppressConnectionLines && <RouteHintLayer />}
-        {!suppressConnectionLines && (
-          <AdjacencyLines
-            mapDef={mapDef}
-            hoveredId={hoveredId}
-            selectedId={selectedId}
-            originId={attackOriginId ?? fortifyOriginId ?? null}
-          />
-        )}
       </g>
 
     </g>
