@@ -1,5 +1,6 @@
 /**
- * TerritoryPolygon — Terrain & Landmass Composition Pass
+ * TerritoryPolygon — renders a single territory polygon with ownership fills,
+ * state highlights, and troop badges.
  *
  * No onClick — all pointer handling delegated to MapRenderer via event delegation.
  * Every interactive element carries data-tid.
@@ -26,6 +27,38 @@ const CONTINENT_STROKE_ACCENT = {
 
 const DEFAULT_STROKE = '#4a5a6a';
 
+// Badge radius in native map coords (10240×10240 space)
+const BADGE_R = 90;
+
+function TroopBadge({ cx, cy, troopCount, color, tid }) {
+  return (
+    <>
+      {/* Outer colored ring */}
+      <circle
+        data-tid={tid}
+        cx={cx} cy={cy} r={BADGE_R}
+        fill="rgba(0,0,0,0.72)"
+        stroke={color}
+        strokeWidth={22}
+        strokeOpacity={0.95}
+      />
+      {/* Troop count text */}
+      <text
+        data-tid={tid}
+        x={cx} y={cy + BADGE_R * 0.38}
+        textAnchor="middle"
+        fontSize={BADGE_R * 1.1}
+        fontFamily="'Orbitron', monospace"
+        fontWeight="700"
+        fill={color}
+        style={{ pointerEvents: 'none', userSelect: 'none' }}
+      >
+        {troopCount}
+      </text>
+    </>
+  );
+}
+
 export default function TerritoryPolygon({
   territory,
   regionColor,
@@ -35,32 +68,31 @@ export default function TerritoryPolygon({
   isHighlighted,
   isAttackable,
   isLocked,
-  mapView = 'artistic', // 'artistic' | 'tactical'
+  mapView = 'artistic',
 }) {
   const { points, cx, cy, troop_x, troop_y, terrain, territory_id, continent_id } = territory;
   const tx = troop_x ?? cx;
   const ty = troop_y ?? cy;
   const terrainKey = terrain ?? 'plains';
   const baseStroke = TERRAIN_STROKE[terrainKey] ?? CONTINENT_STROKE_ACCENT[continent_id] ?? DEFAULT_STROKE;
+  const troopColor = ownerColor ?? '#e8eef8';
 
-  // ── Tactical view: transparent fill, colored border, player-colored troop badge ──
+  // ── Tactical view ──────────────────────────────────────────────────────────
   if (mapView === 'tactical') {
     let strokeColor   = ownerColor ?? baseStroke;
-    let strokeWidth   = isSelected ? 3.0 : 1.8;
-    let strokeOpacity = isSelected ? 1.0 : (ownerColor ? 0.90 : 0.60);
-    let fillOpacity   = isSelected ? 0.15 : 0.0;
+    let strokeWidth   = isSelected ? 36 : 22;
+    let strokeOpacity = isSelected ? 1.0 : (ownerColor ? 0.90 : 0.55);
     let fillColor     = ownerColor ?? 'transparent';
+    let fillOpacity   = isSelected ? 0.15 : 0.0;
 
-    if (isHighlighted) { strokeColor = '#fde047'; strokeWidth = 3.0; strokeOpacity = 1.0; fillColor = '#fde047'; fillOpacity = 0.08; }
-    if (isAttackable)  { strokeColor = '#f87171'; strokeWidth = 2.6; strokeOpacity = 1.0; fillColor = '#f87171'; fillOpacity = 0.08; }
-    if (isLocked)      { strokeColor = '#f97316'; strokeWidth = 3.0; strokeOpacity = 1.0; }
+    if (isHighlighted) { strokeColor = '#fde047'; strokeWidth = 32; strokeOpacity = 1.0; fillColor = '#fde047'; fillOpacity = 0.08; }
+    if (isAttackable)  { strokeColor = '#f87171'; strokeWidth = 28; strokeOpacity = 1.0; fillColor = '#f87171'; fillOpacity = 0.08; }
+    if (isLocked)      { strokeColor = '#f97316'; strokeWidth = 32; strokeOpacity = 1.0; }
 
     let filterAttr;
     if (isSelected)    filterAttr = 'url(#glow-selected)';
     if (isHighlighted) filterAttr = 'url(#glow-highlight)';
     if (isAttackable)  filterAttr = 'url(#glow-attack)';
-
-    const troopColor = ownerColor ?? '#e8eef8';
 
     return (
       <g data-tid={territory_id} style={{ cursor: 'pointer' }}>
@@ -78,34 +110,31 @@ export default function TerritoryPolygon({
           <polygon data-tid={territory_id} points={points} fill="url(#locked-hatch)" fillOpacity={0.25} stroke="none" style={{ pointerEvents: 'none' }} />
         )}
         {troopCount > 0 && (
-          <>
-            <circle data-tid={territory_id} cx={tx} cy={ty} r={14} fill={troopColor} fillOpacity={0.20} stroke={troopColor} strokeWidth={2} strokeOpacity={0.90} />
-            <circle data-tid={territory_id} cx={tx} cy={ty} r={11} fill="rgba(0,0,0,0.75)" stroke="none" />
-            <text data-tid={territory_id} x={tx} y={ty + 4} textAnchor="middle" fontSize={9} fontFamily="'Orbitron', monospace" fontWeight="700" fill={troopColor} style={{ pointerEvents: 'none', userSelect: 'none' }}>{troopCount}</text>
-          </>
+          <TroopBadge cx={tx} cy={ty} troopCount={troopCount} color={troopColor} tid={territory_id} />
         )}
       </g>
     );
   }
 
-  // ── Artistic view (default): semi-transparent player-colored fill ──
+  // ── Artistic view ──────────────────────────────────────────────────────────
   let fillColor   = 'transparent';
   let fillOpacity = 0.0;
   if (ownerColor) {
     fillColor   = ownerColor;
-    fillOpacity = isSelected ? 0.35 : 0.22;
+    fillOpacity = isSelected ? 0.40 : 0.25;
   } else if (isSelected) {
     fillColor = '#ffffff';
-    fillOpacity = 0.10;
+    fillOpacity = 0.12;
   }
 
+  // Thicker strokes for artistic view so borders are visible over the PNG
   let strokeColor   = ownerColor ?? baseStroke;
-  let strokeWidth   = isSelected ? 2.4 : 1.2;
-  let strokeOpacity = isSelected ? 1.0 : (ownerColor ? 0.80 : 0.45);
+  let strokeWidth   = isSelected ? 40 : (ownerColor ? 28 : 18);
+  let strokeOpacity = isSelected ? 1.0 : (ownerColor ? 0.85 : 0.50);
 
-  if (isHighlighted) { strokeColor = '#fde047'; strokeWidth = 2.6; strokeOpacity = 1.0; }
-  if (isAttackable)  { strokeColor = '#f87171'; strokeWidth = 2.2; strokeOpacity = 1.0; }
-  if (isLocked)      { strokeColor = '#f97316'; strokeWidth = 2.4; strokeOpacity = 1.0; }
+  if (isHighlighted) { strokeColor = '#fde047'; strokeWidth = 38; strokeOpacity = 1.0; }
+  if (isAttackable)  { strokeColor = '#f87171'; strokeWidth = 32; strokeOpacity = 1.0; }
+  if (isLocked)      { strokeColor = '#f97316'; strokeWidth = 36; strokeOpacity = 1.0; }
 
   let filterAttr;
   if (isSelected)    filterAttr = 'url(#glow-selected)';
@@ -114,12 +143,20 @@ export default function TerritoryPolygon({
   if (isLocked)      filterAttr = 'url(#glow-attack)';
 
   const ownedEdgeStroke = ownerColor && !isSelected && !isHighlighted && !isAttackable ? ownerColor : null;
-  const troopColor = ownerColor ?? '#e8eef8';
 
   return (
     <g data-tid={territory_id} style={{ cursor: 'pointer' }}>
       {ownedEdgeStroke && (
-        <polygon data-tid={territory_id} points={points} fill="none" stroke={ownedEdgeStroke} strokeWidth={6} strokeOpacity={0.18} filter="url(#glow-owner)" style={{ pointerEvents: 'none' }} />
+        <polygon
+          data-tid={territory_id}
+          points={points}
+          fill="none"
+          stroke={ownedEdgeStroke}
+          strokeWidth={60}
+          strokeOpacity={0.18}
+          filter="url(#glow-owner)"
+          style={{ pointerEvents: 'none' }}
+        />
       )}
       <polygon
         data-tid={territory_id}
@@ -135,11 +172,7 @@ export default function TerritoryPolygon({
         <polygon data-tid={territory_id} points={points} fill="url(#locked-hatch)" fillOpacity={0.35} stroke="none" style={{ pointerEvents: 'none' }} />
       )}
       {troopCount > 0 && (
-        <>
-          <circle data-tid={territory_id} cx={tx} cy={ty} r={14} fill={troopColor} fillOpacity={0.20} stroke={troopColor} strokeWidth={2} strokeOpacity={0.90} />
-          <circle data-tid={territory_id} cx={tx} cy={ty} r={11} fill="rgba(0,0,0,0.75)" stroke="none" />
-          <text data-tid={territory_id} x={tx} y={ty + 4} textAnchor="middle" fontSize={9} fontFamily="'Orbitron', monospace" fontWeight="700" fill={troopColor} style={{ pointerEvents: 'none', userSelect: 'none' }}>{troopCount}</text>
-        </>
+        <TroopBadge cx={tx} cy={ty} troopCount={troopCount} color={troopColor} tid={territory_id} />
       )}
     </g>
   );

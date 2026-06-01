@@ -14,6 +14,7 @@
 
 import TerritoryPolygon from './TerritoryPolygon';
 
+const ARTISTIC_BG  = 'https://media.base44.com/images/public/6a1504188a2a3ce4c5d33e1b/7af44e9bf_SHATTERED_CROWN_MAP_PNG.png';
 const GRAYSCALE_BG = 'https://media.base44.com/images/public/6a1504188a2a3ce4c5d33e1b/f782aa7ba_SHATTERED_CROWN_MAP_PNG_GRAYSCALE.png';
 
 export default function MapLayerStack({
@@ -35,7 +36,8 @@ export default function MapLayerStack({
   mapView = 'artistic', // 'artistic' | 'tactical'
 }) {
   const DECORATIVE = { pointerEvents: 'none', userSelect: 'none' };
-  const bgUrl = mapView === 'tactical' ? GRAYSCALE_BG : mapDef.background_image_url;
+  // tactical = grayscale, artistic = full color PNG
+  const bgUrl = mapView === 'tactical' ? GRAYSCALE_BG : ARTISTIC_BG;
 
   return (
     <g>
@@ -78,7 +80,7 @@ export default function MapLayerStack({
       {/* ── 02: Labels — routes always suppressed ── */}
       <g id="layer-02-labels" style={DECORATIVE}>
         {scale >= 0.05 && mapDef.territories.map(territory => {
-          const fontSize = Math.max(60, Math.min(200, 120 / scale));
+          const fontSize = Math.max(30, Math.min(80, 55 / scale));
           const lx = territory.label_x ?? territory.cx;
           const ly = territory.label_y ?? (territory.cy + 18);
           return (

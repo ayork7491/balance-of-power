@@ -1,25 +1,5 @@
 /**
  * MapRenderer — schema-driven SVG map with canonical 9-layer render stack.
- *
- * Layer stack (managed by MapLayerStack):
- *   08_ui_overlays        — selection glows, hover effects, debug
- *   07_gameplay_markers   — troop counts, structures, objectives (reserved)
- *   06_gameplay_routes    — adjacency lines, route hints, attack paths
- *   05_territory_labels   — territory name text
- *   04_territory_polygons — territory geometry + ownership (PRIMARY GAMEPLAY)
- *   03_atlas_labels       — continent/region names, compass rose (reserved)
- *   02_geography_detail   — Terrain Layer + Biome Layer artwork
- *   01_world_landmasses   — World Layer v2.0 continent silhouettes
- *   00_ocean_background   — ocean color + vignette
- *
- * Pointer event architecture:
- *   pointerdown → record start position + capture pointer
- *   pointermove → track drag distance, pan if moved
- *   pointerup   → if NOT dragged (< TAP_THRESHOLD px), find data-tid and fire
- *                 territory selection. drag.current is still live here.
- *
- * Key: territory selection fires in onPointerUp (NOT via child onClick).
- * TerritoryPolygon has no onClick — clicks handled via event delegation here.
  */
 import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
@@ -36,11 +16,10 @@ function getPlayerHex(players, playerId) {
   return pc?.hex ?? null;
 }
 
-const MIN_ZOOM = 0.4;
+const MIN_ZOOM = 0.3;
 const MAX_ZOOM = 4.0;
-const TAP_THRESHOLD = 6; // px — slightly larger for touch
+const TAP_THRESHOLD = 6;
 
-// Walk up the DOM from event.target to find the nearest [data-tid] attribute.
 function getTerritoryIdFromTarget(target) {
   let el = target;
   let depth = 0;
@@ -53,6 +32,31 @@ function getTerritoryIdFromTarget(target) {
   return null;
 }
 
+// Compute the "fit to landmass width" transform for a given container size + mapDef
+function computeFitTransform(cw, ch, mapDef) {
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const t of mapDef.territories) {
+    if (t.cx < minX) minX = t.cx;
+    if (t.cx > maxX) maxX = t.cx;
+    if (t.cy < minY) minY = t.cy;
+    if (t.cy > maxY) maxY = t.cy;
+  }
+  const padX = 80, padY = 80;
+  minX = Math.max(0, minX - padX);
+  minY = Math.max(0, minY - padY);
+  maxX = Math.min(mapDef.width, maxX + padX);
+  maxY = Math.min(mapDef.height, maxY + padY);
+
+  const contentW = maxX - minX;
+  const contentH = maxY - minY;
+
+  // Scale so landmass fills the full width
+  const scale = cw / contentW;
+  const x = -minX * scale;
+  const y = (ch - contentH * scale) / 2 - minY * scale;
+  return { x, y, scale };
+}
+
 export default function MapRenderer({
   mapDef,
   stateById = {},
@@ -62,7 +66,6 @@ export default function MapRenderer({
   attackableIds = new Set(),
   onSelect,
   arrowLayer = null,
-  // Phase interaction props
   currentPhase = null,
   actingPlayer = null,
   onAttackOriginSelect = null,
@@ -72,28 +75,18 @@ export default function MapRenderer({
   onBuildTerritorySelect = null,
   onDraftTerritorySelect = null,
   onDeployTerritorySelect = null,
-  // Locked territory IDs (delayed battle)
   lockedIds = new Set(),
-  // Debug
   debugMode = false,
-  // Validation-only: suppress adjacency lines and route hints
   _suppressConnectionLines = false,
 }) {
   const containerRef = useRef(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
   const [mapView, setMapView] = useState('artistic'); // 'artistic' | 'tactical'
-  // drag.current is nulled AFTER territory selection in onPointerUp
   const drag = useRef(null);
   const rafRef = useRef(null);
-
-  // Hover state for adjacency line preview
   const [hoveredId, setHoveredId] = useState(null);
-
-  // Debug state
   const [debugInfo, setDebugInfo] = useState(null);
 
-  // Use canonical map interaction controller
-  // Build adjacencyMap from mapDef.adjacency pairs (canonical — matches buildAdjacencyMap)
   const adjacencyMapForInteraction = useMemo(() => {
     if (!mapDef?.adjacency) return {};
     const map = {};
@@ -128,47 +121,15 @@ export default function MapRenderer({
     onDeployTerritorySelect,
   });
 
-  // Fit map to container on mount.
-  // For tall maps (height > width * 1.2) we compute the content bounding box
-  // from territory centroids and fit to that box instead of the full coordinate
-  // space — this prevents excess dead ocean/empty space above and below the map.
+  // Fit map on mount — landmass fills full width
   useEffect(() => {
     const el = containerRef.current;
     if (!el || !mapDef) return;
     const { width: cw, height: ch } = el.getBoundingClientRect();
-
-    // Compute tight content bounds from territory centroids
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (const t of mapDef.territories) {
-      if (t.cx < minX) minX = t.cx;
-      if (t.cx > maxX) maxX = t.cx;
-      if (t.cy < minY) minY = t.cy;
-      if (t.cy > maxY) maxY = t.cy;
-    }
-    // Add padding around content
-    const padX = 60, padY = 60;
-    minX = Math.max(0, minX - padX);
-    minY = Math.max(0, minY - padY);
-    maxX = Math.min(mapDef.width,  maxX + padX);
-    maxY = Math.min(mapDef.height, maxY + padY);
-
-    const contentW = maxX - minX;
-    const contentH = maxY - minY;
-
-    // For tall maps use content box, for compact maps use full space
-    const isTall = mapDef.height > mapDef.width * 1.2;
-    const fitW  = isTall ? contentW : mapDef.width;
-    const fitH  = isTall ? contentH : mapDef.height;
-    const originX = isTall ? minX : 0;
-    const originY = isTall ? minY : 0;
-
-    const scale = Math.min(cw / fitW, ch / fitH) * 0.96;
-    const x = (cw - fitW * scale) / 2 - originX * scale;
-    const y = (ch - fitH * scale) / 2 - originY * scale;
-    setTransform({ x, y, scale });
+    setTransform(computeFitTransform(cw, ch, mapDef));
   }, [mapDef]);
 
-  // ── Wheel zoom ─────────────────────────────────────────────────────────────
+  // ── Wheel zoom — zooms around cursor position ──────────────────────────────
   const handleWheel = useCallback((e) => {
     e.preventDefault();
     const el = containerRef.current;
@@ -178,7 +139,7 @@ export default function MapRenderer({
     const mouseY = e.clientY - rect.top;
 
     setTransform(prev => {
-      const delta = e.deltaY < 0 ? 1.1 : 0.9;
+      const delta = e.deltaY < 0 ? 1.12 : 0.9;
       const newScale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, prev.scale * delta));
       const scaleRatio = newScale / prev.scale;
       return {
@@ -196,27 +157,40 @@ export default function MapRenderer({
     return () => el.removeEventListener('wheel', handleWheel);
   }, [handleWheel]);
 
+  // ── Zoom around screen center (for buttons) ────────────────────────────────
+  const zoomAroundCenter = useCallback((factor) => {
+    const el = containerRef.current;
+    if (!el) return;
+    const { width: cw, height: ch } = el.getBoundingClientRect();
+    const cx = cw / 2;
+    const cy = ch / 2;
+    setTransform(prev => {
+      const newScale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, prev.scale * factor));
+      const scaleRatio = newScale / prev.scale;
+      return {
+        scale: newScale,
+        x: cx - scaleRatio * (cx - prev.x),
+        y: cy - scaleRatio * (cy - prev.y),
+      };
+    });
+  }, []);
+
   // ── Pointer handlers ───────────────────────────────────────────────────────
   const onPointerDown = useCallback((e) => {
     if (e.button !== 0) return;
 
-    // For touch events, always allow drag to start anywhere inside the SVG/image.
-    // For mouse, still guard against events outside our container boundary.
     if (e.pointerType === 'mouse') {
       const el = containerRef.current;
       if (el) {
         const rect = el.getBoundingClientRect();
         const inside =
-          e.clientX >= rect.left &&
-          e.clientX <= rect.right &&
-          e.clientY >= rect.top &&
-          e.clientY <= rect.bottom;
+          e.clientX >= rect.left && e.clientX <= rect.right &&
+          e.clientY >= rect.top  && e.clientY <= rect.bottom;
         if (!inside) return;
       }
     }
 
     e.preventDefault();
-
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
 
     drag.current = {
@@ -232,7 +206,6 @@ export default function MapRenderer({
   }, [transform.x, transform.y]);
 
   const onPointerHover = useCallback((e) => {
-    // Only track hover when not dragging
     if (drag.current?.moved) return;
     const tid = getTerritoryIdFromTarget(e.target);
     setHoveredId(tid ?? null);
@@ -248,10 +221,9 @@ export default function MapRenderer({
     if (Math.abs(dx) > TAP_THRESHOLD || Math.abs(dy) > TAP_THRESHOLD) {
       drag.current.moved = true;
     }
-
-    if (!drag.current.moved) return; // don't pan until threshold exceeded
-
+    if (!drag.current.moved) return;
     if (rafRef.current) return;
+
     const captureDx = dx;
     const captureDy = dy;
     const captureOriginX = drag.current.originX;
@@ -278,10 +250,7 @@ export default function MapRenderer({
     const wasDrag = drag.current.moved;
     const downTarget = drag.current.downTarget;
 
-    // ── CRITICAL: resolve territory BEFORE nulling drag.current ──────────────
     if (!wasDrag) {
-      // It was a tap — find territory id from the element tapped
-      // Use the pointerup target first, fall back to pointerdown target
       const tid = getTerritoryIdFromTarget(e.target) ?? getTerritoryIdFromTarget(downTarget);
 
       if (debugMode) {
@@ -295,33 +264,27 @@ export default function MapRenderer({
           interactionMode,
           timestamp: new Date().toISOString(),
         });
-        console.log('[MapRenderer] TAP', { tid, phase: currentPhase, target: e.target });
       }
 
-      if (tid) {
-        handleTerritoryClick(tid);
-      }
-    } else {
-      if (debugMode) {
-        setDebugInfo(prev => ({
-          ...(prev ?? {}),
-          classification: 'drag',
-          timestamp: new Date().toISOString(),
-        }));
-      }
+      if (tid) handleTerritoryClick(tid);
     }
 
-    // Null AFTER selection fires
     drag.current = null;
   }, [handleTerritoryClick, debugMode, currentPhase, selectedId, interactionMode]);
 
-  // ── Region color lookup ────────────────────────────────────────────────────
   const regionColorById = {};
   for (const r of (mapDef?.regions ?? [])) {
     regionColorById[r.id] = r.color ?? '#334155';
   }
 
   if (!mapDef) return null;
+
+  const resetView = () => {
+    const el = containerRef.current;
+    if (!el || !mapDef) return;
+    const { width: cw, height: ch } = el.getBoundingClientRect();
+    setTransform(computeFitTransform(cw, ch, mapDef));
+  };
 
   return (
     <div
@@ -337,7 +300,6 @@ export default function MapRenderer({
         WebkitTouchCallout: 'none',
         WebkitUserSelect: 'none',
         userSelect: 'none',
-        // Fallback bg color — ocean SVG covers this when loaded
         backgroundColor: '#04111e',
       }}
       data-map-container="true"
@@ -355,37 +317,26 @@ export default function MapRenderer({
           height={mapDef.height}
           style={{ overflow: 'visible', display: 'block' }}
         >
-          {/* ── Global SVG filters ── */}
           <defs>
             <filter id="glow-selected" x="-30%" y="-30%" width="160%" height="160%">
               <feGaussianBlur stdDeviation="5" result="blur" />
-              <feMerge>
-                <feMergeNode in="blur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
+              <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
             </filter>
             <filter id="glow-highlight" x="-30%" y="-30%" width="160%" height="160%">
               <feFlood floodColor="#fde047" floodOpacity="0.6" result="color" />
               <feComposite in="color" in2="SourceGraphic" operator="in" result="tinted" />
               <feGaussianBlur in="tinted" stdDeviation="4" result="blur" />
-              <feMerge>
-                <feMergeNode in="blur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
+              <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
             </filter>
             <filter id="glow-attack" x="-30%" y="-30%" width="160%" height="160%">
               <feFlood floodColor="#f87171" floodOpacity="0.7" result="color" />
               <feComposite in="color" in2="SourceGraphic" operator="in" result="tinted" />
               <feGaussianBlur in="tinted" stdDeviation="4" result="blur" />
-              <feMerge>
-                <feMergeNode in="blur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
+              <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
             </filter>
             <filter id="glow-owner" x="-30%" y="-30%" width="160%" height="160%">
               <feGaussianBlur stdDeviation="6" result="blur" />
             </filter>
-            {/* Locked territory hatch pattern */}
             <pattern id="locked-hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
               <line x1="0" y1="0" x2="0" y2="8" stroke="#f97316" strokeWidth="2.5" strokeOpacity="0.8" />
             </pattern>
@@ -412,7 +363,7 @@ export default function MapRenderer({
         </svg>
       </div>
 
-      {/* Attack arrow overlay — non-interactive overlay */}
+      {/* Attack arrow overlay */}
       <div style={{ pointerEvents: 'none', position: 'absolute', inset: 0 }}>
         {arrowLayer}
       </div>
@@ -420,13 +371,10 @@ export default function MapRenderer({
       {/* Debug overlay */}
       {debugMode && debugInfo && (
         <div className="absolute top-2 left-2 z-50 bg-black/80 text-green-400 text-[10px] font-mono p-2 rounded max-w-[220px] space-y-0.5 pointer-events-none">
-          <div className="font-bold text-yellow-400 uppercase tracking-wider mb-1">Map Interaction Debug</div>
-          <div>Classification: <span className={debugInfo.classification === 'tap' ? 'text-green-300' : 'text-orange-300'}>{debugInfo.classification}</span></div>
+          <div className="font-bold text-yellow-400 uppercase tracking-wider mb-1">Map Debug</div>
+          <div>Type: <span className={debugInfo.classification === 'tap' ? 'text-green-300' : 'text-orange-300'}>{debugInfo.classification}</span></div>
           <div>Territory: {debugInfo.territoryId ?? '—'}</div>
           <div>Phase: {debugInfo.phase ?? '—'}</div>
-          <div>Mode: {debugInfo.interactionMode ?? '—'}</div>
-          <div>Selected before: {debugInfo.selectedBefore ?? '—'}</div>
-          <div>Up target: {debugInfo.upTarget ?? '—'}</div>
           <div className="text-muted-foreground">{debugInfo.timestamp?.split('T')[1]?.slice(0,8)}</div>
         </div>
       )}
@@ -456,37 +404,19 @@ export default function MapRenderer({
       >
         <motion.button
           onPointerDown={e => e.stopPropagation()}
-          onClick={() => setTransform(t => ({ ...t, scale: Math.min(MAX_ZOOM, t.scale * 1.25) }))}
+          onClick={() => zoomAroundCenter(1.25)}
           className="w-9 h-9 rounded-lg bg-panel-header border border-panel-border text-foreground text-lg font-light flex items-center justify-center hover:bg-secondary hover:border-primary/50 active:scale-95 transition-all shadow-lg touch-manipulation"
           aria-label="Zoom in"
         >+</motion.button>
         <motion.button
           onPointerDown={e => e.stopPropagation()}
-          onClick={() => setTransform(t => ({ ...t, scale: Math.max(MIN_ZOOM, t.scale / 1.25) }))}
+          onClick={() => zoomAroundCenter(0.8)}
           className="w-9 h-9 rounded-lg bg-panel-header border border-panel-border text-foreground text-lg font-light flex items-center justify-center hover:bg-secondary hover:border-primary/50 active:scale-95 transition-all shadow-lg touch-manipulation"
           aria-label="Zoom out"
         >−</motion.button>
         <motion.button
           onPointerDown={e => e.stopPropagation()}
-          onClick={() => {
-            const el = containerRef.current;
-            if (!el || !mapDef) return;
-            const { width: cw, height: ch } = el.getBoundingClientRect();
-            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-            for (const t of mapDef.territories) {
-              if (t.cx < minX) minX = t.cx; if (t.cx > maxX) maxX = t.cx;
-              if (t.cy < minY) minY = t.cy; if (t.cy > maxY) maxY = t.cy;
-            }
-            const padX = 60, padY = 60;
-            minX = Math.max(0, minX - padX); minY = Math.max(0, minY - padY);
-            maxX = Math.min(mapDef.width, maxX + padX); maxY = Math.min(mapDef.height, maxY + padY);
-            const isTall = mapDef.height > mapDef.width * 1.2;
-            const fitW = isTall ? maxX - minX : mapDef.width;
-            const fitH = isTall ? maxY - minY : mapDef.height;
-            const ox = isTall ? minX : 0; const oy = isTall ? minY : 0;
-            const scale = Math.min(cw / fitW, ch / fitH) * 0.96;
-            setTransform({ x: (cw - fitW * scale) / 2 - ox * scale, y: (ch - fitH * scale) / 2 - oy * scale, scale });
-          }}
+          onClick={resetView}
           className="w-9 h-9 rounded-lg bg-panel-header border border-panel-border text-foreground text-sm flex items-center justify-center hover:bg-secondary hover:border-primary/50 active:scale-95 transition-all shadow-lg touch-manipulation"
           aria-label="Reset zoom"
           title="Reset view"
