@@ -14,8 +14,9 @@
 
 import TerritoryPolygon from './TerritoryPolygon';
 
+// artistic = full color, tactical = grayscale
 const ARTISTIC_BG  = 'https://media.base44.com/images/public/6a1504188a2a3ce4c5d33e1b/7af44e9bf_SHATTERED_CROWN_MAP_PNG.png';
-const GRAYSCALE_BG = 'https://media.base44.com/images/public/6a1504188a2a3ce4c5d33e1b/f782aa7ba_SHATTERED_CROWN_MAP_PNG_GRAYSCALE.png';
+const TACTICAL_BG  = 'https://media.base44.com/images/public/6a1504188a2a3ce4c5d33e1b/f782aa7ba_SHATTERED_CROWN_MAP_PNG_GRAYSCALE.png';
 
 export default function MapLayerStack({
   mapDef,
@@ -36,8 +37,7 @@ export default function MapLayerStack({
   mapView = 'artistic', // 'artistic' | 'tactical'
 }) {
   const DECORATIVE = { pointerEvents: 'none', userSelect: 'none' };
-  // tactical = grayscale, artistic = full color PNG
-  const bgUrl = mapView === 'tactical' ? GRAYSCALE_BG : ARTISTIC_BG;
+  const bgUrl = mapView === 'tactical' ? TACTICAL_BG : ARTISTIC_BG;
 
   return (
     <g>

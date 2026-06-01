@@ -1,5 +1,10 @@
 /**
- * MapRenderer — schema-driven SVG map with canonical 9-layer render stack.
+ * MapRenderer — schema-driven SVG map.
+ *
+ * Pointer/touch architecture:
+ *   - Mouse: pointerdown/move/up for pan + click
+ *   - Touch: native touchstart/touchmove/touchend for pan, pinch-zoom, and tap
+ *     (avoids pointer capture issues on mobile)
  */
 import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
@@ -16,9 +21,8 @@ function getPlayerHex(players, playerId) {
   return pc?.hex ?? null;
 }
 
-const MIN_ZOOM = 0.3;
 const MAX_ZOOM = 4.0;
-const TAP_THRESHOLD = 6;
+const TAP_THRESHOLD = 8;
 
 function getTerritoryIdFromTarget(target) {
   let el = target;
@@ -32,7 +36,7 @@ function getTerritoryIdFromTarget(target) {
   return null;
 }
 
-// Compute the "fit to landmass width" transform for a given container size + mapDef
+// Compute tight-fit transform: landmass fills full container width
 function computeFitTransform(cw, ch, mapDef) {
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
   for (const t of mapDef.territories) {
@@ -49,8 +53,6 @@ function computeFitTransform(cw, ch, mapDef) {
 
   const contentW = maxX - minX;
   const contentH = maxY - minY;
-
-  // Scale so landmass fills the full width
   const scale = cw / contentW;
   const x = -minX * scale;
   const y = (ch - contentH * scale) / 2 - minY * scale;
@@ -81,9 +83,18 @@ export default function MapRenderer({
 }) {
   const containerRef = useRef(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
-  const [mapView, setMapView] = useState('artistic'); // 'artistic' | 'tactical'
-  const drag = useRef(null);
+  const [mapView, setMapView] = useState('artistic');
+
+  // Computed initial/min scale (updated on mount)
+  const fitScaleRef = useRef(0.04);
+
+  // Mouse drag state
+  const mouseDrag = useRef(null);
   const rafRef = useRef(null);
+
+  // Touch state
+  const touchRef = useRef(null); // { touches: [...], originX, originY, originScale, startMidX, startMidY }
+
   const [hoveredId, setHoveredId] = useState(null);
   const [debugInfo, setDebugInfo] = useState(null);
 
@@ -121,32 +132,29 @@ export default function MapRenderer({
     onDeployTerritorySelect,
   });
 
-  // Fit map on mount — landmass fills full width
+  // Fit on mount
   useEffect(() => {
     const el = containerRef.current;
     if (!el || !mapDef) return;
     const { width: cw, height: ch } = el.getBoundingClientRect();
-    setTransform(computeFitTransform(cw, ch, mapDef));
+    const fit = computeFitTransform(cw, ch, mapDef);
+    fitScaleRef.current = fit.scale;
+    setTransform(fit);
   }, [mapDef]);
 
-  // ── Wheel zoom — zooms around cursor position ──────────────────────────────
+  // ── Wheel zoom (mouse) ─────────────────────────────────────────────────────
   const handleWheel = useCallback((e) => {
     e.preventDefault();
     const el = containerRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-
+    const pivotX = e.clientX - rect.left;
+    const pivotY = e.clientY - rect.top;
+    const factor = e.deltaY < 0 ? 1.12 : 0.9;
     setTransform(prev => {
-      const delta = e.deltaY < 0 ? 1.12 : 0.9;
-      const newScale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, prev.scale * delta));
-      const scaleRatio = newScale / prev.scale;
-      return {
-        scale: newScale,
-        x: mouseX - scaleRatio * (mouseX - prev.x),
-        y: mouseY - scaleRatio * (mouseY - prev.y),
-      };
+      const newScale = Math.max(fitScaleRef.current * 0.5, Math.min(MAX_ZOOM, prev.scale * factor));
+      const ratio = newScale / prev.scale;
+      return { scale: newScale, x: pivotX - ratio * (pivotX - prev.x), y: pivotY - ratio * (pivotY - prev.y) };
     });
   }, []);
 
@@ -157,120 +165,173 @@ export default function MapRenderer({
     return () => el.removeEventListener('wheel', handleWheel);
   }, [handleWheel]);
 
-  // ── Zoom around screen center (for buttons) ────────────────────────────────
+  // ── Zoom around screen center (buttons) ───────────────────────────────────
   const zoomAroundCenter = useCallback((factor) => {
     const el = containerRef.current;
     if (!el) return;
     const { width: cw, height: ch } = el.getBoundingClientRect();
-    const cx = cw / 2;
-    const cy = ch / 2;
+    const pivotX = cw / 2;
+    const pivotY = ch / 2;
     setTransform(prev => {
-      const newScale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, prev.scale * factor));
-      const scaleRatio = newScale / prev.scale;
-      return {
-        scale: newScale,
-        x: cx - scaleRatio * (cx - prev.x),
-        y: cy - scaleRatio * (cy - prev.y),
-      };
+      const newScale = Math.max(fitScaleRef.current * 0.5, Math.min(MAX_ZOOM, prev.scale * factor));
+      const ratio = newScale / prev.scale;
+      return { scale: newScale, x: pivotX - ratio * (pivotX - prev.x), y: pivotY - ratio * (pivotY - prev.y) };
     });
   }, []);
 
-  // ── Pointer handlers ───────────────────────────────────────────────────────
-  const onPointerDown = useCallback((e) => {
+  const resetView = useCallback(() => {
+    const el = containerRef.current;
+    if (!el || !mapDef) return;
+    const { width: cw, height: ch } = el.getBoundingClientRect();
+    const fit = computeFitTransform(cw, ch, mapDef);
+    fitScaleRef.current = fit.scale;
+    setTransform(fit);
+  }, [mapDef]);
+
+  // ── Mouse pointer handlers ─────────────────────────────────────────────────
+  const onMouseDown = useCallback((e) => {
     if (e.button !== 0) return;
-
-    if (e.pointerType === 'mouse') {
-      const el = containerRef.current;
-      if (el) {
-        const rect = el.getBoundingClientRect();
-        const inside =
-          e.clientX >= rect.left && e.clientX <= rect.right &&
-          e.clientY >= rect.top  && e.clientY <= rect.bottom;
-        if (!inside) return;
-      }
-    }
-
     e.preventDefault();
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-
-    drag.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      originX: transform.x,
-      originY: transform.y,
-      moved: false,
-      downTarget: e.target,
+    mouseDrag.current = {
+      startX: e.clientX, startY: e.clientY,
+      originX: transform.x, originY: transform.y,
+      moved: false, downTarget: e.target,
     };
-
-    e.currentTarget.setPointerCapture(e.pointerId);
   }, [transform.x, transform.y]);
 
-  const onPointerHover = useCallback((e) => {
-    if (drag.current?.moved) return;
-    const tid = getTerritoryIdFromTarget(e.target);
-    setHoveredId(tid ?? null);
-  }, []);
-
-  const onPointerMove = useCallback((e) => {
-    if (!drag.current) return;
-    e.preventDefault();
-
-    const dx = e.clientX - drag.current.startX;
-    const dy = e.clientY - drag.current.startY;
-
-    if (Math.abs(dx) > TAP_THRESHOLD || Math.abs(dy) > TAP_THRESHOLD) {
-      drag.current.moved = true;
+  const onMouseMove = useCallback((e) => {
+    if (!mouseDrag.current) {
+      // hover
+      const tid = getTerritoryIdFromTarget(e.target);
+      setHoveredId(tid ?? null);
+      return;
     }
-    if (!drag.current.moved) return;
+    const dx = e.clientX - mouseDrag.current.startX;
+    const dy = e.clientY - mouseDrag.current.startY;
+    if (Math.abs(dx) > TAP_THRESHOLD || Math.abs(dy) > TAP_THRESHOLD) mouseDrag.current.moved = true;
+    if (!mouseDrag.current.moved) return;
     if (rafRef.current) return;
-
-    const captureDx = dx;
-    const captureDy = dy;
-    const captureOriginX = drag.current.originX;
-    const captureOriginY = drag.current.originY;
-
+    const { originX, originY } = mouseDrag.current;
     rafRef.current = requestAnimationFrame(() => {
-      setTransform(prev => ({
-        ...prev,
-        x: captureOriginX + captureDx,
-        y: captureOriginY + captureDy,
-      }));
+      setTransform(prev => ({ ...prev, x: originX + dx, y: originY + dy }));
       rafRef.current = null;
     });
   }, []);
 
-  const onPointerUp = useCallback((e) => {
-    if (!drag.current) return;
-
-    if (rafRef.current) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    }
-
-    const wasDrag = drag.current.moved;
-    const downTarget = drag.current.downTarget;
-
-    if (!wasDrag) {
+  const onMouseUp = useCallback((e) => {
+    if (!mouseDrag.current) return;
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+    const { moved, downTarget } = mouseDrag.current;
+    mouseDrag.current = null;
+    if (!moved) {
       const tid = getTerritoryIdFromTarget(e.target) ?? getTerritoryIdFromTarget(downTarget);
-
-      if (debugMode) {
-        setDebugInfo({
-          classification: 'tap',
-          upTarget: e.target?.tagName,
-          downTarget: downTarget?.tagName,
-          territoryId: tid ?? 'none',
-          phase: currentPhase,
-          selectedBefore: selectedId,
-          interactionMode,
-          timestamp: new Date().toISOString(),
-        });
-      }
-
       if (tid) handleTerritoryClick(tid);
     }
+  }, [handleTerritoryClick]);
 
-    drag.current = null;
-  }, [handleTerritoryClick, debugMode, currentPhase, selectedId, interactionMode]);
+  // ── Touch handlers (pan + pinch-zoom + tap) ────────────────────────────────
+  const onTouchStart = useCallback((e) => {
+    e.preventDefault();
+    const touches = Array.from(e.touches);
+    setTransform(current => {
+      if (touches.length === 1) {
+        touchRef.current = {
+          type: 'pan',
+          startX: touches[0].clientX,
+          startY: touches[0].clientY,
+          originX: current.x,
+          originY: current.y,
+          moved: false,
+          downTarget: e.target,
+        };
+      } else if (touches.length === 2) {
+        const midX = (touches[0].clientX + touches[1].clientX) / 2;
+        const midY = (touches[0].clientY + touches[1].clientY) / 2;
+        const dist = Math.hypot(
+          touches[1].clientX - touches[0].clientX,
+          touches[1].clientY - touches[0].clientY
+        );
+        touchRef.current = {
+          type: 'pinch',
+          startDist: dist,
+          midX, midY,
+          originScale: current.scale,
+          originX: current.x,
+          originY: current.y,
+        };
+      }
+      return current; // no state change here
+    });
+  }, []);
+
+  const onTouchMove = useCallback((e) => {
+    e.preventDefault();
+    if (!touchRef.current) return;
+    const touches = Array.from(e.touches);
+    const t = touchRef.current;
+
+    if (t.type === 'pan' && touches.length === 1) {
+      const dx = touches[0].clientX - t.startX;
+      const dy = touches[0].clientY - t.startY;
+      if (Math.abs(dx) > TAP_THRESHOLD || Math.abs(dy) > TAP_THRESHOLD) t.moved = true;
+      if (!t.moved) return;
+      if (rafRef.current) return;
+      rafRef.current = requestAnimationFrame(() => {
+        setTransform(prev => ({ ...prev, x: t.originX + dx, y: t.originY + dy }));
+        rafRef.current = null;
+      });
+    } else if (t.type === 'pinch' && touches.length === 2) {
+      const dist = Math.hypot(
+        touches[1].clientX - touches[0].clientX,
+        touches[1].clientY - touches[0].clientY
+      );
+      const newScale = Math.max(
+        fitScaleRef.current * 0.5,
+        Math.min(MAX_ZOOM, t.originScale * (dist / t.startDist))
+      );
+      const ratio = newScale / t.originScale;
+      if (rafRef.current) return;
+      rafRef.current = requestAnimationFrame(() => {
+        setTransform({
+          scale: newScale,
+          x: t.midX - ratio * (t.midX - t.originX),
+          y: t.midY - ratio * (t.midY - t.originY),
+        });
+        rafRef.current = null;
+      });
+    }
+  }, []);
+
+  const onTouchEnd = useCallback((e) => {
+    e.preventDefault();
+    if (!touchRef.current) return;
+    const t = touchRef.current;
+    touchRef.current = null;
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+    // Tap detection — single finger, didn't move
+    if (t.type === 'pan' && !t.moved && e.changedTouches.length === 1) {
+      const touch = e.changedTouches[0];
+      const el = document.elementFromPoint(touch.clientX, touch.clientY);
+      const tid = getTerritoryIdFromTarget(el) ?? getTerritoryIdFromTarget(t.downTarget);
+      if (tid) handleTerritoryClick(tid);
+    }
+  }, [handleTerritoryClick]);
+
+  // Register touch handlers with passive:false so we can call preventDefault
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    el.addEventListener('touchstart', onTouchStart, { passive: false });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    el.addEventListener('touchend', onTouchEnd, { passive: false });
+    el.addEventListener('touchcancel', onTouchEnd, { passive: false });
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('touchcancel', onTouchEnd);
+    };
+  }, [onTouchStart, onTouchMove, onTouchEnd]);
 
   const regionColorById = {};
   for (const r of (mapDef?.regions ?? [])) {
@@ -279,23 +340,16 @@ export default function MapRenderer({
 
   if (!mapDef) return null;
 
-  const resetView = () => {
-    const el = containerRef.current;
-    if (!el || !mapDef) return;
-    const { width: cw, height: ch } = el.getBoundingClientRect();
-    setTransform(computeFitTransform(cw, ch, mapDef));
-  };
-
   return (
     <div
       ref={containerRef}
       className="absolute inset-0 overflow-hidden select-none"
-      onPointerDown={onPointerDown}
-      onPointerMove={(e) => { onPointerHover(e); onPointerMove(e); }}
-      onPointerUp={onPointerUp}
-      onPointerLeave={(e) => { setHoveredId(null); onPointerUp(e); }}
+      onMouseDown={onMouseDown}
+      onMouseMove={onMouseMove}
+      onMouseUp={onMouseUp}
+      onMouseLeave={(e) => { setHoveredId(null); onMouseUp(e); }}
       style={{
-        cursor: 'grab',
+        cursor: mouseDrag.current ? 'grabbing' : 'grab',
         touchAction: 'none',
         WebkitTouchCallout: 'none',
         WebkitUserSelect: 'none',
@@ -370,58 +424,54 @@ export default function MapRenderer({
 
       {/* Debug overlay */}
       {debugMode && debugInfo && (
-        <div className="absolute top-2 left-2 z-50 bg-black/80 text-green-400 text-[10px] font-mono p-2 rounded max-w-[220px] space-y-0.5 pointer-events-none">
-          <div className="font-bold text-yellow-400 uppercase tracking-wider mb-1">Map Debug</div>
-          <div>Type: <span className={debugInfo.classification === 'tap' ? 'text-green-300' : 'text-orange-300'}>{debugInfo.classification}</span></div>
+        <div className="absolute top-2 left-2 z-50 bg-black/80 text-green-400 text-[10px] font-mono p-2 rounded max-w-[220px] pointer-events-none">
+          <div className="font-bold text-yellow-400 mb-1">Map Debug</div>
           <div>Territory: {debugInfo.territoryId ?? '—'}</div>
           <div>Phase: {debugInfo.phase ?? '—'}</div>
-          <div className="text-muted-foreground">{debugInfo.timestamp?.split('T')[1]?.slice(0,8)}</div>
         </div>
       )}
 
       {/* Map view toggle */}
-      <motion.button
-        onPointerDown={e => e.stopPropagation()}
+      <button
+        onMouseDown={e => e.stopPropagation()}
+        onTouchStart={e => e.stopPropagation()}
         onClick={() => setMapView(v => v === 'artistic' ? 'tactical' : 'artistic')}
         className="absolute top-3 right-3 z-10 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-panel-header/90 border border-panel-border text-foreground text-xs font-display tracking-wider uppercase hover:bg-secondary hover:border-primary/50 active:scale-95 transition-all shadow-lg touch-manipulation backdrop-blur-sm"
         aria-label="Toggle map view"
-        initial={{ y: -20, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ duration: 0.3, delay: 0.2 }}
         style={{ pointerEvents: 'auto' }}
       >
         {mapView === 'artistic' ? <Eye className="w-3.5 h-3.5" /> : <Map className="w-3.5 h-3.5" />}
         {mapView === 'artistic' ? 'Tactical' : 'Artistic'}
-      </motion.button>
+      </button>
 
       {/* Zoom controls */}
-      <motion.div
+      <div
         className="absolute bottom-4 right-4 flex flex-col gap-1.5 z-10"
-        initial={{ y: 20, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ duration: 0.3, delay: 0.3 }}
         style={{ pointerEvents: 'auto' }}
       >
-        <motion.button
-          onPointerDown={e => e.stopPropagation()}
+        <button
+          onMouseDown={e => e.stopPropagation()}
+          onTouchStart={e => e.stopPropagation()}
           onClick={() => zoomAroundCenter(1.25)}
           className="w-9 h-9 rounded-lg bg-panel-header border border-panel-border text-foreground text-lg font-light flex items-center justify-center hover:bg-secondary hover:border-primary/50 active:scale-95 transition-all shadow-lg touch-manipulation"
           aria-label="Zoom in"
-        >+</motion.button>
-        <motion.button
-          onPointerDown={e => e.stopPropagation()}
+        >+</button>
+        <button
+          onMouseDown={e => e.stopPropagation()}
+          onTouchStart={e => e.stopPropagation()}
           onClick={() => zoomAroundCenter(0.8)}
           className="w-9 h-9 rounded-lg bg-panel-header border border-panel-border text-foreground text-lg font-light flex items-center justify-center hover:bg-secondary hover:border-primary/50 active:scale-95 transition-all shadow-lg touch-manipulation"
           aria-label="Zoom out"
-        >−</motion.button>
-        <motion.button
-          onPointerDown={e => e.stopPropagation()}
+        >−</button>
+        <button
+          onMouseDown={e => e.stopPropagation()}
+          onTouchStart={e => e.stopPropagation()}
           onClick={resetView}
           className="w-9 h-9 rounded-lg bg-panel-header border border-panel-border text-foreground text-sm flex items-center justify-center hover:bg-secondary hover:border-primary/50 active:scale-95 transition-all shadow-lg touch-manipulation"
           aria-label="Reset zoom"
           title="Reset view"
-        >⊡</motion.button>
-      </motion.div>
+        >⊡</button>
+      </div>
     </div>
   );
 }
