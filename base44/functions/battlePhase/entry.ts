@@ -296,12 +296,24 @@ function buildTerritoryUpdates(card, result, territoryStates) {
     const clampedSurvivors = Math.max(1, Math.min(survivingTroops, winnerCommitted));
 
     const targetState = territoryStates.find(s => s.territory_id === card.target_territory_id);
+    const ownerBefore = targetState?.owner_player_id ?? 'null';
+    const troopsBefore = targetState?.troop_count ?? 0;
+    console.log(`[capture_objectives] winner=${winner_player_id} target=${card.target_territory_id} owner_before=${ownerBefore} troops_before=${troopsBefore} survivors=${clampedSurvivors} (raw=${survivingTroops} clamped to winnerCommitted=${winnerCommitted})`);
+
     if (targetState) {
-      const ownerBefore = targetState.owner_player_id ?? 'null';
-      const troopsBefore = targetState.troop_count ?? 0;
-      console.log(`[capture_objectives] winner=${winner_player_id} target=${card.target_territory_id} owner_before=${ownerBefore} troops_before=${troopsBefore} survivors=${clampedSurvivors} (raw=${survivingTroops} clamped to winnerCommitted=${winnerCommitted})`);
       updates.push({
         id:              targetState.id,
+        territory_id:    card.target_territory_id,
+        owner_player_id: winner_player_id,
+        troop_count:     clampedSurvivors,
+      });
+    } else {
+      // No TerritoryState record yet (truly neutral territory — never owned).
+      // Flag for creation after updates are applied.
+      updates.push({
+        _create: true,
+        campaign_id:     card.campaign_id,
+        map_id:          card.map_id ?? null,
         territory_id:    card.target_territory_id,
         owner_player_id: winner_player_id,
         troop_count:     clampedSurvivors,
@@ -351,10 +363,21 @@ function buildTerritoryUpdates(card, result, territoryStates) {
 
 async function applyTerritoryUpdates(base44, updates) {
   for (const upd of updates) {
-    await base44.asServiceRole.entities.TerritoryState.update(upd.id, {
-      owner_player_id: upd.owner_player_id,
-      troop_count:     upd.troop_count,
-    });
+    if (upd._create) {
+      // No existing TerritoryState record — create one for this neutral territory
+      await base44.asServiceRole.entities.TerritoryState.create({
+        campaign_id:     upd.campaign_id,
+        map_id:          upd.map_id ?? '',
+        territory_id:    upd.territory_id,
+        owner_player_id: upd.owner_player_id,
+        troop_count:     upd.troop_count,
+      });
+    } else {
+      await base44.asServiceRole.entities.TerritoryState.update(upd.id, {
+        owner_player_id: upd.owner_player_id,
+        troop_count:     upd.troop_count,
+      });
+    }
   }
 }
 
@@ -806,13 +829,21 @@ Deno.serve(async (req) => {
     const currentVotes = { ...(card.delay_votes ?? {}) };
     currentVotes[effectivePlayer.id] = vote;
 
-    const yesVotes = Object.values(currentVotes).filter(v => v === 'yes').length;
-    const noVotes  = Object.values(currentVotes).filter(v => v === 'no').length;
-    const requiredMajority = Math.ceil(participantIds.length / 2);
+    const yesVotes    = Object.values(currentVotes).filter(v => v === 'yes').length;
+    const noVotes     = Object.values(currentVotes).filter(v => v === 'no').length;
+    const totalRequired = participantIds.length;
 
+    // Delay requires ALL involved players to vote yes (unanimous).
+    // Any 'no' vote immediately cancels delay. If not all have voted yet, status stays unchanged.
     let newStatus = card.status;
-    if (yesVotes >= requiredMajority) newStatus = 'delayed';
-    else if (noVotes >= requiredMajority) newStatus = 'awaiting_result';
+    if (noVotes > 0) {
+      // Any 'no' kills the delay
+      newStatus = 'awaiting_result';
+    } else if (yesVotes >= totalRequired) {
+      // All participants have voted yes — delay is unanimous
+      newStatus = 'delayed';
+    }
+    // else: some haven't voted yet — leave status as-is
 
     await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
       status: newStatus,
@@ -825,14 +856,20 @@ Deno.serve(async (req) => {
       await refreshLockedTerritories(base44, campaign_id);
     }
 
+    const allVoted = (yesVotes + noVotes) >= totalRequired;
     await log(base44, campaign_id, card.round, 'battle_delay_vote', effectivePlayer.id, {
-      battle_card_id, vote, yes_count: yesVotes, no_count: noVotes, new_status: newStatus,
+      battle_card_id, vote,
+      yes_count: yesVotes, no_count: noVotes,
+      total_participants: totalRequired,
+      all_voted: allVoted,
+      new_status: newStatus,
       acting_as: acting_as_player_id ?? null,
     }, true);
 
     return Response.json({
       success: true, status: newStatus, delay_votes: currentVotes,
-      majority_reached: yesVotes >= requiredMajority || noVotes >= requiredMajority,
+      votes_needed: Math.max(0, totalRequired - yesVotes),
+      all_voted: allVoted,
     });
   }
 

@@ -441,7 +441,24 @@ export default function BattleCardDetail() {
               <p className="text-xs font-display tracking-wider uppercase text-muted-foreground flex items-center gap-2">
                 <Clock className="w-3 h-3" /> Vote to Delay
               </p>
-              <div className="flex gap-2">
+              {/* Per-player vote status */}
+              <div className="space-y-1">
+                {participantIds.map(pid => {
+                  const vote = card.delay_votes?.[pid];
+                  const p = players.find(pl => pl.id === pid);
+                  const hex = getPlayerHex(players, pid);
+                  return (
+                    <div key={pid} className="flex items-center gap-2 text-xs px-2 py-1 rounded border border-border bg-muted/10">
+                      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: hex }} />
+                      <span className="flex-1">{p?.display_name ?? '?'}</span>
+                      {vote === 'yes' && <span className="text-warning font-medium">Voted: Delay</span>}
+                      {vote === 'no'  && <span className="text-status-locked font-medium">Voted: No Delay</span>}
+                      {!vote          && <span className="text-muted-foreground/50 italic">Not voted</span>}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex gap-2 pt-1">
                 <button
                   onClick={() => handleVoteDelay('yes')}
                   disabled={actionLoading || myVote === 'yes'}
@@ -449,7 +466,7 @@ export default function BattleCardDetail() {
                     myVote === 'yes' ? 'bg-warning/20 text-warning border border-warning' : 'bg-muted/20 text-muted-foreground border border-border hover:bg-warning/10'
                   } disabled:opacity-40`}
                 >
-                  Delay{actingAsId && effectivePlayer ? ` as ${effectivePlayer.display_name}` : ''} ({card.delay_votes ? Object.values(card.delay_votes).filter(v => v === 'yes').length : 0})
+                  Vote Delay{actingAsId && effectivePlayer ? ` as ${effectivePlayer.display_name}` : ''}
                 </button>
                 <button
                   onClick={() => handleVoteDelay('no')}
@@ -458,12 +475,37 @@ export default function BattleCardDetail() {
                     myVote === 'no' ? 'bg-status-locked/20 text-status-locked border border-status-locked' : 'bg-muted/20 text-muted-foreground border border-border hover:bg-status-locked/10'
                   } disabled:opacity-40`}
                 >
-                  No Delay{actingAsId && effectivePlayer ? ` as ${effectivePlayer.display_name}` : ''} ({card.delay_votes ? Object.values(card.delay_votes).filter(v => v === 'no').length : 0})
+                  No Delay{actingAsId && effectivePlayer ? ` as ${effectivePlayer.display_name}` : ''}
                 </button>
               </div>
               <p className="text-xs text-muted-foreground">
-                Majority required: {Math.ceil(participantIds.length / 2)} of {participantIds.length} participants
+                Requires unanimous vote — all {participantIds.length} participants must vote yes.
               </p>
+            </div>
+          )}
+
+          {/* Admin delay vote status — shown to admin even when canVote is false */}
+          {isAdmin && !canVote && card.delay_votes && Object.keys(card.delay_votes).length > 0 && (
+            <div className="panel p-3 space-y-2">
+              <p className="text-xs font-display tracking-wider uppercase text-muted-foreground flex items-center gap-2">
+                <Clock className="w-3 h-3" /> Delay Vote Status
+              </p>
+              <div className="space-y-1">
+                {participantIds.map(pid => {
+                  const vote = card.delay_votes?.[pid];
+                  const p = players.find(pl => pl.id === pid);
+                  const hex = getPlayerHex(players, pid);
+                  return (
+                    <div key={pid} className="flex items-center gap-2 text-xs px-2 py-1 rounded border border-border bg-muted/10">
+                      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: hex }} />
+                      <span className="flex-1">{p?.display_name ?? '?'}</span>
+                      {vote === 'yes' && <span className="text-warning font-medium">Voted: Delay</span>}
+                      {vote === 'no'  && <span className="text-status-locked font-medium">Voted: No Delay</span>}
+                      {!vote          && <span className="text-muted-foreground/50 italic">Not voted</span>}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
 
