@@ -78,6 +78,57 @@ function centroid(poly: {x:number,y:number}[]): {cx:number,cy:number} {
   return {cx:+cx.toFixed(1), cy:+cy.toFixed(1)};
 }
 
+// ─── Per-territory label and troop anchor overrides ──────────────────────────
+// label_x/label_y: where the name text should appear
+// troop_x/troop_y: where the troop count badge should appear
+
+const ANCHORS: Record<string, { label_x:number, label_y:number, troop_x:number, troop_y:number }> = {
+  B1:  { label_x:4970,  label_y:3700,  troop_x:5050,  troop_y:3820  },
+  B2:  { label_x:5100,  label_y:4180,  troop_x:5150,  troop_y:4310  },
+  B3:  { label_x:5900,  label_y:3760,  troop_x:5980,  troop_y:3900  },
+  B4:  { label_x:6280,  label_y:4300,  troop_x:6340,  troop_y:4450  },
+  B5:  { label_x:4780,  label_y:4640,  troop_x:4850,  troop_y:4780  },
+  B6:  { label_x:5380,  label_y:4720,  troop_x:5420,  troop_y:4860  },
+  B7:  { label_x:6100,  label_y:4800,  troop_x:6160,  troop_y:4950  },
+  B8:  { label_x:4870,  label_y:5100,  troop_x:4900,  troop_y:5250  },
+  B9:  { label_x:5430,  label_y:5220,  troop_x:5470,  troop_y:5350  },
+  B10: { label_x:6080,  label_y:5330,  troop_x:6100,  troop_y:5490  },
+  C1:  { label_x:7100,  label_y:2820,  troop_x:7080,  troop_y:2960  },
+  C2:  { label_x:7540,  label_y:3430,  troop_x:7560,  troop_y:3570  },
+  C3:  { label_x:7840,  label_y:4050,  troop_x:7860,  troop_y:4200  },
+  C4:  { label_x:7060,  label_y:4650,  troop_x:7070,  troop_y:4800  },
+  C5:  { label_x:7620,  label_y:5000,  troop_x:7640,  troop_y:5140  },
+  C6:  { label_x:7000,  label_y:5450,  troop_x:7010,  troop_y:5580  },
+  C7:  { label_x:7180,  label_y:6200,  troop_x:7190,  troop_y:6340  },
+  C8:  { label_x:7720,  label_y:5830,  troop_x:7740,  troop_y:5960  },
+  I1:  { label_x:3950,  label_y:2620,  troop_x:4000,  troop_y:2760  },
+  I2:  { label_x:4540,  label_y:2620,  troop_x:4580,  troop_y:2760  },
+  I3:  { label_x:5320,  label_y:2620,  troop_x:5360,  troop_y:2760  },
+  I4:  { label_x:5950,  label_y:2700,  troop_x:5980,  troop_y:2840  },
+  I5:  { label_x:4400,  label_y:3250,  troop_x:4440,  troop_y:3390  },
+  I6:  { label_x:5060,  label_y:3170,  troop_x:5090,  troop_y:3310  },
+  I7:  { label_x:5700,  label_y:3250,  troop_x:5730,  troop_y:3390  },
+  I8:  { label_x:6500,  label_y:3150,  troop_x:6520,  troop_y:3290  },
+  S1:  { label_x:3100,  label_y:5780,  troop_x:3130,  troop_y:5920  },
+  S2:  { label_x:4400,  label_y:5800,  troop_x:4430,  troop_y:5940  },
+  S3:  { label_x:5700,  label_y:5750,  troop_x:5730,  troop_y:5880  },
+  S4:  { label_x:3100,  label_y:6560,  troop_x:3130,  troop_y:6700  },
+  S5:  { label_x:4700,  label_y:6420,  troop_x:4730,  troop_y:6560  },
+  S6:  { label_x:6000,  label_y:6380,  troop_x:6030,  troop_y:6520  },
+  S7:  { label_x:3900,  label_y:7000,  troop_x:3930,  troop_y:7130  },
+  S8:  { label_x:5200,  label_y:7030,  troop_x:5230,  troop_y:7160  },
+  S9:  { label_x:6700,  label_y:6980,  troop_x:6730,  troop_y:7110  },
+  W1:  { label_x:3250,  label_y:3050,  troop_x:3280,  troop_y:3190  },
+  W2:  { label_x:3350,  label_y:3650,  troop_x:3380,  troop_y:3790  },
+  W3:  { label_x:3980,  label_y:3820,  troop_x:4010,  troop_y:3960  },
+  W4:  { label_x:2420,  label_y:4350,  troop_x:2450,  troop_y:4490  },
+  W5:  { label_x:3300,  label_y:4500,  troop_x:3330,  troop_y:4640  },
+  W6:  { label_x:4120,  label_y:4580,  troop_x:4150,  troop_y:4720  },
+  W7:  { label_x:2300,  label_y:5250,  troop_x:2330,  troop_y:5390  },
+  W8:  { label_x:3280,  label_y:5180,  troop_x:3310,  troop_y:5320  },
+  W9:  { label_x:4080,  label_y:5180,  troop_x:4110,  troop_y:5320  },
+};
+
 // ─── Territory metadata ────────────────────────────────────────────────────────
 
 const TERRITORY_META: {
@@ -225,6 +276,7 @@ export const MAP_SHATTERED_CROWN: MapDefinition = {
   territories: TERRITORY_META.map(t => {
     const poly = POLYS[t.territory_id] ?? [];
     const {cx, cy} = centroid(poly);
+    const anchors = ANCHORS[t.territory_id];
     return {
       territory_id:          t.territory_id,
       name:                  t.name,
@@ -234,10 +286,10 @@ export const MAP_SHATTERED_CROWN: MapDefinition = {
       points:                pts(poly),
       cx,
       cy,
-      troop_x:               cx,
-      troop_y:               cy,
-      label_x:               cx,
-      label_y:               cy,
+      troop_x:               anchors?.troop_x ?? cx,
+      troop_y:               anchors?.troop_y ?? cy,
+      label_x:               anchors?.label_x ?? cx,
+      label_y:               anchors?.label_y ?? cy,
       resource_distribution: t.resource_distribution,
     };
   }),

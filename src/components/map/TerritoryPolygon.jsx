@@ -77,37 +77,36 @@ export default function TerritoryPolygon({
   const baseStroke = TERRAIN_STROKE[terrainKey] ?? CONTINENT_STROKE_ACCENT[continent_id] ?? DEFAULT_STROKE;
   const troopColor = ownerColor ?? '#e8eef8';
 
-  // ── Tactical view ──────────────────────────────────────────────────────────
-  if (mapView === 'tactical') {
+  // ── Artistic view — borders only, no fill (color PNG provides visual) ─────
+  if (mapView === 'artistic') {
     let strokeColor   = ownerColor ?? baseStroke;
-    let strokeWidth   = isSelected ? 36 : 22;
-    let strokeOpacity = isSelected ? 1.0 : (ownerColor ? 0.90 : 0.55);
-    let fillColor     = ownerColor ?? 'transparent';
-    let fillOpacity   = isSelected ? 0.15 : 0.0;
+    let strokeWidth   = isSelected ? 40 : (ownerColor ? 28 : 18);
+    let strokeOpacity = isSelected ? 1.0 : (ownerColor ? 0.85 : 0.50);
 
-    if (isHighlighted) { strokeColor = '#fde047'; strokeWidth = 32; strokeOpacity = 1.0; fillColor = '#fde047'; fillOpacity = 0.08; }
-    if (isAttackable)  { strokeColor = '#f87171'; strokeWidth = 28; strokeOpacity = 1.0; fillColor = '#f87171'; fillOpacity = 0.08; }
-    if (isLocked)      { strokeColor = '#f97316'; strokeWidth = 32; strokeOpacity = 1.0; }
+    if (isHighlighted) { strokeColor = '#fde047'; strokeWidth = 38; strokeOpacity = 1.0; }
+    if (isAttackable)  { strokeColor = '#f87171'; strokeWidth = 32; strokeOpacity = 1.0; }
+    if (isLocked)      { strokeColor = '#f97316'; strokeWidth = 36; strokeOpacity = 1.0; }
 
     let filterAttr;
     if (isSelected)    filterAttr = 'url(#glow-selected)';
     if (isHighlighted) filterAttr = 'url(#glow-highlight)';
     if (isAttackable)  filterAttr = 'url(#glow-attack)';
+    if (isLocked)      filterAttr = 'url(#glow-attack)';
 
     return (
       <g data-tid={territory_id} style={{ cursor: 'pointer' }}>
         <polygon
           data-tid={territory_id}
           points={points}
-          fill={fillColor}
-          fillOpacity={fillOpacity}
+          fill="transparent"
+          fillOpacity={0}
           stroke={strokeColor}
           strokeWidth={strokeWidth}
           strokeOpacity={strokeOpacity}
           filter={filterAttr}
         />
         {isLocked && (
-          <polygon data-tid={territory_id} points={points} fill="url(#locked-hatch)" fillOpacity={0.25} stroke="none" style={{ pointerEvents: 'none' }} />
+          <polygon data-tid={territory_id} points={points} fill="url(#locked-hatch)" fillOpacity={0.35} stroke="none" style={{ pointerEvents: 'none' }} />
         )}
         {troopCount > 0 && (
           <TroopBadge cx={tx} cy={ty} troopCount={troopCount} color={troopColor} tid={territory_id} />
@@ -116,48 +115,25 @@ export default function TerritoryPolygon({
     );
   }
 
-  // ── Artistic view ──────────────────────────────────────────────────────────
-  let fillColor   = 'transparent';
-  let fillOpacity = 0.0;
-  if (ownerColor) {
-    fillColor   = ownerColor;
-    fillOpacity = isSelected ? 0.40 : 0.25;
-  } else if (isSelected) {
-    fillColor = '#ffffff';
-    fillOpacity = 0.12;
-  }
+  // ── Tactical view — filled polygons over grayscale PNG ────────────────────
+  let fillColor   = ownerColor ?? '#1e293b';
+  let fillOpacity = ownerColor ? (isSelected ? 0.75 : 0.55) : 0.30;
 
-  // Thicker strokes for artistic view so borders are visible over the PNG
   let strokeColor   = ownerColor ?? baseStroke;
-  let strokeWidth   = isSelected ? 40 : (ownerColor ? 28 : 18);
-  let strokeOpacity = isSelected ? 1.0 : (ownerColor ? 0.85 : 0.50);
+  let strokeWidth   = isSelected ? 36 : 22;
+  let strokeOpacity = isSelected ? 1.0 : (ownerColor ? 0.90 : 0.55);
 
-  if (isHighlighted) { strokeColor = '#fde047'; strokeWidth = 38; strokeOpacity = 1.0; }
-  if (isAttackable)  { strokeColor = '#f87171'; strokeWidth = 32; strokeOpacity = 1.0; }
-  if (isLocked)      { strokeColor = '#f97316'; strokeWidth = 36; strokeOpacity = 1.0; }
+  if (isHighlighted) { strokeColor = '#fde047'; strokeWidth = 32; strokeOpacity = 1.0; fillColor = '#fde047'; fillOpacity = 0.25; }
+  if (isAttackable)  { strokeColor = '#f87171'; strokeWidth = 28; strokeOpacity = 1.0; fillColor = '#f87171'; fillOpacity = 0.20; }
+  if (isLocked)      { strokeColor = '#f97316'; strokeWidth = 32; strokeOpacity = 1.0; }
 
   let filterAttr;
   if (isSelected)    filterAttr = 'url(#glow-selected)';
   if (isHighlighted) filterAttr = 'url(#glow-highlight)';
   if (isAttackable)  filterAttr = 'url(#glow-attack)';
-  if (isLocked)      filterAttr = 'url(#glow-attack)';
-
-  const ownedEdgeStroke = ownerColor && !isSelected && !isHighlighted && !isAttackable ? ownerColor : null;
 
   return (
     <g data-tid={territory_id} style={{ cursor: 'pointer' }}>
-      {ownedEdgeStroke && (
-        <polygon
-          data-tid={territory_id}
-          points={points}
-          fill="none"
-          stroke={ownedEdgeStroke}
-          strokeWidth={60}
-          strokeOpacity={0.18}
-          filter="url(#glow-owner)"
-          style={{ pointerEvents: 'none' }}
-        />
-      )}
       <polygon
         data-tid={territory_id}
         points={points}

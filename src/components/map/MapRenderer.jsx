@@ -191,6 +191,8 @@ export default function MapRenderer({
   // ── Mouse pointer handlers ─────────────────────────────────────────────────
   const onMouseDown = useCallback((e) => {
     if (e.button !== 0) return;
+    // Don't start drag if clicking a button/control
+    if (e.target.closest('button')) return;
     e.preventDefault();
     mouseDrag.current = {
       startX: e.clientX, startY: e.clientY,
@@ -231,6 +233,8 @@ export default function MapRenderer({
 
   // ── Touch handlers (pan + pinch-zoom + tap) ────────────────────────────────
   const onTouchStart = useCallback((e) => {
+    // Don't intercept touches on buttons/controls
+    if (e.target.closest('button')) return;
     e.preventDefault();
     const touches = Array.from(e.touches);
     setTransform(current => {
