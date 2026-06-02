@@ -20,6 +20,7 @@ import RightDockRouter from '@/components/campaigns/RightDockRouter';
 
 // Hooks
 import { useAttackReveals, useAttackPhase } from '@/features/campaigns/attack';
+import { useBattleCards } from '@/features/campaigns/battle';
 import { useAttackArrows } from '@/features/campaigns/attack/useAttackArrows.js';
 import { useCampaign } from '@/features/campaigns';
 import { useTerritoryState, getMap, buildAdjacencyMap } from '@/features/maps';
@@ -189,12 +190,20 @@ function ActiveCampaignContent() {
     enabled: !!id && phase !== 'attack',
   });
 
+  // Delayed battle cards — used to show carried-over battle arrows during battle phase
+  const { delayedCards: delayedBattleCards } = useBattleCards({
+    campaignId: id,
+    round: campaign?.current_round ?? 1,
+    enabled: !!id && phase === 'battle',
+  });
+
   // Arrow layer (extracted logic)
   const arrowAttacks = useAttackArrows({
     phase,
     myPlayer,
     myStagedAttacks,
     attackReveals,
+    delayedBattleCards,
   });
 
   // ── Map interaction callbacks ──────────────────────────────────────────────

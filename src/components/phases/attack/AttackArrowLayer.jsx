@@ -118,8 +118,8 @@ export default function AttackArrowLayer({
 
   if (!arrowData.length) return null;
 
-  // Collect unique colors for marker defs
-  const uniqueColors = [...new Set(arrowData.map(a => getPlayerHex(players, a.player_id)))];
+  // Collect unique colors for marker defs (includes delayed orange)
+  const uniqueColors = [...new Set(arrowData.map(a => a.is_delayed ? '#f59e0b' : getPlayerHex(players, a.player_id)))];
 
   // Rendered as SVG <g> elements inside the map's own <svg> so they
   // inherit the pan/zoom transform automatically. Arrow sizes are in
@@ -144,7 +144,11 @@ export default function AttackArrowLayer({
         const color    = getPlayerHex(players, atk.player_id);
         const markerId = `arrow-${color.replace('#', '')}`;
         const isOwn    = atk.player_id === myPlayerId;
-        const isDashed = !revealed && isOwn;
+        // Delayed arrows: orange tint + dashed; staging: dashed own color
+        const isDelayed = !!atk.is_delayed;
+        const arrowColor = isDelayed ? '#f59e0b' : color;
+        const delayedMarkerId = `arrow-${arrowColor.replace('#', '')}`;
+        const isDashed = isDelayed || (!revealed && isOwn);
 
         // Label position: 60% along the arrow
         const lx = atk.x1 + (atk.x2 - atk.x1) * 0.6;
@@ -155,11 +159,11 @@ export default function AttackArrowLayer({
             <line
               x1={atk.x1} y1={atk.y1}
               x2={atk.x2} y2={atk.y2}
-              stroke={color}
+              stroke={arrowColor}
               strokeWidth={STROKE_W}
               strokeDasharray={isDashed ? '200 120' : undefined}
-              strokeOpacity={0.9}
-              markerEnd={`url(#${markerId})`}
+              strokeOpacity={isDelayed ? 0.7 : 0.9}
+              markerEnd={`url(#${isDelayed ? delayedMarkerId : markerId})`}
             />
             {/* Troop count label */}
             <g transform={`translate(${lx}, ${ly})`}>
@@ -169,7 +173,7 @@ export default function AttackArrowLayer({
                 rx={BADGE_R * 0.4}
                 fill="#0a0f1e"
                 fillOpacity={0.82}
-                stroke={color}
+                stroke={arrowColor}
                 strokeWidth={18}
               />
               <text
@@ -177,10 +181,10 @@ export default function AttackArrowLayer({
                 textAnchor="middle"
                 fontSize={FONT_SIZE}
                 fontFamily="'Orbitron', monospace"
-                fill={color}
+                fill={arrowColor}
                 fontWeight="700"
               >
-                {atk.committed_troops}
+                {atk.committed_troops}{isDelayed ? '⏱' : ''}
               </text>
             </g>
           </g>

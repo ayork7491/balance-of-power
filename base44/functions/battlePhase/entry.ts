@@ -6,63 +6,58 @@
  *   submitResult        — submit tabletop battle result (admin only)
  *   approveResult       — approve or flag a submitted result (uses acting_as_player_id for perspective)
  *   adminOverride       — admin clears flags and forces result into awaiting_approval (unstuck)
- *   autoResolve         — force auto-resolve a specific battle card (admin)
+ *   autoResolve         — force auto-resolve a specific battle card (admin OR unanimous player vote)
  *   setDelayed          — admin: delay a battle (pause resolution)
  *   setForfeited        — admin: mark battle as forfeited (winner by forfeit, retains all committed troops)
- *   voteDelay           — participant: vote to delay this battle (uses acting_as_player_id for perspective)
+ *   voteDelay           — participant: vote to delay this battle (unanimous required)
+ *   voteAutoResolve     — participant: vote to auto-resolve this battle (unanimous required)
+ *   playerForfeit       — participant: forfeit their own troops (losing player gives up)
  *   processPhaseEnd     — admin: auto-resolve all pending battles, apply all results,
  *                         carry delayed battles to next round, update territory states,
  *                         check eliminations, advance phase.
  *
- * ─── RESOLUTION PIPELINE ─────────────────────────────────────────────────────
- *   pending → awaiting_result → result_submitted → awaiting_approval → resolved
- *   pending → auto_resolved (admin force or timeout)
- *   pending → delayed (admin set or majority vote) → carried to next battle phase
- *   pending → forfeited (admin set)
+ * ─── TROOP CONVERSION SAFETY ─────────────────────────────────────────────────
+ *   All BOP troop outcomes use getWinnerCommittedTroops() directly.
+ *   TT values are helpers only — never source of truth for final BOP counts.
+ *   Survivor BOP = round(surviving_TT / tabletop_size * total_troops) — clamped to committed BOP.
+ *   Forfeit winner retains EXACTLY their committed BOP troops (no conversion round-trip).
  *
- * ─── TERRITORY RESOLUTION MATRIX ────────────────────────────────────────────
- *   skirmish            (attackPhase): attacker always wins if target is neutral/vacated.
- *                         If target is defended (defender has troops left) → auto-resolved here:
- *                         Winner gains territory + survivors. Loser troops are lost.
- *   siege               (battlePhase): winner gains territory + survivors occupy it.
- *                         If defender wins, they keep territory + survivors stay.
- *                         Attacker's committed troops were already removed from origin.
- *   double_siege        (battlePhase): same as siege.
- *   capture_objectives  (battlePhase): winner gains territory + survivors occupy it.
- *                         LOSER survivors return to their origin territory.
- *                         (No single "defender" — multiple attackers vs neutral/vacated.)
- *   bloodbath           (battlePhase): if loser had garrison (territory still has troops)
- *                         → loser keeps territory, winner survivors return to origin.
- *                         if loser committed ALL troops (territory is empty)
- *                         → winner captures loser's territory, survivors at origin.
+ * ─── DOUBLE SIEGE RESOLUTION MATRIX ─────────────────────────────────────────
+ *   Outcome 1 — Defender Wins:
+ *     Defender keeps territory + survivors. Both attackers lose committed troops.
+ *   Outcome 2 — Defender Loses:
+ *     Territory becomes UNCLAIMED. Attacker survivors return to origin. No attacker gains territory.
+ *   Auto-resolve: weighted random between "defender wins" and "defender loses".
+ *     NEVER awards territory to either attacker.
+ *   Forfeit (defender forfeits): territory becomes unclaimed, both attackers keep committed troops.
+ *   Forfeit (both attackers): defender keeps territory + all committed troops.
+ *   Forfeit (one attacker): forfeiting attacker loses troops; remaining attacker + defender continue.
  *
- * ─── SURVIVOR MATH ───────────────────────────────────────────────────────────
- *   surviving_tabletop_troops (submitted value) ≤ winner's committed tabletop troops
- *   surviving_full_scale = round(surviving_tabletop / tabletop_size * total_troops_in_battle)
- *
- * ─── FORFEIT SURVIVORS ───────────────────────────────────────────────────────
- *   Forfeit winner retains ALL their committed troops (no random reduction).
+ * ─── BLOODBATH 0-TROOP SPLIT ─────────────────────────────────────────────────
+ *   If winner captures both territories (loser vacated):
+ *     survivors split evenly; odd troop stays in origin.
+ *   Both territories must have at least 1 troop when controlled.
  *
  * ─── DELAYED BATTLE LIFECYCLE ────────────────────────────────────────────────
  *   Round N: Battle card created → player votes/admin sets delayed
  *   processPhaseEnd(N): delayed cards are NOT resolved; result_applied stays false.
- *                       Card status remains 'delayed'. Phase advances normally.
  *   Round N+1: getBattleCards returns BOTH current round cards AND delayed cards.
- *              Delayed cards are active again and can be resolved.
  *   processPhaseEnd(N+1): delayed cards resolved normally (or carried again).
- *
- * ─── TERRITORY LOCKING ───────────────────────────────────────────────────────
- *   Territories involved in delayed battles are locked (stored in campaign.locked_territory_ids).
- *   Deploy, attack, fortify, and construction must check this list.
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 // ─── Pure helpers ──────────────────────────────────────────────────────────────
 
-function scaleBackSurvivors(survivingTabletop, tabletopSize, totalTroopsInBattle) {
-  if (tabletopSize <= 0) return 0;
-  const ratio = Math.max(0, survivingTabletop / tabletopSize);
-  return Math.round(ratio * totalTroopsInBattle);
+/**
+ * Scale tabletop survivors back to BOP troops. Clamped to [0, committedBOP].
+ * This is the ONLY survivor conversion function — prevents round-trip inflation.
+ */
+function scaleBackSurvivors(survivingTabletop, tabletopSize, totalTroopsInBattle, committedBOP) {
+  if (tabletopSize <= 0 || totalTroopsInBattle <= 0) return 0;
+  const ratio = Math.max(0, Math.min(1, survivingTabletop / tabletopSize));
+  const raw = Math.round(ratio * totalTroopsInBattle);
+  // Clamp to committed BOP to prevent rounding inflation
+  return committedBOP != null ? Math.min(raw, committedBOP) : raw;
 }
 
 function calcBattleScaling(totalTroops, avgBattleSize = 1000) {
@@ -91,7 +86,7 @@ function getParticipantIds(card) {
 }
 
 /**
- * Get winner's committed troops (full-scale) for a given player_id.
+ * Get winner's committed BOP troops — authoritative, no conversion.
  */
 function getWinnerCommittedTroops(card, winnerPlayerId) {
   if (!winnerPlayerId) return 0;
@@ -133,6 +128,12 @@ function buildSides(card) {
   return sides;
 }
 
+/**
+ * Auto-resolve a battle.
+ *
+ * For double_siege: only two outcomes — defender wins or defender loses.
+ * NEVER awards territory to either attacker.
+ */
 function autoResolveBattle(card, campaignId) {
   const rng   = seededRandom(`${campaignId}:${card.round}:${card.id}`);
   const sides = buildSides(card);
@@ -141,6 +142,52 @@ function autoResolveBattle(card, campaignId) {
     return { winner_player_id: null, surviving_tabletop_troops: 0, notes: 'No participants — auto-resolved.', result_source: 'auto' };
   }
 
+  // ── Double siege: only defender-wins or defender-loses outcome ─────────────
+  if (card.battle_type === 'double_siege') {
+    const defenderTroops  = card.defender_troops ?? 0;
+    const totalAttacking  = card.total_attacking_troops ?? 0;
+    const totalWeight     = defenderTroops + totalAttacking;
+    const defenderHeld    = totalWeight > 0 ? rng() < (defenderTroops / totalWeight) : rng() < 0.5;
+
+    const retainRatio = 0.6 + rng() * 0.3;
+
+    if (defenderHeld) {
+      // Defender wins — survivors stay in territory
+      const defenderCommittedTT = winnerCommittedTabletop(card, card.defender_player_id);
+      const defenderSurvivingTT = Math.max(1, Math.round(defenderCommittedTT * retainRatio));
+      return {
+        winner_player_id: card.defender_player_id,
+        surviving_tabletop_troops: defenderSurvivingTT,
+        notes: 'Auto-resolved: defender held.',
+        result_source: 'auto',
+        double_siege_result: {
+          defender_held: true,
+          defender_surviving_tabletop: defenderSurvivingTT,
+          attacker_survivors: (card.attackers ?? []).map(a => ({ player_id: a.player_id, tabletop_survivors: 0 })),
+        },
+      };
+    } else {
+      // Defender loses — territory unclaimed, attackers get some survivors back
+      const attackerSurvivors = (card.attackers ?? []).map(a => {
+        const atkTT = winnerCommittedTabletop(card, a.player_id);
+        const survivors = Math.round(atkTT * (0.3 + rng() * 0.4)); // attackers take losses too
+        return { player_id: a.player_id, tabletop_survivors: Math.max(0, survivors) };
+      });
+      return {
+        winner_player_id: null,
+        surviving_tabletop_troops: 0,
+        notes: 'Auto-resolved: defender lost. Territory unclaimed.',
+        result_source: 'auto',
+        double_siege_result: {
+          defender_held: false,
+          defender_surviving_tabletop: 0,
+          attacker_survivors: attackerSurvivors,
+        },
+      };
+    }
+  }
+
+  // ── Standard / bloodbath: weighted random ─────────────────────────────────
   const totalWeight = sides.reduce((s, side) => s + side.troops, 0);
   let r = rng() * totalWeight;
   let winner = sides[sides.length - 1];
@@ -164,73 +211,50 @@ function autoResolveBattle(card, campaignId) {
 
 /**
  * Apply a resolved result to territory states.
+ * All BOP survivor counts are clamped to committed BOP to prevent rounding errors.
  *
- * TERRITORY RESOLUTION MATRIX (full):
- *
- * skirmish (attackPhase auto-resolve): handled inline in attackPhase — no BattleCard created.
- *   If a skirmish BattleCard somehow exists (edge case): winner gets target + survivors.
- *
+ * ─── TERRITORY RESOLUTION MATRIX ─────────────────────────────────────────────
  * siege / double_siege:
- *   - Winner gains target_territory with survivors.
- *   - Attacker's committed troops were already removed from origin (attackPhase).
- *
- * capture_objectives (no defender — neutral/vacated territory):
- *   - Winner gains target_territory with survivors.
- *   - ALL LOSERS: their committed troops return to their origin territories.
- *     (Troops were removed at attackPhase; they must be returned to origin on loss.)
- *
- * bloodbath (is_mutual):
- *   - winner's origin territory: survivors ADDED to existing garrison (not overwrite).
- *   - loser's origin territory:
- *     - if still has garrison → loser keeps it, no change.
- *     - if vacated (loser committed all troops, troop_count==0 after attackPhase):
- *         → winner captures that territory with survivingTroops placed there.
- *         → winner origin gets 0 survivors (all moved to captured territory).
- *         NOTE: if winner also has a garrison at origin it is unchanged; only committed
- *               troops (which were already removed) are accounted for here.
- *
- * Returns an array of { id, owner_player_id, troop_count } to persist.
+ *   - Defender wins: keeps territory + BOP survivors. Attackers lose committed troops.
+ *   - Attacker wins (siege): gains territory + survivors.
+ *   - Double siege defender loses: territory unclaimed. Attacker survivors return to origin. NO attacker gains territory.
+ * capture_objectives: winner gains territory. Losers return declared survivors to origin.
+ * bloodbath: winner captures loser territory if loser vacated.
+ *   - Split survivors between both controlled territories (min 1 each if >1 total).
  */
 function buildTerritoryUpdates(card, result, territoryStates) {
   const { winner_player_id, surviving_tabletop_troops } = result;
-  // double_siege with defender_lost has no winner — handle separately below
   const isDoubleSiegeResult = card.battle_type === 'double_siege' && result.double_siege_result != null;
   if (!winner_player_id && !isDoubleSiegeResult) return [];
 
-  // Guard: if tabletop_size is 0 or no winner (double_siege defender-lost), skip standard survivor calc.
+  // ── Compute authoritative BOP survivors (clamped to committed BOP) ─────────
   let survivingTroops = 0;
   if (winner_player_id) {
+    const committedBOP = getWinnerCommittedTroops(card, winner_player_id);
     if ((card.tabletop_size ?? 0) <= 0) {
-      survivingTroops = getWinnerCommittedTroops(card, winner_player_id);
-      console.log(`[buildTerritoryUpdates] tabletop_size=0 fallback: survivingTroops=${survivingTroops} from committed`);
+      survivingTroops = committedBOP;
     } else {
       survivingTroops = scaleBackSurvivors(
         surviving_tabletop_troops ?? 0,
         card.tabletop_size,
         card.total_troops_in_battle ?? 0,
+        committedBOP,
       );
     }
   }
 
   const updates = [];
 
-  // ── Debug header ─────────────────────────────────────────────────────────────
   console.log(`[buildTerritoryUpdates] battle_card_id=${card.id} battle_type=${card.battle_type} is_mutual=${card.is_mutual}`);
-  console.log(`[buildTerritoryUpdates] winner=${winner_player_id} surviving_tabletop=${surviving_tabletop_troops} scaled_survivors=${survivingTroops}`);
-  console.log(`[buildTerritoryUpdates] tabletop_size=${card.tabletop_size} total_troops=${card.total_troops_in_battle} scale_factor=${card.scale_factor}`);
+  console.log(`[buildTerritoryUpdates] winner=${winner_player_id} surviving_tabletop=${surviving_tabletop_troops} bop_survivors=${survivingTroops}`);
 
   if (card.is_mutual) {
     // ── Bloodbath ──────────────────────────────────────────────────────────────
-    // Committed troops were removed from both origins in attackPhase.
-    // Winner survivors return to winner's origin (add to existing garrison).
-    // Loser: if they vacated (troop_count==0), winner captures with survivors placed there.
     const winnerEntry  = (card.attackers ?? []).find(a => a.player_id === winner_player_id);
     const loserEntries = (card.attackers ?? []).filter(a => a.player_id !== winner_player_id);
 
     let winnerCaptures = false;
-    let capturedTerritoryId = null;
 
-    // Check if any loser vacated their territory
     for (const loserEntry of loserEntries) {
       const loserOriginState = territoryStates.find(s => s.territory_id === loserEntry.origin_territory_id);
       if (loserOriginState) {
@@ -238,50 +262,59 @@ function buildTerritoryUpdates(card, result, territoryStates) {
           loserOriginState.owner_player_id === loserEntry.player_id;
 
         if (!loserHasGarrison) {
-          // Loser vacated — winner captures with survivors placed there
           winnerCaptures = true;
-          capturedTerritoryId = loserEntry.origin_territory_id;
-          console.log(`[bloodbath] FIX5: loser vacated territory=${loserEntry.origin_territory_id} troop_count=${loserOriginState.troop_count} — winner captures with survivors=${survivingTroops}`);
+          const capturedTerritoryId = loserEntry.origin_territory_id;
+
+          // ── FIX 5: split survivors evenly between origin and captured territory ──
+          // Prevents 0-troop controlled territory.
+          const splitCapture = Math.floor(survivingTroops / 2);
+          const splitOrigin  = survivingTroops - splitCapture; // odd troop stays at origin
+
+          console.log(`[bloodbath split] survivors=${survivingTroops} origin=${splitOrigin} captured=${splitCapture}`);
+
           updates.push({
             id:              loserOriginState.id,
-            territory_id:    loserEntry.origin_territory_id,
+            territory_id:    capturedTerritoryId,
             owner_player_id: winner_player_id,
-            troop_count:     survivingTroops, // FIX: survivors placed in captured territory, not 0
+            troop_count:     Math.max(survivingTroops > 0 ? 1 : 0, splitCapture),
           });
+
+          // Winner's origin gets the remaining split
+          if (winnerEntry) {
+            const winnerOriginState = territoryStates.find(s => s.territory_id === winnerEntry.origin_territory_id);
+            if (winnerOriginState) {
+              const before = winnerOriginState.troop_count ?? 0;
+              updates.push({
+                id:              winnerOriginState.id,
+                territory_id:    winnerEntry.origin_territory_id,
+                owner_player_id: winner_player_id,
+                troop_count:     before + splitOrigin,
+              });
+            }
+          }
         }
-        // Loser has garrison: no change to loser's territory
       }
     }
 
-    // Winner origin: add survivors only if NOT capturing (if capturing, survivors went to captured territory)
-    if (winnerEntry) {
+    // If winner didn't capture (loser had garrison), add survivors to own origin
+    if (!winnerCaptures && winnerEntry) {
       const winnerOriginState = territoryStates.find(s => s.territory_id === winnerEntry.origin_territory_id);
       if (winnerOriginState) {
         const before = winnerOriginState.troop_count ?? 0;
-        // If winner is capturing a territory, survivors go to captured territory (already added above).
-        // Winner's origin already had committed troops removed; garrison (remaining) stays unchanged.
-        const after = winnerCaptures ? before : before + survivingTroops;
-        console.log(`[bloodbath winner origin] territory=${winnerEntry.origin_territory_id} before=${before} captures=${winnerCaptures} survivors_added=${winnerCaptures ? 0 : survivingTroops} after=${after}`);
         updates.push({
           id:              winnerOriginState.id,
           territory_id:    winnerEntry.origin_territory_id,
           owner_player_id: winner_player_id,
-          troop_count:     after,
+          troop_count:     before + survivingTroops,
         });
       }
     }
 
   } else if (card.battle_type === 'skirmish') {
     // ── Skirmish ──────────────────────────────────────────────────────────────
-    // Normally handled inline in attackPhase. If this code runs (edge case):
-    // Winner gains target territory. Survivors = committed troops (since tabletop_size may be 0).
-    // Committed troops already removed from origin in attackPhase.
     const targetState = territoryStates.find(s => s.territory_id === card.target_territory_id);
     const troopsToPlace = survivingTroops > 0 ? survivingTroops : getWinnerCommittedTroops(card, winner_player_id);
     if (targetState) {
-      const before = targetState.troop_count ?? 0;
-      const ownerBefore = targetState.owner_player_id ?? 'null';
-      console.log(`[skirmish] winner=${winner_player_id} target=${card.target_territory_id} owner_before=${ownerBefore} troops_before=${before} troops_after=${troopsToPlace}`);
       updates.push({
         id:              targetState.id,
         territory_id:    card.target_territory_id,
@@ -292,15 +325,10 @@ function buildTerritoryUpdates(card, result, territoryStates) {
 
   } else if (card.battle_type === 'capture_objectives') {
     // ── Capture Objectives ────────────────────────────────────────────────────
-    // Winner gains target territory with survivors.
-    // Losers: their DECLARED survivors (loser_tabletop_survivors) return to origin.
-    // If no declared value, fall back to 0 (not auto-return 100%).
     const winnerCommitted = getWinnerCommittedTroops(card, winner_player_id);
     const clampedSurvivors = Math.max(1, Math.min(survivingTroops, winnerCommitted));
 
     const targetState = territoryStates.find(s => s.territory_id === card.target_territory_id);
-    console.log(`[capture_objectives] winner=${winner_player_id} target=${card.target_territory_id} survivors=${clampedSurvivors}`);
-
     if (targetState) {
       updates.push({
         id:              targetState.id,
@@ -319,62 +347,53 @@ function buildTerritoryUpdates(card, result, territoryStates) {
       });
     }
 
-    // Losers: return DECLARED survivors to their origin.
-    // loser_tabletop_survivors is a map { player_id -> tabletop_survivors } from the result.
+    // Losers: return declared survivors to their origin
     const loserTTSurvivors = result.loser_tabletop_survivors ?? {};
     for (const atk of (card.attackers ?? [])) {
       if (atk.player_id === winner_player_id) continue;
       const loserOriginState = territoryStates.find(s => s.territory_id === atk.origin_territory_id);
       if (loserOriginState) {
         const loserTT = loserTTSurvivors[atk.player_id] ?? 0;
-        // Scale loser tabletop survivors back to full-scale troops
-        const loserBopSurvivors = scaleBackSurvivors(loserTT, card.tabletop_size ?? 0, card.total_troops_in_battle ?? 0);
+        const loserCommitted = atk.committed_troops ?? 0;
+        const loserBopSurvivors = scaleBackSurvivors(loserTT, card.tabletop_size ?? 0, card.total_troops_in_battle ?? 0, loserCommitted);
         const before = loserOriginState.troop_count ?? 0;
-        const after  = before + loserBopSurvivors;
-        console.log(`[capture_objectives loser return] player=${atk.player_id} territory=${atk.origin_territory_id} loserTT=${loserTT} loserBOP=${loserBopSurvivors} before=${before} after=${after}`);
         updates.push({
           id:              loserOriginState.id,
           territory_id:    atk.origin_territory_id,
           owner_player_id: atk.player_id,
-          troop_count:     after,
+          troop_count:     before + loserBopSurvivors,
         });
       }
     }
 
   } else if (card.battle_type === 'double_siege' && result.double_siege_result != null) {
     // ── Double Siege ──────────────────────────────────────────────────────────
+    // RULE: Only two outcomes — defender wins or defender loses.
+    // NEVER awards territory to either attacker.
     const ds = result.double_siege_result;
     const targetState = territoryStates.find(s => s.territory_id === card.target_territory_id);
 
-    console.log(`[double_siege buildTerritoryUpdates] battle_card_id=${card.id}`);
-    console.log(`[double_siege] defender_held=${ds.defender_held} defender_id=${card.defender_player_id} target=${card.target_territory_id}`);
-    console.log(`[double_siege] target owner_before=${targetState?.owner_player_id ?? 'null'} troops_before=${targetState?.troop_count ?? 0}`);
-    for (const atk of (card.attackers ?? [])) {
-      const atkOrigin = territoryStates.find(s => s.territory_id === atk.origin_territory_id);
-      const atkSurvivorEntry = (ds.attacker_survivors ?? []).find(a => a.player_id === atk.player_id);
-      console.log(`[double_siege] attacker=${atk.player_id} origin=${atk.origin_territory_id} committed=${atk.committed_troops} survivors_submitted=${atkSurvivorEntry?.tabletop_survivors ?? 0} origin_troops_before=${atkOrigin?.troop_count ?? 0}`);
-    }
     if (ds.defender_held) {
-      console.log(`[double_siege] BRANCH: defender held → defender keeps territory with ${ds.defender_surviving_tabletop} TT survivors`);
-    } else {
-      console.log(`[double_siege] BRANCH: defender lost → territory becomes unclaimed, attacker survivors return home`);
-    }
-
-    if (ds.defender_held) {
-      // Defender wins — survivors stay in target territory
-      const defenderBOP = scaleBackSurvivors(ds.defender_surviving_tabletop ?? 0, card.tabletop_size ?? 0, card.total_troops_in_battle ?? 0);
-      console.log(`[double_siege] defender held. territory=${card.target_territory_id} defender_bop_survivors=${defenderBOP}`);
+      // Defender wins: survivors stay in territory
+      const defenderCommitted = getWinnerCommittedTroops(card, card.defender_player_id);
+      const defenderBOP = scaleBackSurvivors(
+        ds.defender_surviving_tabletop ?? 0,
+        card.tabletop_size ?? 0,
+        card.total_troops_in_battle ?? 0,
+        defenderCommitted,
+      );
+      console.log(`[double_siege] defender held. territory=${card.target_territory_id} bop_survivors=${defenderBOP}`);
       if (targetState) {
         updates.push({
           id:              targetState.id,
           territory_id:    card.target_territory_id,
           owner_player_id: card.defender_player_id,
-          troop_count:     defenderBOP,
+          troop_count:     Math.max(1, defenderBOP),
         });
       }
-      // Attackers lose all committed troops — no return (already removed in attackPhase)
+      // Attackers lose all committed troops — already removed in attackPhase, no return
     } else {
-      // Defender loses — territory becomes unclaimed
+      // Defender loses: territory becomes unclaimed. Attacker survivors return to origin.
       console.log(`[double_siege] defender lost. territory=${card.target_territory_id} becomes unclaimed.`);
       if (targetState) {
         updates.push({
@@ -387,37 +406,32 @@ function buildTerritoryUpdates(card, result, territoryStates) {
       // Each attacker's survivors return to their origin territory
       for (const atkSurvivor of (ds.attacker_survivors ?? [])) {
         const atk = (card.attackers ?? []).find(a => a.player_id === atkSurvivor.player_id);
-        if (!atk) {
-          console.log(`[double_siege attacker return] WARNING: no attacker entry found for player=${atkSurvivor.player_id}`);
-          continue;
-        }
+        if (!atk) continue;
         const atkOriginState = territoryStates.find(s => s.territory_id === atk.origin_territory_id);
         if (atkOriginState) {
-          const atkBOP = scaleBackSurvivors(atkSurvivor.tabletop_survivors ?? 0, card.tabletop_size ?? 0, card.total_troops_in_battle ?? 0);
+          const atkCommitted = atk.committed_troops ?? 0;
+          const atkBOP = scaleBackSurvivors(
+            atkSurvivor.tabletop_survivors ?? 0,
+            card.tabletop_size ?? 0,
+            card.total_troops_in_battle ?? 0,
+            atkCommitted,
+          );
           const before = atkOriginState.troop_count ?? 0;
-          const after  = before + atkBOP;
-          console.log(`[double_siege attacker return] player=${atkSurvivor.player_id} origin=${atk.origin_territory_id} tt=${atkSurvivor.tabletop_survivors} bop=${atkBOP} origin_before=${before} origin_after=${after}`);
           updates.push({
             id:              atkOriginState.id,
             territory_id:    atk.origin_territory_id,
             owner_player_id: atk.player_id,
-            troop_count:     after,
+            troop_count:     before + atkBOP,
           });
-        } else {
-          console.log(`[double_siege attacker return] WARNING: no TerritoryState found for origin=${atk.origin_territory_id}`);
         }
       }
     }
 
   } else {
     // ── Siege ─────────────────────────────────────────────────────────────────
-    // Winner gains target_territory with survivors.
-    // Loser's committed troops already removed from origin in attackPhase.
     const targetState = territoryStates.find(s => s.territory_id === card.target_territory_id);
     if (targetState) {
-      const ownerBefore = targetState.owner_player_id ?? 'null';
-      const troopsBefore = targetState.troop_count ?? 0;
-      console.log(`[siege] winner=${winner_player_id} target=${card.target_territory_id} owner_before=${ownerBefore} troops_before=${troopsBefore} survivors=${survivingTroops}`);
+      console.log(`[siege] winner=${winner_player_id} target=${card.target_territory_id} bop_survivors=${survivingTroops}`);
       updates.push({
         id:              targetState.id,
         territory_id:    card.target_territory_id,
@@ -434,7 +448,6 @@ function buildTerritoryUpdates(card, result, territoryStates) {
 async function applyTerritoryUpdates(base44, updates) {
   for (const upd of updates) {
     if (upd._create) {
-      // No existing TerritoryState record — create one for this neutral territory
       await base44.asServiceRole.entities.TerritoryState.create({
         campaign_id:     upd.campaign_id,
         map_id:          upd.map_id ?? '',
@@ -463,10 +476,6 @@ async function log(base44, campaignId, round, eventType, playerId, payload, isPu
   });
 }
 
-/**
- * Compute the set of territory_ids that should be locked due to delayed battles.
- * Includes all territories involved in any unresolved delayed battle card.
- */
 function computeLockedTerritoryIds(allDelayedCards) {
   const locked = new Set();
   for (const card of allDelayedCards) {
@@ -504,44 +513,53 @@ Deno.serve(async (req) => {
   const round   = campaign.current_round ?? 1;
   const isAdmin = campaign.admin_user_id === user.id;
 
-  // ── Resolve effective player (perspective selector support) ──────────────────
-  // For participant-scoped actions (approve, vote), acting_as_player_id overrides myPlayer.
-  // Campaign admin (myPlayer.is_admin) can act as ANY player (real or test).
   function resolveEffectivePlayer(acting_as_player_id) {
     if (!acting_as_player_id) return { ok: true, player: myPlayer };
     const target = players.find(p => p.id === acting_as_player_id);
     if (!target) {
-      console.log(`[resolveEffectivePlayer] FAIL: acting_as_player_id=${acting_as_player_id} not found. Available: ${players.map(p => p.id + '(' + p.display_name + ')').join(', ')}`);
       return { ok: false, error: 'Invalid acting_as_player_id' };
     }
     if (target.id === myPlayer.id) return { ok: true, player: myPlayer };
-    // Campaign admin can act as any player for administrative perspective actions
-    if (myPlayer.is_admin) {
-      console.log(`[resolveEffectivePlayer] campaign admin acting as player=${target.id} (${target.display_name})`);
-      return { ok: true, player: target };
-    }
-    // App-level admin fallback
+    if (myPlayer.is_admin) return { ok: true, player: target };
     if (user.role === 'admin') return { ok: true, player: target };
     return { ok: false, error: 'Only campaign admins can act as other players' };
   }
 
+  // ── Shared apply-and-resolve helper ─────────────────────────────────────────
+  async function applyAutoResolve(card, autoResult, base44Ref, campaign_idRef, roundRef) {
+    const now = new Date().toISOString();
+    await base44Ref.asServiceRole.entities.BattleCard.update(card.id, {
+      status:      'auto_resolved',
+      resolved_at: now,
+      result:      { ...autoResult, submitted_by: 'system', submitted_at: now, applied_at: null },
+    });
+    const territoryStates = await base44Ref.asServiceRole.entities.TerritoryState.filter({ campaign_id: campaign_idRef });
+    const updates = buildTerritoryUpdates(card, autoResult, territoryStates);
+    await applyTerritoryUpdates(base44Ref, updates);
+    await base44Ref.asServiceRole.entities.BattleCard.update(card.id, {
+      result_applied: true,
+      result: { ...autoResult, submitted_by: 'system', submitted_at: now, applied_at: new Date().toISOString() },
+    });
+    await refreshLockedTerritories(base44Ref, campaign_idRef);
+    await log(base44Ref, campaign_idRef, roundRef, 'battle_auto_resolved', null, {
+      battle_card_id: card.id,
+      target_territory_id: card.target_territory_id,
+      winner_player_id: autoResult.winner_player_id,
+    }, true);
+  }
+
   // ── getBattleCards ────────────────────────────────────────────────────────────
-  // Returns current-round cards PLUS any unresolved delayed cards from prior rounds.
   if (action === 'getBattleCards') {
     const queryRound = body.round ?? round;
     const currentCards = await base44.asServiceRole.entities.BattleCard.filter({ campaign_id, round: queryRound });
 
-    // FIX #4: fetch delayed cards from prior rounds.
-    // Bug was: breaking when delayed.length===0 even if priorCards had non-delayed cards,
-    // skipping older rounds that might have delayed cards.
-    // Fix: only break if the round had NO cards at all (truly empty round).
     let delayedFromPriorRounds = [];
     if (queryRound > 1) {
       for (let r = queryRound - 1; r >= Math.max(1, queryRound - 10); r--) {
         const priorCards = await base44.asServiceRole.entities.BattleCard.filter({ campaign_id, round: r });
         const delayed = priorCards.filter(c => c.status === 'delayed' && !c.result_applied);
         delayedFromPriorRounds = [...delayedFromPriorRounds, ...delayed];
-        if (priorCards.length === 0) break; // no cards at all in this round — stop searching
+        if (priorCards.length === 0) break;
       }
     }
 
@@ -556,9 +574,7 @@ Deno.serve(async (req) => {
 
     const {
       battle_card_id, winner_player_id, surviving_tabletop_troops, notes,
-      // capture_objectives: per-attacker loser survivors map { player_id -> tabletop_survivors }
       loser_tabletop_survivors,
-      // double_siege: { defender_held: bool, defender_surviving_tabletop, attacker_survivors: [{ player_id, tabletop_survivors }] }
       double_siege_result,
     } = body;
 
@@ -591,7 +607,6 @@ Deno.serve(async (req) => {
               tabletop_survivors: Math.max(0, Math.round(a.tabletop_survivors ?? 0)),
             })),
           },
-          // winner_player_id: set to defender if they held (for compatibility with approval flow)
           winner_player_id: defender_held ? (card.defender_player_id ?? null) : null,
           surviving_tabletop_troops: defender_held ? Math.max(0, Math.round(defender_surviving_tabletop ?? 0)) : 0,
           notes: notes ?? '',
@@ -619,12 +634,8 @@ Deno.serve(async (req) => {
     }
 
     const maxTabletop = winnerCommittedTabletop(card, winner_player_id);
-    const clampedSurvivors = Math.min(
-      Math.max(0, Math.round(surviving_tabletop_troops)),
-      Math.max(1, maxTabletop),
-    );
+    const clampedSurvivors = Math.min(Math.max(0, Math.round(surviving_tabletop_troops)), Math.max(1, maxTabletop));
 
-    // For capture_objectives: validate and store loser tabletop survivors
     let clampedLoserSurvivors = null;
     if (card.battle_type === 'capture_objectives' && loser_tabletop_survivors != null) {
       clampedLoserSurvivors = {};
@@ -633,10 +644,7 @@ Deno.serve(async (req) => {
         const submitted = loser_tabletop_survivors[atk.player_id] ?? null;
         if (submitted != null) {
           const loserMaxTabletop = winnerCommittedTabletop(card, atk.player_id);
-          clampedLoserSurvivors[atk.player_id] = Math.min(
-            Math.max(0, Math.round(submitted)),
-            loserMaxTabletop,
-          );
+          clampedLoserSurvivors[atk.player_id] = Math.min(Math.max(0, Math.round(submitted)), loserMaxTabletop);
         }
       }
     }
@@ -658,10 +666,8 @@ Deno.serve(async (req) => {
     });
 
     await log(base44, campaign_id, card.round, 'battle_result_submitted', myPlayer.id, {
-      battle_card_id,
-      target_territory_id: card.target_territory_id,
-      winner_player_id,
-      surviving_tabletop_troops: clampedSurvivors,
+      battle_card_id, target_territory_id: card.target_territory_id,
+      winner_player_id, surviving_tabletop_troops: clampedSurvivors,
     }, true);
 
     return Response.json({ success: true, status: 'result_submitted' });
@@ -674,7 +680,6 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'battle_card_id and approved required' }, { status: 400 });
     }
 
-    // Resolve effective player via perspective selector
     const effective = resolveEffectivePlayer(acting_as_player_id);
     if (!effective.ok) return Response.json({ error: effective.error }, { status: 403 });
     const effectivePlayer = effective.player;
@@ -708,27 +713,17 @@ Deno.serve(async (req) => {
     );
 
     let newStatus = anyFlagged ? 'awaiting_approval' : (allReviewersApproved ? 'resolved' : 'awaiting_approval');
-
-    const updatePayload = {
-      approvals: updatedApprovals,
-      status:    newStatus,
-    };
-    if (newStatus === 'resolved') {
-      updatePayload.resolved_at = new Date().toISOString();
-    }
+    const updatePayload = { approvals: updatedApprovals, status: newStatus };
+    if (newStatus === 'resolved') updatePayload.resolved_at = new Date().toISOString();
 
     await base44.asServiceRole.entities.BattleCard.update(battle_card_id, updatePayload);
 
-    // Apply territory changes immediately when all approve.
-    // IMPORTANT: double_siege defender-lost has winner_player_id=null but still needs territory updates.
-    // We must NOT gate on winner_player_id alone — check for double_siege_result too.
     if (newStatus === 'resolved' && !card.result_applied) {
       const result = card.result;
       const isDoubleSiegeResult = card.battle_type === 'double_siege' && result?.double_siege_result != null;
       const hasApplicableResult = result?.winner_player_id || isDoubleSiegeResult;
 
       if (hasApplicableResult) {
-        console.log(`[approveResult] applying territory updates. battle_type=${card.battle_type} winner=${result?.winner_player_id ?? 'null(double_siege_defender_lost)'} isDoubleSiegeResult=${isDoubleSiegeResult}`);
         const territoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
         const updates = buildTerritoryUpdates(card, result, territoryStates);
         await applyTerritoryUpdates(base44, updates);
@@ -736,16 +731,10 @@ Deno.serve(async (req) => {
           result_applied: true,
           result: { ...result, applied_at: new Date().toISOString() },
         });
-
         await log(base44, campaign_id, card.round, 'battle_result_applied', null, {
-          battle_card_id,
-          target_territory_id: card.target_territory_id,
+          battle_card_id, target_territory_id: card.target_territory_id,
           winner_player_id: result.winner_player_id ?? null,
-          is_double_siege_defender_lost: isDoubleSiegeResult && !result.double_siege_result?.defender_held,
-          territory_updates: updates.length,
         }, true);
-
-        // Refresh locked territories after resolution
         await refreshLockedTerritories(base44, campaign_id);
       }
     }
@@ -796,10 +785,7 @@ Deno.serve(async (req) => {
         await refreshLockedTerritories(base44, campaign_id);
       }
 
-      await log(base44, campaign_id, card.round, 'battle_admin_override_resolved', myPlayer.id, {
-        battle_card_id, winner_player_id: card.result.winner_player_id,
-      }, true);
-
+      await log(base44, campaign_id, card.round, 'battle_admin_override_resolved', myPlayer.id, { battle_card_id }, true);
       return Response.json({ success: true, status: 'resolved' });
     } else {
       const clearedApprovals = (card.approvals ?? []).map(a => ({ ...a, flagged: false }));
@@ -807,14 +793,13 @@ Deno.serve(async (req) => {
         status:    'result_submitted',
         approvals: clearedApprovals,
       });
-
       await log(base44, campaign_id, card.round, 'battle_flags_cleared', myPlayer.id, { battle_card_id }, true);
-
       return Response.json({ success: true, status: 'result_submitted' });
     }
   }
 
   // ── autoResolve ───────────────────────────────────────────────────────────────
+  // Admin-direct auto-resolve (not vote-based)
   if (action === 'autoResolve') {
     if (!isAdmin) return Response.json({ error: 'Admin only' }, { status: 403 });
     const { battle_card_id } = body;
@@ -829,32 +814,273 @@ Deno.serve(async (req) => {
     }
 
     const autoResult = autoResolveBattle(card, campaign_id);
-    const now = new Date().toISOString();
+    await applyAutoResolve(card, autoResult, base44, campaign_id, round);
+    return Response.json({ success: true, result: autoResult });
+  }
+
+  // ── voteAutoResolve ───────────────────────────────────────────────────────────
+  // Participant vote to auto-resolve. Unanimous required.
+  if (action === 'voteAutoResolve') {
+    const { battle_card_id, vote, acting_as_player_id } = body;
+    if (!battle_card_id || !['yes', 'no'].includes(vote)) {
+      return Response.json({ error: 'battle_card_id and vote (yes|no) required' }, { status: 400 });
+    }
+
+    const effective = resolveEffectivePlayer(acting_as_player_id);
+    if (!effective.ok) return Response.json({ error: effective.error }, { status: 403 });
+    const effectivePlayer = effective.player;
+
+    const cards = await base44.asServiceRole.entities.BattleCard.filter({ id: battle_card_id });
+    const card  = cards[0];
+    if (!card) return Response.json({ error: 'Battle card not found' }, { status: 404 });
+    if (card.campaign_id !== campaign_id) return Response.json({ error: 'Campaign mismatch' }, { status: 403 });
+
+    const participantIds = getParticipantIds(card);
+    if (!participantIds.includes(effectivePlayer.id) && !isAdmin) {
+      return Response.json({ error: 'Not a participant in this battle' }, { status: 403 });
+    }
+
+    if (!['pending', 'awaiting_result'].includes(card.status)) {
+      return Response.json({ error: `Cannot vote for card in status: ${card.status}` }, { status: 400 });
+    }
+
+    const currentVotes = { ...(card.auto_resolve_votes ?? {}) };
+    currentVotes[effectivePlayer.id] = vote;
+
+    const participantVotes = Object.fromEntries(
+      Object.entries(currentVotes).filter(([pid]) => participantIds.includes(pid))
+    );
+    const yesVotes      = Object.values(participantVotes).filter(v => v === 'yes').length;
+    const totalRequired = participantIds.length;
+    const unanimous     = yesVotes >= totalRequired;
 
     await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
-      status:      'auto_resolved',
-      resolved_at: now,
-      result:      { ...autoResult, submitted_by: 'system', submitted_at: now, applied_at: null },
+      auto_resolve_votes: currentVotes,
     });
 
-    const territoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
-    const updates = buildTerritoryUpdates(card, autoResult, territoryStates);
-    await applyTerritoryUpdates(base44, updates);
-
-    await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
-      result_applied: true,
-      result: { ...autoResult, submitted_by: 'system', submitted_at: now, applied_at: new Date().toISOString() },
-    });
-
-    await refreshLockedTerritories(base44, campaign_id);
-
-    await log(base44, campaign_id, card.round, 'battle_auto_resolved', null, {
-      battle_card_id,
-      target_territory_id: card.target_territory_id,
-      winner_player_id: autoResult.winner_player_id,
+    await log(base44, campaign_id, card.round, 'battle_auto_resolve_vote', effectivePlayer.id, {
+      battle_card_id, vote, yes_count: yesVotes, total_participants: totalRequired, unanimous,
     }, true);
 
-    return Response.json({ success: true, result: autoResult });
+    if (unanimous) {
+      // Reload card with freshest data for auto-resolve
+      const freshCards = await base44.asServiceRole.entities.BattleCard.filter({ id: battle_card_id });
+      const freshCard  = { ...freshCards[0], auto_resolve_votes: currentVotes };
+      const autoResult = autoResolveBattle(freshCard, campaign_id);
+      await applyAutoResolve(freshCard, autoResult, base44, campaign_id, round);
+      return Response.json({ success: true, status: 'auto_resolved', unanimous: true, result: autoResult, auto_resolve_votes: currentVotes });
+    }
+
+    return Response.json({
+      success: true,
+      status: card.status,
+      auto_resolve_votes: currentVotes,
+      votes_needed: Math.max(0, totalRequired - yesVotes),
+      unanimous: false,
+    });
+  }
+
+  // ── playerForfeit ─────────────────────────────────────────────────────────────
+  // A player forfeits their own troops in this battle.
+  // Forfeit = that player loses. If ALL participants forfeit → auto-resolve.
+  // For double_siege:
+  //   Defender forfeits → territory unclaimed, attackers keep troops.
+  //   Both attackers forfeit → defender keeps territory + committed troops.
+  //   One attacker forfeits → that attacker loses troops; other attacker + defender continue (card remains open).
+  if (action === 'playerForfeit') {
+    const { battle_card_id, acting_as_player_id } = body;
+    if (!battle_card_id) return Response.json({ error: 'battle_card_id required' }, { status: 400 });
+
+    const effective = resolveEffectivePlayer(acting_as_player_id);
+    if (!effective.ok) return Response.json({ error: effective.error }, { status: 403 });
+    const effectivePlayer = effective.player;
+
+    const cards = await base44.asServiceRole.entities.BattleCard.filter({ id: battle_card_id });
+    const card  = cards[0];
+    if (!card) return Response.json({ error: 'Battle card not found' }, { status: 404 });
+    if (card.campaign_id !== campaign_id) return Response.json({ error: 'Campaign mismatch' }, { status: 403 });
+
+    const participantIds = getParticipantIds(card);
+    if (!participantIds.includes(effectivePlayer.id)) {
+      return Response.json({ error: 'Not a participant in this battle' }, { status: 403 });
+    }
+    if (!['pending', 'awaiting_result'].includes(card.status)) {
+      return Response.json({ error: `Cannot forfeit for card in status: ${card.status}` }, { status: 400 });
+    }
+
+    // Track forfeits on the card
+    const currentForfeits = { ...(card.player_forfeits ?? {}) };
+    currentForfeits[effectivePlayer.id] = true;
+
+    const forfeitedIds = participantIds.filter(pid => currentForfeits[pid]);
+    const activePlayers = participantIds.filter(pid => !currentForfeits[pid]);
+
+    await log(base44, campaign_id, card.round, 'battle_player_forfeit', effectivePlayer.id, {
+      battle_card_id, forfeited_ids: forfeitedIds, active_players: activePlayers,
+    }, true);
+
+    // ── Double siege forfeit rules ───────────────────────────────────────────
+    if (card.battle_type === 'double_siege') {
+      const attackerPlayerIds = [...new Set((card.attackers ?? []).map(a => a.player_id))];
+      const defenderForfeited = currentForfeits[card.defender_player_id ?? ''];
+      const allAttackersForfeited = attackerPlayerIds.every(pid => currentForfeits[pid]);
+
+      if (defenderForfeited) {
+        // Defender forfeits: territory becomes unclaimed, attackers keep all committed troops
+        const now = new Date().toISOString();
+        const forfeitResult = {
+          winner_player_id: null,
+          surviving_tabletop_troops: 0,
+          notes: 'Defender forfeited. Territory unclaimed. Attacker troops return to origin.',
+          submitted_by: effectivePlayer.id,
+          submitted_at: now,
+          result_source: 'forfeit',
+          applied_at: null,
+          double_siege_result: {
+            defender_held: false,
+            defender_surviving_tabletop: 0,
+            attacker_survivors: attackerPlayerIds.map(pid => ({
+              player_id: pid,
+              // Attackers keep ALL their committed troops
+              tabletop_survivors: winnerCommittedTabletop(card, pid),
+            })),
+          },
+        };
+        await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
+          status: 'forfeited', resolved_at: now,
+          player_forfeits: currentForfeits, result: forfeitResult,
+        });
+        const territoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+        const updates = buildTerritoryUpdates(card, forfeitResult, territoryStates);
+        await applyTerritoryUpdates(base44, updates);
+        await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
+          result_applied: true, result: { ...forfeitResult, applied_at: new Date().toISOString() },
+        });
+        await refreshLockedTerritories(base44, campaign_id);
+        return Response.json({ success: true, status: 'forfeited', result: forfeitResult });
+
+      } else if (allAttackersForfeited) {
+        // Both attackers forfeit: defender wins, keeps territory + all committed troops
+        const defenderCommitted = getWinnerCommittedTroops(card, card.defender_player_id);
+        const now = new Date().toISOString();
+        const forfeitResult = {
+          winner_player_id: card.defender_player_id,
+          surviving_tabletop_troops: winnerCommittedTabletop(card, card.defender_player_id),
+          notes: 'All attackers forfeited. Defender holds territory.',
+          submitted_by: effectivePlayer.id,
+          submitted_at: now,
+          result_source: 'forfeit',
+          applied_at: null,
+          double_siege_result: {
+            defender_held: true,
+            defender_surviving_tabletop: winnerCommittedTabletop(card, card.defender_player_id),
+            attacker_survivors: attackerPlayerIds.map(pid => ({ player_id: pid, tabletop_survivors: 0 })),
+          },
+        };
+        await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
+          status: 'forfeited', resolved_at: now,
+          player_forfeits: currentForfeits, result: forfeitResult,
+        });
+        const territoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+        // Winner (defender) keeps exact committed BOP troops
+        const targetState = territoryStates.find(s => s.territory_id === card.target_territory_id);
+        if (targetState) {
+          await base44.asServiceRole.entities.TerritoryState.update(targetState.id, {
+            owner_player_id: card.defender_player_id,
+            troop_count: defenderCommitted,
+          });
+        }
+        await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
+          result_applied: true, result: { ...forfeitResult, applied_at: new Date().toISOString() },
+        });
+        await refreshLockedTerritories(base44, campaign_id);
+        return Response.json({ success: true, status: 'forfeited', result: forfeitResult });
+
+      } else {
+        // One attacker forfeited but battle continues with remaining participants
+        // Just record the forfeit — card stays open
+        await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
+          player_forfeits: currentForfeits,
+        });
+        return Response.json({
+          success: true, status: card.status, player_forfeits: currentForfeits,
+          message: 'Forfeit recorded. Battle continues with remaining participants.',
+          active_players: activePlayers,
+        });
+      }
+    }
+
+    // ── Standard / capture_objectives / bloodbath forfeit ────────────────────
+    // All participants forfeited → auto-resolve
+    if (forfeitedIds.length >= participantIds.length) {
+      await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
+        player_forfeits: currentForfeits,
+      });
+      const freshCards = await base44.asServiceRole.entities.BattleCard.filter({ id: battle_card_id });
+      const autoResult = autoResolveBattle(freshCards[0], campaign_id);
+      await applyAutoResolve(freshCards[0], autoResult, base44, campaign_id, round);
+      return Response.json({ success: true, status: 'auto_resolved', all_forfeited: true, result: autoResult });
+    }
+
+    // One player forfeited — that player loses, winner is the remaining active participant.
+    // For 1v1 battles (siege/bloodbath): immediately resolve.
+    if (activePlayers.length === 1) {
+      const winnerId = activePlayers[0];
+      const winnerCommitted = getWinnerCommittedTroops(card, winnerId);
+      const now = new Date().toISOString();
+      const forfeitResult = {
+        winner_player_id: winnerId,
+        // Winner keeps EXACTLY their committed BOP troops (no TT round-trip)
+        surviving_tabletop_troops: winnerCommittedTabletop(card, winnerId),
+        notes: `${effectivePlayer.display_name} forfeited.`,
+        submitted_by: effectivePlayer.id,
+        submitted_at: now,
+        result_source: 'forfeit',
+        applied_at: null,
+        winner_bop_survivors: winnerCommitted, // authoritative BOP count stored for display
+      };
+      await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
+        status: 'forfeited', resolved_at: now,
+        player_forfeits: currentForfeits, result: forfeitResult,
+      });
+      const territoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+      // Use direct BOP for territory update, not the TT conversion
+      const targetState = territoryStates.find(s => s.territory_id === card.target_territory_id);
+      if (card.battle_type === 'bloodbath') {
+        // Bloodbath: winner gets both territories if loser vacated
+        const loserEntry = (card.attackers ?? []).find(a => a.player_id === effectivePlayer.id);
+        const winnerEntry = (card.attackers ?? []).find(a => a.player_id === winnerId);
+        if (loserEntry && winnerEntry) {
+          const loserState = territoryStates.find(s => s.territory_id === loserEntry.origin_territory_id);
+          const winnerState = territoryStates.find(s => s.territory_id === winnerEntry.origin_territory_id);
+          if (loserState && (loserState.troop_count ?? 0) === 0) {
+            const splitCapture = Math.floor(winnerCommitted / 2);
+            const splitOrigin  = winnerCommitted - splitCapture;
+            if (loserState) await base44.asServiceRole.entities.TerritoryState.update(loserState.id, { owner_player_id: winnerId, troop_count: Math.max(winnerCommitted > 0 ? 1 : 0, splitCapture) });
+            if (winnerState) await base44.asServiceRole.entities.TerritoryState.update(winnerState.id, { owner_player_id: winnerId, troop_count: (winnerState.troop_count ?? 0) + splitOrigin });
+          } else if (winnerState) {
+            await base44.asServiceRole.entities.TerritoryState.update(winnerState.id, { owner_player_id: winnerId, troop_count: (winnerState.troop_count ?? 0) + winnerCommitted });
+          }
+        }
+      } else if (targetState) {
+        await base44.asServiceRole.entities.TerritoryState.update(targetState.id, { owner_player_id: winnerId, troop_count: winnerCommitted });
+      }
+      await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
+        result_applied: true, result: { ...forfeitResult, applied_at: new Date().toISOString() },
+      });
+      await refreshLockedTerritories(base44, campaign_id);
+      return Response.json({ success: true, status: 'forfeited', result: forfeitResult });
+    }
+
+    // Multiple active players remain — record forfeit, card stays open
+    await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
+      player_forfeits: currentForfeits,
+    });
+    return Response.json({
+      success: true, status: card.status, player_forfeits: currentForfeits,
+      message: 'Forfeit recorded. Battle continues.',
+      active_players: activePlayers,
+    });
   }
 
   // ── setDelayed ────────────────────────────────────────────────────────────────
@@ -873,15 +1099,12 @@ Deno.serve(async (req) => {
       ...(delayed ? { delayed_at: new Date().toISOString() } : { delayed_at: null }),
     });
 
-    // Refresh locked territories whenever a battle is delayed/undelayed
     await refreshLockedTerritories(base44, campaign_id);
-
     await log(base44, campaign_id, card.round, 'battle_delay_toggled', null, { battle_card_id, delayed }, true);
-
     return Response.json({ success: true, status: newStatus });
   }
 
-  // ── setForfeited ──────────────────────────────────────────────────────────────
+  // ── setForfeited (admin) ──────────────────────────────────────────────────────
   if (action === 'setForfeited') {
     if (!isAdmin) return Response.json({ error: 'Admin only' }, { status: 403 });
     const { battle_card_id, forfeited, winner_player_id } = body;
@@ -902,11 +1125,14 @@ Deno.serve(async (req) => {
         return Response.json({ error: 'Winner must be a participant' }, { status: 400 });
       }
 
-      const tabletopSurvivors = winnerCommittedTabletop(card, winner_player_id);
+      // FIX 1: Winner keeps EXACTLY their committed BOP troops — no TT conversion round-trip.
+      const winnerCommittedBOP = getWinnerCommittedTroops(card, winner_player_id);
 
       const forfeitResult = {
         winner_player_id,
-        surviving_tabletop_troops: Math.max(1, tabletopSurvivors),
+        // Store TT value for display compatibility but BOP is authoritative
+        surviving_tabletop_troops: winnerCommittedTabletop(card, winner_player_id),
+        winner_bop_survivors: winnerCommittedBOP, // authoritative
         notes: 'Victory by forfeit.',
         submitted_by: 'admin',
         submitted_at: new Date().toISOString(),
@@ -915,33 +1141,43 @@ Deno.serve(async (req) => {
       };
 
       await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
-        status:      'forfeited',
-        resolved_at: new Date().toISOString(),
-        result:      forfeitResult,
+        status: 'forfeited', resolved_at: new Date().toISOString(), result: forfeitResult,
       });
 
+      // Apply territory: winner gets territory with EXACT committed BOP troops
       const territoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
-      const updates = buildTerritoryUpdates(card, forfeitResult, territoryStates);
-      await applyTerritoryUpdates(base44, updates);
+      const targetState = territoryStates.find(s => s.territory_id === card.target_territory_id);
+      if (targetState) {
+        await base44.asServiceRole.entities.TerritoryState.update(targetState.id, {
+          owner_player_id: winner_player_id,
+          troop_count: winnerCommittedBOP,
+        });
+      }
+      // For bloodbath: also handle loser territory
+      if (card.is_mutual) {
+        const loserEntry = (card.attackers ?? []).find(a => a.player_id !== winner_player_id);
+        if (loserEntry) {
+          const loserState = territoryStates.find(s => s.territory_id === loserEntry.origin_territory_id);
+          if (loserState && (loserState.troop_count ?? 0) === 0) {
+            const splitCapture = Math.floor(winnerCommittedBOP / 2);
+            const splitOrigin  = winnerCommittedBOP - splitCapture;
+            const winnerEntry  = (card.attackers ?? []).find(a => a.player_id === winner_player_id);
+            const winnerOriginState = winnerEntry ? territoryStates.find(s => s.territory_id === winnerEntry.origin_territory_id) : null;
+            await base44.asServiceRole.entities.TerritoryState.update(loserState.id, { owner_player_id: winner_player_id, troop_count: Math.max(winnerCommittedBOP > 0 ? 1 : 0, splitCapture) });
+            if (winnerOriginState) await base44.asServiceRole.entities.TerritoryState.update(winnerOriginState.id, { owner_player_id: winner_player_id, troop_count: (winnerOriginState.troop_count ?? 0) + splitOrigin });
+          }
+        }
+      }
 
       await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
-        result_applied: true,
-        result: { ...forfeitResult, applied_at: new Date().toISOString() },
+        result_applied: true, result: { ...forfeitResult, applied_at: new Date().toISOString() },
       });
-
       await refreshLockedTerritories(base44, campaign_id);
-
-      await log(base44, campaign_id, card.round, 'battle_forfeited', null, {
-        battle_card_id, winner_player_id,
-      }, true);
-
+      await log(base44, campaign_id, card.round, 'battle_forfeited', null, { battle_card_id, winner_player_id, winner_bop_survivors: winnerCommittedBOP }, true);
       return Response.json({ success: true, result: forfeitResult });
     } else {
       await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
-        status: 'awaiting_result',
-        resolved_at: null,
-        result: {},
-        result_applied: false,
+        status: 'awaiting_result', resolved_at: null, result: {}, result_applied: false,
       });
       await refreshLockedTerritories(base44, campaign_id);
       await log(base44, campaign_id, card.round, 'battle_forfeit_cleared', null, { battle_card_id }, true);
@@ -956,7 +1192,6 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'battle_card_id and vote (yes|no) required' }, { status: 400 });
     }
 
-    // Resolve effective player via perspective selector
     const effective = resolveEffectivePlayer(acting_as_player_id);
     if (!effective.ok) return Response.json({ error: effective.error }, { status: 403 });
     const effectivePlayer = effective.player;
@@ -969,21 +1204,8 @@ Deno.serve(async (req) => {
     const participantIds = getParticipantIds(card);
     const isEffectiveParticipant = participantIds.includes(effectivePlayer.id);
 
-    console.log(`[voteDelay] battle_card_id=${card.id}`);
-    console.log(`[voteDelay] acting_as_player_id received=${acting_as_player_id ?? 'null'}`);
-    console.log(`[voteDelay] effectivePlayer.id=${effectivePlayer.id} display_name=${effectivePlayer.display_name}`);
-    console.log(`[voteDelay] participantIds=${JSON.stringify(participantIds)}`);
-    console.log(`[voteDelay] isEffectiveParticipant=${isEffectiveParticipant}`);
-    console.log(`[voteDelay] delay_votes before=${JSON.stringify(card.delay_votes ?? {})}`);
-
     if (!isEffectiveParticipant && !isAdmin) {
-      console.log(`[voteDelay] REJECTED: effectivePlayer not in participantIds and not admin`);
       return Response.json({ error: 'Not a participant in this battle' }, { status: 403 });
-    }
-
-    // If admin is voting on behalf of a non-participant (edge case), skip — only participants' votes count
-    if (!isEffectiveParticipant) {
-      console.log(`[voteDelay] WARNING: admin voting as non-participant ${effectivePlayer.id} — recording vote but this player is not in participantIds`);
     }
 
     if (!['pending', 'awaiting_result'].includes(card.status)) {
@@ -993,16 +1215,13 @@ Deno.serve(async (req) => {
     const currentVotes = { ...(card.delay_votes ?? {}) };
     currentVotes[effectivePlayer.id] = vote;
 
-    // Only count participant votes (not admin-only votes from non-participants)
     const participantVotes = Object.fromEntries(
       Object.entries(currentVotes).filter(([pid]) => participantIds.includes(pid))
     );
-    const yesVotes    = Object.values(participantVotes).filter(v => v === 'yes').length;
-    const noVotes     = Object.values(participantVotes).filter(v => v === 'no').length;
+    const yesVotes      = Object.values(participantVotes).filter(v => v === 'yes').length;
+    const noVotes       = Object.values(participantVotes).filter(v => v === 'no').length;
     const totalRequired = participantIds.length;
 
-    // Delay requires ALL involved players to vote yes (unanimous).
-    // Any 'no' vote immediately cancels delay. If not all have voted yet, status stays unchanged.
     let newStatus = card.status;
     if (noVotes > 0) {
       newStatus = 'awaiting_result';
@@ -1010,35 +1229,25 @@ Deno.serve(async (req) => {
       newStatus = 'delayed';
     }
 
-    console.log(`[voteDelay] delay_votes after=${JSON.stringify(currentVotes)}`);
-    console.log(`[voteDelay] participant votes yes=${yesVotes} no=${noVotes} totalRequired=${totalRequired}`);
-    console.log(`[voteDelay] unanimousDelayRequired=${totalRequired > 0} delayApproved=${newStatus === 'delayed'} newStatus=${newStatus}`);
-
     await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
       status: newStatus,
       delay_votes: currentVotes,
       ...(newStatus === 'delayed' ? { delayed_at: new Date().toISOString() } : {}),
     });
 
-    // If battle just became delayed, refresh locked territories
     if (newStatus === 'delayed') {
       await refreshLockedTerritories(base44, campaign_id);
     }
 
     const allVoted = (yesVotes + noVotes) >= totalRequired;
     await log(base44, campaign_id, card.round, 'battle_delay_vote', effectivePlayer.id, {
-      battle_card_id, vote,
-      yes_count: yesVotes, no_count: noVotes,
-      total_participants: totalRequired,
-      all_voted: allVoted,
-      new_status: newStatus,
-      acting_as: acting_as_player_id ?? null,
+      battle_card_id, vote, yes_count: yesVotes, no_count: noVotes,
+      total_participants: totalRequired, all_voted: allVoted, new_status: newStatus,
     }, true);
 
     return Response.json({
       success: true, status: newStatus, delay_votes: currentVotes,
-      votes_needed: Math.max(0, totalRequired - yesVotes),
-      all_voted: allVoted,
+      votes_needed: Math.max(0, totalRequired - yesVotes), all_voted: allVoted,
     });
   }
 
@@ -1049,24 +1258,19 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Not in battle phase' }, { status: 400 });
     }
 
-    // Fetch current-round cards + any active delayed cards from prior rounds
     const currentRoundCards = await base44.asServiceRole.entities.BattleCard.filter({ campaign_id, round });
 
-    // Fetch delayed cards from prior rounds (same fix: only break on truly empty round)
     let priorDelayedCards = [];
     for (let r = round - 1; r >= Math.max(1, round - 10); r--) {
       const priorCards = await base44.asServiceRole.entities.BattleCard.filter({ campaign_id, round: r });
       const delayed = priorCards.filter(c => c.status === 'delayed' && !c.result_applied);
       priorDelayedCards = [...priorDelayedCards, ...delayed];
-      if (priorCards.length === 0) break; // truly empty round — stop
+      if (priorCards.length === 0) break;
     }
 
     const allCards = [...currentRoundCards, ...priorDelayedCards];
 
-    let resolvedCount     = 0;
-    let autoResolvedCount = 0;
-    let forfeitedCount    = 0;
-    let delayedCount      = 0;
+    let resolvedCount = 0, autoResolvedCount = 0, forfeitedCount = 0, delayedCount = 0;
 
     for (const card of allCards) {
       if (card.result_applied) {
@@ -1076,62 +1280,49 @@ Deno.serve(async (req) => {
       }
 
       if (card.status === 'delayed') {
-        // Delayed battle: carry forward to next round.
-        // Do NOT set result_applied — keep it unresolved so it appears in the next battle phase.
-        // Simply log the carry and move on.
         delayedCount++;
         await log(base44, campaign_id, round, 'battle_delayed_carried', null, {
-          battle_card_id: card.id,
-          target_territory_id: card.target_territory_id,
-          original_round: card.round,
-          carrying_to_round: round + 1,
+          battle_card_id: card.id, target_territory_id: card.target_territory_id,
+          original_round: card.round, carrying_to_round: round + 1,
         }, true);
-        continue; // Do NOT mark result_applied — it needs to be active next round
+        continue;
       }
 
       let resultToApply = null;
 
-      // A double_siege defender-lost result has winner_player_id=null but still needs applying.
       const isDoubleSiegeDefenderLost = card.battle_type === 'double_siege'
         && card.result?.double_siege_result != null
         && card.result.double_siege_result.defender_held === false;
 
-      if (card.status === 'forfeited' && card.result?.winner_player_id) {
+      if (card.status === 'forfeited' && (card.result?.winner_player_id || isDoubleSiegeDefenderLost)) {
         resultToApply = card.result;
         forfeitedCount++;
       } else if (['resolved', 'auto_resolved'].includes(card.status) && (card.result?.winner_player_id || isDoubleSiegeDefenderLost)) {
         resultToApply = card.result;
         resolvedCount++;
       } else {
-        // Auto-resolve anything still pending
         const autoResult = autoResolveBattle(card, campaign_id);
         const now = new Date().toISOString();
         await base44.asServiceRole.entities.BattleCard.update(card.id, {
-          status:      'auto_resolved',
-          resolved_at: now,
-          result:      { ...autoResult, submitted_by: 'system', submitted_at: now, applied_at: null },
+          status: 'auto_resolved', resolved_at: now,
+          result: { ...autoResult, submitted_by: 'system', submitted_at: now, applied_at: null },
         });
         resultToApply = autoResult;
         autoResolvedCount++;
-
         await log(base44, campaign_id, round, 'battle_auto_resolved', null, {
-          battle_card_id:      card.id,
-          target_territory_id: card.target_territory_id,
-          winner_player_id:    autoResult.winner_player_id,
+          battle_card_id: card.id, target_territory_id: card.target_territory_id,
+          winner_player_id: autoResult.winner_player_id,
         }, true);
       }
 
-      // Apply if there's a winner OR if it's a double_siege defender-lost (no winner, but territory must update)
       const resultIsDoubleSiegeDefenderLost = card.battle_type === 'double_siege'
         && resultToApply?.double_siege_result != null
         && resultToApply.double_siege_result.defender_held === false;
 
       if (resultToApply?.winner_player_id || resultIsDoubleSiegeDefenderLost) {
-        console.log(`[processPhaseEnd] applying territory updates for card=${card.id} type=${card.battle_type} winner=${resultToApply?.winner_player_id ?? 'null(defender_lost)'}`);
         const freshStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
         const updates = buildTerritoryUpdates(card, resultToApply, freshStates);
         await applyTerritoryUpdates(base44, updates);
-
         await base44.asServiceRole.entities.BattleCard.update(card.id, {
           result_applied: true,
           result: { ...resultToApply, applied_at: new Date().toISOString() },
@@ -1139,30 +1330,23 @@ Deno.serve(async (req) => {
       }
     }
 
-    // After resolving, recompute locked territories (only remaining delayed cards stay locked)
     await refreshLockedTerritories(base44, campaign_id);
 
-    // Final state for snapshot + elimination check
     const finalStates   = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
     const activePlayers = players.filter(p => !p.is_eliminated);
-
-    // Elimination check
     const eliminatedNow = [];
+
     for (const p of activePlayers) {
       const owned = finalStates.filter(s => s.owner_player_id === p.id);
       if (owned.length === 0) {
         await base44.asServiceRole.entities.CampaignPlayer.update(p.id, {
-          is_eliminated: true,
-          eliminated_at: new Date().toISOString(),
+          is_eliminated: true, eliminated_at: new Date().toISOString(),
         });
         eliminatedNow.push(p.id);
-        await log(base44, campaign_id, round, 'player_eliminated', p.id, {
-          display_name: p.display_name,
-        }, true);
+        await log(base44, campaign_id, round, 'player_eliminated', p.id, { display_name: p.display_name }, true);
       }
     }
 
-    // Phase-end snapshot
     await base44.asServiceRole.entities.PhaseSnapshot.create({
       campaign_id, round, phase: 'battle', snapshot_type: 'phase_end',
       territory_states: finalStates.map(ts => ({
@@ -1183,10 +1367,8 @@ Deno.serve(async (req) => {
       next_phase: 'fortify', round,
       battles_resolved: resolvedCount, battles_auto_resolved: autoResolvedCount,
       battles_forfeited: forfeitedCount, battles_delayed: delayedCount,
-      players_eliminated: eliminatedNow.length,
     }, true);
 
-    // Victory detection
     const remainingAfterElim = activePlayers.filter(p => !eliminatedNow.includes(p.id) && !p.is_eliminated);
     let nextPhase = 'fortify';
     let campaignComplete = false;
@@ -1200,9 +1382,7 @@ Deno.serve(async (req) => {
           display_name: victor.display_name, rounds_played: round, condition: 'domination',
         }, true);
       }
-      await base44.asServiceRole.entities.Campaign.update(campaign_id, {
-        current_phase: 'complete', status: 'complete',
-      });
+      await base44.asServiceRole.entities.Campaign.update(campaign_id, { current_phase: 'complete', status: 'complete' });
     } else {
       await base44.asServiceRole.entities.Campaign.update(campaign_id, { current_phase: 'fortify' });
     }
@@ -1218,17 +1398,9 @@ Deno.serve(async (req) => {
   return Response.json({ error: `Unknown action: ${action}` }, { status: 400 });
 });
 
-/**
- * Recompute and persist the locked territory list for a campaign.
- * Locked = territories involved in any currently-delayed (unresolved) battle card.
- * Persisted to campaign.locked_territory_ids for fast client-side checks.
- */
 async function refreshLockedTerritories(base44, campaign_id) {
-  // Gather all unresolved delayed cards across all rounds for this campaign
   const allCampaignCards = await base44.asServiceRole.entities.BattleCard.filter({ campaign_id });
   const delayedCards = allCampaignCards.filter(c => c.status === 'delayed' && !c.result_applied);
   const lockedIds = computeLockedTerritoryIds(delayedCards);
-  await base44.asServiceRole.entities.Campaign.update(campaign_id, {
-    locked_territory_ids: lockedIds,
-  });
+  await base44.asServiceRole.entities.Campaign.update(campaign_id, { locked_territory_ids: lockedIds });
 }

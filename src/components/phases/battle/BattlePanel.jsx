@@ -26,7 +26,9 @@ export default function BattlePanel({ campaign, players, myPlayer, mapDef, onPha
   const currentRoundCards = cards.filter(c => c.round === round);
   const pendingCount  = cards.filter(c => ['pending','awaiting_result','result_submitted','awaiting_approval'].includes(c.status)).length;
   const resolvedCount = cards.filter(c => ['resolved','auto_resolved','forfeited'].includes(c.status)).length;
-  // All resolved = no pending AND no unresolved delayed (delayed counts as "needs attention")
+  // Resolved carried-over cards (prior rounds, resolved) — kept visible for review
+  const resolvedCarriedOver = cards.filter(c => c.round !== round && ['resolved','auto_resolved','forfeited'].includes(c.status));
+  // All resolved = no pending AND no unresolved delayed
   const allResolved   = cards.length > 0 && pendingCount === 0 && delayedCards.length === 0;
 
   const handleProcessEnd = async () => {
@@ -63,21 +65,27 @@ export default function BattlePanel({ campaign, players, myPlayer, mapDef, onPha
         </div>
       </div>
 
-      {/* Delayed battles from prior rounds */}
+      {/* Delayed battles from prior rounds — active, need resolution */}
       {delayedCards.length > 0 && (
         <div className="rounded border border-warning/40 bg-warning/5 p-3 space-y-2">
           <p className="text-xs font-display tracking-wider uppercase text-warning flex items-center gap-2">
             <Clock className="w-3 h-3" /> Carried Over ({delayedCards.length})
           </p>
-          <p className="text-[10px] text-muted-foreground">These battles were delayed in a previous round and must be resolved.</p>
+          <p className="text-[10px] text-muted-foreground">These battles were delayed and must be resolved this round.</p>
           {delayedCards.map(card => (
-            <BattleCardRow
-              key={card.id}
-              card={card}
-              players={players}
-              mapDef={mapDef}
-              campaignId={campaign.id}
-            />
+            <BattleCardRow key={card.id} card={card} players={players} mapDef={mapDef} campaignId={campaign.id} />
+          ))}
+        </div>
+      )}
+
+      {/* Resolved carried-over battles — visible for review, collapsed by default */}
+      {resolvedCarriedOver.length > 0 && (
+        <div className="rounded border border-border bg-muted/5 p-3 space-y-2">
+          <p className="text-xs font-display tracking-wider uppercase text-muted-foreground flex items-center gap-2">
+            <Check className="w-3 h-3 text-status-locked" /> Resolved Carried-Over ({resolvedCarriedOver.length})
+          </p>
+          {resolvedCarriedOver.map(card => (
+            <BattleCardRow key={card.id} card={card} players={players} mapDef={mapDef} campaignId={campaign.id} />
           ))}
         </div>
       )}
