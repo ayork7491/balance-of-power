@@ -288,6 +288,15 @@ export default function BattleCardDetail() {
     if (res.data?.error) {
       setError(res.data.error);
     } else {
+      // Optimistically merge delay_votes + status into card state immediately,
+      // then do a full refetch to sync any server-side changes.
+      if (res.data?.delay_votes) {
+        setCard(prev => prev ? {
+          ...prev,
+          delay_votes: res.data.delay_votes,
+          status: res.data.status ?? prev.status,
+        } : prev);
+      }
       await reloadCard();
     }
   };

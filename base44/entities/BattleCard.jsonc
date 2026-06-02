@@ -114,6 +114,15 @@
       "type": "boolean",
       "default": false,
       "description": "True when territory updates have been applied. Prevents double-application during phase end."
+    },
+    "delay_votes": {
+      "type": "object",
+      "description": "Map of CampaignPlayer.id \u2192 'yes' | 'no'. Tracks per-participant votes to delay this battle. Unanimous 'yes' triggers delayed status.",
+      "default": {}
+    },
+    "delayed_at": {
+      "type": "string",
+      "description": "ISO timestamp when the battle was set to delayed status."
     }
   },
   "required": [
