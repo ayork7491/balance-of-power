@@ -193,21 +193,23 @@ function autoResolveBattle(card, campaignId) {
  */
 function buildTerritoryUpdates(card, result, territoryStates) {
   const { winner_player_id, surviving_tabletop_troops } = result;
-  if (!winner_player_id) return [];
+  // double_siege with defender_lost has no winner — handle separately below
+  const isDoubleSiegeResult = card.battle_type === 'double_siege' && result.double_siege_result != null;
+  if (!winner_player_id && !isDoubleSiegeResult) return [];
 
-  // Guard: if tabletop_size is 0 (shouldn't happen but possible for inline-resolved skirmishes),
-  // use committed troops as survivors directly.
-  let survivingTroops;
-  if ((card.tabletop_size ?? 0) <= 0) {
-    // Fallback: use winner's committed troops as survivors (skirmish edge case)
-    survivingTroops = getWinnerCommittedTroops(card, winner_player_id);
-    console.log(`[buildTerritoryUpdates] tabletop_size=0 fallback: survivingTroops=${survivingTroops} from committed`);
-  } else {
-    survivingTroops = scaleBackSurvivors(
-      surviving_tabletop_troops ?? 0,
-      card.tabletop_size,
-      card.total_troops_in_battle ?? 0,
-    );
+  // Guard: if tabletop_size is 0 or no winner (double_siege defender-lost), skip standard survivor calc.
+  let survivingTroops = 0;
+  if (winner_player_id) {
+    if ((card.tabletop_size ?? 0) <= 0) {
+      survivingTroops = getWinnerCommittedTroops(card, winner_player_id);
+      console.log(`[buildTerritoryUpdates] tabletop_size=0 fallback: survivingTroops=${survivingTroops} from committed`);
+    } else {
+      survivingTroops = scaleBackSurvivors(
+        surviving_tabletop_troops ?? 0,
+        card.tabletop_size,
+        card.total_troops_in_battle ?? 0,
+      );
+    }
   }
 
   const updates = [];
@@ -290,15 +292,14 @@ function buildTerritoryUpdates(card, result, territoryStates) {
 
   } else if (card.battle_type === 'capture_objectives') {
     // ── Capture Objectives ────────────────────────────────────────────────────
-    // Winner gains target territory with clamped survivors.
-    // All losers: their committed troops RETURN to their origin (they were removed in attackPhase).
+    // Winner gains target territory with survivors.
+    // Losers: their DECLARED survivors (loser_tabletop_survivors) return to origin.
+    // If no declared value, fall back to 0 (not auto-return 100%).
     const winnerCommitted = getWinnerCommittedTroops(card, winner_player_id);
     const clampedSurvivors = Math.max(1, Math.min(survivingTroops, winnerCommitted));
 
     const targetState = territoryStates.find(s => s.territory_id === card.target_territory_id);
-    const ownerBefore = targetState?.owner_player_id ?? 'null';
-    const troopsBefore = targetState?.troop_count ?? 0;
-    console.log(`[capture_objectives] winner=${winner_player_id} target=${card.target_territory_id} owner_before=${ownerBefore} troops_before=${troopsBefore} survivors=${clampedSurvivors} (raw=${survivingTroops} clamped to winnerCommitted=${winnerCommitted})`);
+    console.log(`[capture_objectives] winner=${winner_player_id} target=${card.target_territory_id} survivors=${clampedSurvivors}`);
 
     if (targetState) {
       updates.push({
@@ -308,8 +309,6 @@ function buildTerritoryUpdates(card, result, territoryStates) {
         troop_count:     clampedSurvivors,
       });
     } else {
-      // No TerritoryState record yet (truly neutral territory — never owned).
-      // Flag for creation after updates are applied.
       updates.push({
         _create: true,
         campaign_id:     card.campaign_id,
@@ -320,16 +319,19 @@ function buildTerritoryUpdates(card, result, territoryStates) {
       });
     }
 
-    // Losers: return committed troops to their origin (add to existing garrison).
-    // These troops were removed in attackPhase — they must be restored on loss.
+    // Losers: return DECLARED survivors to their origin.
+    // loser_tabletop_survivors is a map { player_id -> tabletop_survivors } from the result.
+    const loserTTSurvivors = result.loser_tabletop_survivors ?? {};
     for (const atk of (card.attackers ?? [])) {
       if (atk.player_id === winner_player_id) continue;
       const loserOriginState = territoryStates.find(s => s.territory_id === atk.origin_territory_id);
       if (loserOriginState) {
-        const loserCommitted = atk.committed_troops ?? 0;
+        const loserTT = loserTTSurvivors[atk.player_id] ?? 0;
+        // Scale loser tabletop survivors back to full-scale troops
+        const loserBopSurvivors = scaleBackSurvivors(loserTT, card.tabletop_size ?? 0, card.total_troops_in_battle ?? 0);
         const before = loserOriginState.troop_count ?? 0;
-        const after  = before + loserCommitted;
-        console.log(`[capture_objectives loser return] player=${atk.player_id} territory=${atk.origin_territory_id} owner_before=${loserOriginState.owner_player_id} troops_before=${before} returning=${loserCommitted} troops_after=${after}`);
+        const after  = before + loserBopSurvivors;
+        console.log(`[capture_objectives loser return] player=${atk.player_id} territory=${atk.origin_territory_id} loserTT=${loserTT} loserBOP=${loserBopSurvivors} before=${before} after=${after}`);
         updates.push({
           id:              loserOriginState.id,
           territory_id:    atk.origin_territory_id,
@@ -339,8 +341,60 @@ function buildTerritoryUpdates(card, result, territoryStates) {
       }
     }
 
+  } else if (card.battle_type === 'double_siege' && result.double_siege_result != null) {
+    // ── Double Siege ──────────────────────────────────────────────────────────
+    // Defender wins: both attackers lose all troops. Defender survivors stay in target territory.
+    // Defender loses: territory becomes unclaimed (owner=null, troops=0).
+    //                 Each attacker's survivors return to their own origin territory.
+    const ds = result.double_siege_result;
+    const targetState = territoryStates.find(s => s.territory_id === card.target_territory_id);
+
+    if (ds.defender_held) {
+      // Defender wins — survivors stay in target territory
+      const defenderBOP = scaleBackSurvivors(ds.defender_surviving_tabletop ?? 0, card.tabletop_size ?? 0, card.total_troops_in_battle ?? 0);
+      console.log(`[double_siege] defender held. territory=${card.target_territory_id} defender_bop_survivors=${defenderBOP}`);
+      if (targetState) {
+        updates.push({
+          id:              targetState.id,
+          territory_id:    card.target_territory_id,
+          owner_player_id: card.defender_player_id,
+          troop_count:     defenderBOP,
+        });
+      }
+      // Attackers lose all committed troops — no return (already removed in attackPhase)
+    } else {
+      // Defender loses — territory becomes unclaimed
+      console.log(`[double_siege] defender lost. territory=${card.target_territory_id} becomes unclaimed.`);
+      if (targetState) {
+        updates.push({
+          id:              targetState.id,
+          territory_id:    card.target_territory_id,
+          owner_player_id: null,
+          troop_count:     0,
+        });
+      }
+      // Each attacker's survivors return to their origin territory
+      for (const atkSurvivor of (ds.attacker_survivors ?? [])) {
+        const atk = (card.attackers ?? []).find(a => a.player_id === atkSurvivor.player_id);
+        if (!atk) continue;
+        const atkOriginState = territoryStates.find(s => s.territory_id === atk.origin_territory_id);
+        if (atkOriginState) {
+          const atkBOP = scaleBackSurvivors(atkSurvivor.tabletop_survivors ?? 0, card.tabletop_size ?? 0, card.total_troops_in_battle ?? 0);
+          const before = atkOriginState.troop_count ?? 0;
+          const after  = before + atkBOP;
+          console.log(`[double_siege attacker return] player=${atkSurvivor.player_id} territory=${atk.origin_territory_id} tt=${atkSurvivor.tabletop_survivors} bop=${atkBOP} before=${before} after=${after}`);
+          updates.push({
+            id:              atkOriginState.id,
+            territory_id:    atk.origin_territory_id,
+            owner_player_id: atk.player_id,
+            troop_count:     after,
+          });
+        }
+      }
+    }
+
   } else {
-    // ── Siege / double_siege ──────────────────────────────────────────────────
+    // ── Siege ─────────────────────────────────────────────────────────────────
     // Winner gains target_territory with survivors.
     // Loser's committed troops already removed from origin in attackPhase.
     const targetState = territoryStates.find(s => s.territory_id === card.target_territory_id);
@@ -477,9 +531,16 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Only the campaign admin can submit battle results' }, { status: 403 });
     }
 
-    const { battle_card_id, winner_player_id, surviving_tabletop_troops, notes } = body;
-    if (!battle_card_id || winner_player_id == null || surviving_tabletop_troops == null) {
-      return Response.json({ error: 'battle_card_id, winner_player_id, surviving_tabletop_troops required' }, { status: 400 });
+    const {
+      battle_card_id, winner_player_id, surviving_tabletop_troops, notes,
+      // capture_objectives: per-attacker loser survivors map { player_id -> tabletop_survivors }
+      loser_tabletop_survivors,
+      // double_siege: { defender_held: bool, defender_surviving_tabletop, attacker_survivors: [{ player_id, tabletop_survivors }] }
+      double_siege_result,
+    } = body;
+
+    if (!battle_card_id) {
+      return Response.json({ error: 'battle_card_id required' }, { status: 400 });
     }
 
     const cards = await base44.asServiceRole.entities.BattleCard.filter({ id: battle_card_id });
@@ -489,6 +550,44 @@ Deno.serve(async (req) => {
 
     if (!['pending', 'awaiting_result', 'delayed', 'result_submitted', 'awaiting_approval'].includes(card.status)) {
       return Response.json({ error: `Cannot submit result for card in status: ${card.status}` }, { status: 400 });
+    }
+
+    // ── double_siege special path ──────────────────────────────────────────────
+    if (card.battle_type === 'double_siege' && double_siege_result != null) {
+      const { defender_held, defender_surviving_tabletop, attacker_survivors } = double_siege_result;
+      const now = new Date().toISOString();
+      await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
+        status: 'result_submitted',
+        approvals: [],
+        result: {
+          double_siege_result: {
+            defender_held: !!defender_held,
+            defender_surviving_tabletop: defender_held ? Math.max(0, Math.round(defender_surviving_tabletop ?? 0)) : 0,
+            attacker_survivors: (attacker_survivors ?? []).map(a => ({
+              player_id: a.player_id,
+              tabletop_survivors: Math.max(0, Math.round(a.tabletop_survivors ?? 0)),
+            })),
+          },
+          // winner_player_id: set to defender if they held (for compatibility with approval flow)
+          winner_player_id: defender_held ? (card.defender_player_id ?? null) : null,
+          surviving_tabletop_troops: defender_held ? Math.max(0, Math.round(defender_surviving_tabletop ?? 0)) : 0,
+          notes: notes ?? '',
+          submitted_by: myPlayer.id,
+          submitted_at: now,
+          result_source: 'manual',
+          applied_at: null,
+        },
+      });
+      await log(base44, campaign_id, card.round, 'battle_result_submitted', myPlayer.id, {
+        battle_card_id, target_territory_id: card.target_territory_id, battle_type: 'double_siege',
+        defender_held: !!defender_held,
+      }, true);
+      return Response.json({ success: true, status: 'result_submitted' });
+    }
+
+    // ── standard path ──────────────────────────────────────────────────────────
+    if (winner_player_id == null || surviving_tabletop_troops == null) {
+      return Response.json({ error: 'winner_player_id and surviving_tabletop_troops required' }, { status: 400 });
     }
 
     const participantIds = getParticipantIds(card);
@@ -502,6 +601,23 @@ Deno.serve(async (req) => {
       Math.max(1, maxTabletop),
     );
 
+    // For capture_objectives: validate and store loser tabletop survivors
+    let clampedLoserSurvivors = null;
+    if (card.battle_type === 'capture_objectives' && loser_tabletop_survivors != null) {
+      clampedLoserSurvivors = {};
+      for (const atk of (card.attackers ?? [])) {
+        if (atk.player_id === winner_player_id) continue;
+        const submitted = loser_tabletop_survivors[atk.player_id] ?? null;
+        if (submitted != null) {
+          const loserMaxTabletop = winnerCommittedTabletop(card, atk.player_id);
+          clampedLoserSurvivors[atk.player_id] = Math.min(
+            Math.max(0, Math.round(submitted)),
+            loserMaxTabletop,
+          );
+        }
+      }
+    }
+
     const now = new Date().toISOString();
     await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
       status:    'result_submitted',
@@ -509,6 +625,7 @@ Deno.serve(async (req) => {
       result: {
         winner_player_id,
         surviving_tabletop_troops: clampedSurvivors,
+        loser_tabletop_survivors: clampedLoserSurvivors ?? null,
         notes: notes ?? '',
         submitted_by: myPlayer.id,
         submitted_at: now,
