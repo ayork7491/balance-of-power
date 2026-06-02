@@ -343,11 +343,22 @@ function buildTerritoryUpdates(card, result, territoryStates) {
 
   } else if (card.battle_type === 'double_siege' && result.double_siege_result != null) {
     // ── Double Siege ──────────────────────────────────────────────────────────
-    // Defender wins: both attackers lose all troops. Defender survivors stay in target territory.
-    // Defender loses: territory becomes unclaimed (owner=null, troops=0).
-    //                 Each attacker's survivors return to their own origin territory.
     const ds = result.double_siege_result;
     const targetState = territoryStates.find(s => s.territory_id === card.target_territory_id);
+
+    console.log(`[double_siege buildTerritoryUpdates] battle_card_id=${card.id}`);
+    console.log(`[double_siege] defender_held=${ds.defender_held} defender_id=${card.defender_player_id} target=${card.target_territory_id}`);
+    console.log(`[double_siege] target owner_before=${targetState?.owner_player_id ?? 'null'} troops_before=${targetState?.troop_count ?? 0}`);
+    for (const atk of (card.attackers ?? [])) {
+      const atkOrigin = territoryStates.find(s => s.territory_id === atk.origin_territory_id);
+      const atkSurvivorEntry = (ds.attacker_survivors ?? []).find(a => a.player_id === atk.player_id);
+      console.log(`[double_siege] attacker=${atk.player_id} origin=${atk.origin_territory_id} committed=${atk.committed_troops} survivors_submitted=${atkSurvivorEntry?.tabletop_survivors ?? 0} origin_troops_before=${atkOrigin?.troop_count ?? 0}`);
+    }
+    if (ds.defender_held) {
+      console.log(`[double_siege] BRANCH: defender held → defender keeps territory with ${ds.defender_surviving_tabletop} TT survivors`);
+    } else {
+      console.log(`[double_siege] BRANCH: defender lost → territory becomes unclaimed, attacker survivors return home`);
+    }
 
     if (ds.defender_held) {
       // Defender wins — survivors stay in target territory
@@ -376,19 +387,24 @@ function buildTerritoryUpdates(card, result, territoryStates) {
       // Each attacker's survivors return to their origin territory
       for (const atkSurvivor of (ds.attacker_survivors ?? [])) {
         const atk = (card.attackers ?? []).find(a => a.player_id === atkSurvivor.player_id);
-        if (!atk) continue;
+        if (!atk) {
+          console.log(`[double_siege attacker return] WARNING: no attacker entry found for player=${atkSurvivor.player_id}`);
+          continue;
+        }
         const atkOriginState = territoryStates.find(s => s.territory_id === atk.origin_territory_id);
         if (atkOriginState) {
           const atkBOP = scaleBackSurvivors(atkSurvivor.tabletop_survivors ?? 0, card.tabletop_size ?? 0, card.total_troops_in_battle ?? 0);
           const before = atkOriginState.troop_count ?? 0;
           const after  = before + atkBOP;
-          console.log(`[double_siege attacker return] player=${atkSurvivor.player_id} territory=${atk.origin_territory_id} tt=${atkSurvivor.tabletop_survivors} bop=${atkBOP} before=${before} after=${after}`);
+          console.log(`[double_siege attacker return] player=${atkSurvivor.player_id} origin=${atk.origin_territory_id} tt=${atkSurvivor.tabletop_survivors} bop=${atkBOP} origin_before=${before} origin_after=${after}`);
           updates.push({
             id:              atkOriginState.id,
             territory_id:    atk.origin_territory_id,
             owner_player_id: atk.player_id,
             troop_count:     after,
           });
+        } else {
+          console.log(`[double_siege attacker return] WARNING: no TerritoryState found for origin=${atk.origin_territory_id}`);
         }
       }
     }
@@ -490,16 +506,23 @@ Deno.serve(async (req) => {
 
   // ── Resolve effective player (perspective selector support) ──────────────────
   // For participant-scoped actions (approve, vote), acting_as_player_id overrides myPlayer.
-  // Admin can act as test players.
+  // Campaign admin (myPlayer.is_admin) can act as ANY player (real or test).
   function resolveEffectivePlayer(acting_as_player_id) {
     if (!acting_as_player_id) return { ok: true, player: myPlayer };
     const target = players.find(p => p.id === acting_as_player_id);
-    if (!target) return { ok: false, error: 'Invalid acting_as_player_id' };
+    if (!target) {
+      console.log(`[resolveEffectivePlayer] FAIL: acting_as_player_id=${acting_as_player_id} not found. Available: ${players.map(p => p.id + '(' + p.display_name + ')').join(', ')}`);
+      return { ok: false, error: 'Invalid acting_as_player_id' };
+    }
     if (target.id === myPlayer.id) return { ok: true, player: myPlayer };
-    const isTestPlayer = target.is_test_player === true;
+    // Campaign admin can act as any player for administrative perspective actions
+    if (myPlayer.is_admin) {
+      console.log(`[resolveEffectivePlayer] campaign admin acting as player=${target.id} (${target.display_name})`);
+      return { ok: true, player: target };
+    }
+    // App-level admin fallback
     if (user.role === 'admin') return { ok: true, player: target };
-    if (myPlayer.is_admin && isTestPlayer) return { ok: true, player: target };
-    return { ok: false, error: 'You can only act as test players' };
+    return { ok: false, error: 'Only campaign admins can act as other players' };
   }
 
   // ── getBattleCards ────────────────────────────────────────────────────────────
@@ -696,10 +719,16 @@ Deno.serve(async (req) => {
 
     await base44.asServiceRole.entities.BattleCard.update(battle_card_id, updatePayload);
 
-    // Apply territory changes immediately when all approve
+    // Apply territory changes immediately when all approve.
+    // IMPORTANT: double_siege defender-lost has winner_player_id=null but still needs territory updates.
+    // We must NOT gate on winner_player_id alone — check for double_siege_result too.
     if (newStatus === 'resolved' && !card.result_applied) {
       const result = card.result;
-      if (result?.winner_player_id) {
+      const isDoubleSiegeResult = card.battle_type === 'double_siege' && result?.double_siege_result != null;
+      const hasApplicableResult = result?.winner_player_id || isDoubleSiegeResult;
+
+      if (hasApplicableResult) {
+        console.log(`[approveResult] applying territory updates. battle_type=${card.battle_type} winner=${result?.winner_player_id ?? 'null(double_siege_defender_lost)'} isDoubleSiegeResult=${isDoubleSiegeResult}`);
         const territoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
         const updates = buildTerritoryUpdates(card, result, territoryStates);
         await applyTerritoryUpdates(base44, updates);
@@ -711,7 +740,8 @@ Deno.serve(async (req) => {
         await log(base44, campaign_id, card.round, 'battle_result_applied', null, {
           battle_card_id,
           target_territory_id: card.target_territory_id,
-          winner_player_id: result.winner_player_id,
+          winner_player_id: result.winner_player_id ?? null,
+          is_double_siege_defender_lost: isDoubleSiegeResult && !result.double_siege_result?.defender_held,
           territory_updates: updates.length,
         }, true);
 
@@ -742,7 +772,9 @@ Deno.serve(async (req) => {
       return Response.json({ error: `Cannot override card in status: ${card.status}` }, { status: 400 });
     }
 
-    if (!card.result?.winner_player_id) {
+    const hasResult = card.result?.winner_player_id ||
+      (card.battle_type === 'double_siege' && card.result?.double_siege_result != null);
+    if (!hasResult) {
       return Response.json({ error: 'No result to override with — submit a result first' }, { status: 400 });
     }
 
@@ -935,8 +967,23 @@ Deno.serve(async (req) => {
     if (card.campaign_id !== campaign_id) return Response.json({ error: 'Campaign mismatch' }, { status: 403 });
 
     const participantIds = getParticipantIds(card);
-    if (!participantIds.includes(effectivePlayer.id) && !isAdmin) {
+    const isEffectiveParticipant = participantIds.includes(effectivePlayer.id);
+
+    console.log(`[voteDelay] battle_card_id=${card.id}`);
+    console.log(`[voteDelay] acting_as_player_id received=${acting_as_player_id ?? 'null'}`);
+    console.log(`[voteDelay] effectivePlayer.id=${effectivePlayer.id} display_name=${effectivePlayer.display_name}`);
+    console.log(`[voteDelay] participantIds=${JSON.stringify(participantIds)}`);
+    console.log(`[voteDelay] isEffectiveParticipant=${isEffectiveParticipant}`);
+    console.log(`[voteDelay] delay_votes before=${JSON.stringify(card.delay_votes ?? {})}`);
+
+    if (!isEffectiveParticipant && !isAdmin) {
+      console.log(`[voteDelay] REJECTED: effectivePlayer not in participantIds and not admin`);
       return Response.json({ error: 'Not a participant in this battle' }, { status: 403 });
+    }
+
+    // If admin is voting on behalf of a non-participant (edge case), skip — only participants' votes count
+    if (!isEffectiveParticipant) {
+      console.log(`[voteDelay] WARNING: admin voting as non-participant ${effectivePlayer.id} — recording vote but this player is not in participantIds`);
     }
 
     if (!['pending', 'awaiting_result'].includes(card.status)) {
@@ -946,21 +993,26 @@ Deno.serve(async (req) => {
     const currentVotes = { ...(card.delay_votes ?? {}) };
     currentVotes[effectivePlayer.id] = vote;
 
-    const yesVotes    = Object.values(currentVotes).filter(v => v === 'yes').length;
-    const noVotes     = Object.values(currentVotes).filter(v => v === 'no').length;
+    // Only count participant votes (not admin-only votes from non-participants)
+    const participantVotes = Object.fromEntries(
+      Object.entries(currentVotes).filter(([pid]) => participantIds.includes(pid))
+    );
+    const yesVotes    = Object.values(participantVotes).filter(v => v === 'yes').length;
+    const noVotes     = Object.values(participantVotes).filter(v => v === 'no').length;
     const totalRequired = participantIds.length;
 
     // Delay requires ALL involved players to vote yes (unanimous).
     // Any 'no' vote immediately cancels delay. If not all have voted yet, status stays unchanged.
     let newStatus = card.status;
     if (noVotes > 0) {
-      // Any 'no' kills the delay
       newStatus = 'awaiting_result';
     } else if (yesVotes >= totalRequired) {
-      // All participants have voted yes — delay is unanimous
       newStatus = 'delayed';
     }
-    // else: some haven't voted yet — leave status as-is
+
+    console.log(`[voteDelay] delay_votes after=${JSON.stringify(currentVotes)}`);
+    console.log(`[voteDelay] participant votes yes=${yesVotes} no=${noVotes} totalRequired=${totalRequired}`);
+    console.log(`[voteDelay] unanimousDelayRequired=${totalRequired > 0} delayApproved=${newStatus === 'delayed'} newStatus=${newStatus}`);
 
     await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
       status: newStatus,
@@ -1039,10 +1091,15 @@ Deno.serve(async (req) => {
 
       let resultToApply = null;
 
+      // A double_siege defender-lost result has winner_player_id=null but still needs applying.
+      const isDoubleSiegeDefenderLost = card.battle_type === 'double_siege'
+        && card.result?.double_siege_result != null
+        && card.result.double_siege_result.defender_held === false;
+
       if (card.status === 'forfeited' && card.result?.winner_player_id) {
         resultToApply = card.result;
         forfeitedCount++;
-      } else if (['resolved', 'auto_resolved'].includes(card.status) && card.result?.winner_player_id) {
+      } else if (['resolved', 'auto_resolved'].includes(card.status) && (card.result?.winner_player_id || isDoubleSiegeDefenderLost)) {
         resultToApply = card.result;
         resolvedCount++;
       } else {
@@ -1064,7 +1121,13 @@ Deno.serve(async (req) => {
         }, true);
       }
 
-      if (resultToApply?.winner_player_id) {
+      // Apply if there's a winner OR if it's a double_siege defender-lost (no winner, but territory must update)
+      const resultIsDoubleSiegeDefenderLost = card.battle_type === 'double_siege'
+        && resultToApply?.double_siege_result != null
+        && resultToApply.double_siege_result.defender_held === false;
+
+      if (resultToApply?.winner_player_id || resultIsDoubleSiegeDefenderLost) {
+        console.log(`[processPhaseEnd] applying territory updates for card=${card.id} type=${card.battle_type} winner=${resultToApply?.winner_player_id ?? 'null(defender_lost)'}`);
         const freshStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
         const updates = buildTerritoryUpdates(card, resultToApply, freshStates);
         await applyTerritoryUpdates(base44, updates);
