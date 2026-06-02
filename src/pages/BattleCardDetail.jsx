@@ -189,8 +189,13 @@ export default function BattleCardDetail() {
     });
   }, [card, participantIds, totalTroops, tabletopSize]);
 
-  // Derive current vote directly from card state (no stale useState)
-  const myVote = card?.delay_votes?.[effectivePlayer?.id] ?? null;
+  // Derive current vote for the CURRENTLY SELECTED perspective player
+  // Must recompute whenever actingAsId or card changes — not cached
+  const myVote = card?.delay_votes?.[effectivePlayer?.id ?? ''] ?? null;
+
+  // Debug state for vote tracing
+  const [voteDebug, setVoteDebug] = useState(null);
+  const [voteClickCount, setVoteClickCount] = useState(0);
 
   const reloadCard = async () => {
     // Try current round first, then search prior rounds for delayed cards
@@ -255,17 +260,36 @@ export default function BattleCardDetail() {
   };
 
   const handleVoteDelay = async (vote) => {
+    setVoteClickCount(c => c + 1);
     setActionLoading(true);
     setError(null);
-    const res = await base44.functions.invoke('battlePhase', {
+    const payload = {
       action: 'voteDelay',
       campaign_id: campaignId,
       battle_card_id: battleId,
       vote,
       acting_as_player_id: actingAsId ?? null,
+    };
+    console.log('[VoteDelay] payload:', JSON.stringify(payload));
+    console.log('[VoteDelay] effectivePlayer:', effectivePlayer?.id, effectivePlayer?.display_name);
+    console.log('[VoteDelay] participantIds:', participantIds);
+    console.log('[VoteDelay] delay_votes before:', JSON.stringify(card?.delay_votes ?? {}));
+    const res = await base44.functions.invoke('battlePhase', payload);
+    console.log('[VoteDelay] response:', JSON.stringify(res.data));
+    setVoteDebug({
+      payload,
+      response: res.data,
+      effectivePlayerId: effectivePlayer?.id,
+      effectivePlayerName: effectivePlayer?.display_name,
+      participantIds,
+      delayVotesBefore: { ...(card?.delay_votes ?? {}) },
     });
     setActionLoading(false);
-    if (res.data?.error) { setError(res.data.error); } else { await reloadCard(); }
+    if (res.data?.error) {
+      setError(res.data.error);
+    } else {
+      await reloadCard();
+    }
   };
 
   if (loading) {
@@ -370,10 +394,12 @@ export default function BattleCardDetail() {
           <div className="panel p-4 space-y-3">
             <p className="text-xs font-display tracking-wider uppercase text-muted-foreground">Battle Result</p>
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs text-muted-foreground">Winner:</span>
+              <span className="text-xs text-muted-foreground">Outcome:</span>
               {card.result.winner_player_id
                 ? <PlayerChip players={players} playerId={card.result.winner_player_id} />
-                : <span className="text-xs text-muted-foreground">Draw / No winner</span>
+                : card.battle_type === 'double_siege' && card.result.double_siege_result?.defender_held === false
+                  ? <span className="text-xs text-warning font-medium">Defender Lost — Territory Unclaimed</span>
+                  : <span className="text-xs text-muted-foreground">Draw / No winner</span>
               }
             </div>
             {card.result.surviving_tabletop_troops != null && card.result.winner_player_id && (() => {
@@ -481,19 +507,19 @@ export default function BattleCardDetail() {
               <div className="flex gap-2 pt-1">
                 <button
                   onClick={() => handleVoteDelay('yes')}
-                  disabled={actionLoading || myVote === 'yes'}
+                  disabled={actionLoading}
                   className={`flex-1 px-3 py-2 rounded text-xs font-display tracking-widest uppercase transition-all ${
                     myVote === 'yes' ? 'bg-warning/20 text-warning border border-warning' : 'bg-muted/20 text-muted-foreground border border-border hover:bg-warning/10'
-                  } disabled:opacity-40`}
+                  }`}
                 >
                   Vote Delay{actingAsId && effectivePlayer ? ` as ${effectivePlayer.display_name}` : ''}
                 </button>
                 <button
                   onClick={() => handleVoteDelay('no')}
-                  disabled={actionLoading || myVote === 'no'}
+                  disabled={actionLoading}
                   className={`flex-1 px-3 py-2 rounded text-xs font-display tracking-widest uppercase transition-all ${
                     myVote === 'no' ? 'bg-status-locked/20 text-status-locked border border-status-locked' : 'bg-muted/20 text-muted-foreground border border-border hover:bg-status-locked/10'
-                  } disabled:opacity-40`}
+                  }`}
                 >
                   No Delay{actingAsId && effectivePlayer ? ` as ${effectivePlayer.display_name}` : ''}
                 </button>
@@ -501,6 +527,30 @@ export default function BattleCardDetail() {
               <p className="text-xs text-muted-foreground">
                 Requires unanimous vote — all {participantIds.length} participants must vote yes.
               </p>
+
+              {/* ── DEBUG PANEL ── */}
+              <div className="mt-2 p-2 rounded border border-status-pending/30 bg-status-pending/5 space-y-1 text-[10px] font-mono text-muted-foreground">
+                <p className="text-status-pending font-bold text-xs">Vote Debug</p>
+                <p>Clicks: <span className="text-foreground">{voteClickCount}</span></p>
+                <p>Perspective: <span className="text-foreground">{effectivePlayer?.display_name ?? 'none'} ({effectivePlayer?.id ?? '—'})</span></p>
+                <p>acting_as_player_id sent: <span className="text-foreground">{actingAsId ?? 'null (self)'}</span></p>
+                <p>My vote: <span className="text-foreground">{myVote ?? 'none'}</span></p>
+                <p>Is participant: <span className={participantIds.includes(effectivePlayer?.id ?? '') ? 'text-status-locked' : 'text-destructive'}>
+                  {participantIds.includes(effectivePlayer?.id ?? '') ? 'YES' : 'NO'}
+                </span></p>
+                <p>Participant IDs: <span className="text-foreground">{participantIds.join(', ')}</span></p>
+                <p>Delay votes: <span className="text-foreground">{JSON.stringify(card?.delay_votes ?? {})}</span></p>
+                {voteDebug && (
+                  <>
+                    <p className="pt-1 border-t border-border">Last response: <span className={voteDebug.response?.error ? 'text-destructive' : 'text-status-locked'}>
+                      {voteDebug.response?.error ?? voteDebug.response?.status ?? JSON.stringify(voteDebug.response)}
+                    </span></p>
+                    {voteDebug.response?.delay_votes && (
+                      <p>Votes after: <span className="text-foreground">{JSON.stringify(voteDebug.response.delay_votes)}</span></p>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
           )}
 
@@ -551,7 +601,7 @@ export default function BattleCardDetail() {
                 </button>
               </div>
               {/* Override stuck battle */}
-              {['awaiting_approval', 'result_submitted'].includes(card.status) && card.result?.winner_player_id && (
+              {['awaiting_approval', 'result_submitted'].includes(card.status) && (card.result?.winner_player_id || (card.battle_type === 'double_siege' && card.result?.double_siege_result != null)) && (
                 <div className="flex gap-2 pt-1">
                   <button
                     onClick={() => handleAdminOverride(false)}
