@@ -4,6 +4,8 @@
 const STATUS_CONFIG = {
   pending:            { label: 'Pending',            color: 'text-muted-foreground border-border bg-muted/20' },
   awaiting_result:    { label: 'Awaiting Result',    color: 'text-status-pending border-status-pending/40 bg-status-pending/10' },
+  active_carryover:   { label: 'Carried Over',       color: 'text-orange-400 border-orange-500/40 bg-orange-900/20' },
+  pending_approval:   { label: 'Pending Approval',   color: 'text-yellow-400 border-yellow-600/40 bg-yellow-900/20' },
   result_submitted:   { label: 'Result Submitted',   color: 'text-status-info border-status-info/40 bg-status-info/10' },
   awaiting_approval:  { label: 'Awaiting Approval',  color: 'text-yellow-400 border-yellow-600/40 bg-yellow-900/20' },
   resolved:           { label: 'Resolved',           color: 'text-status-locked border-status-locked/40 bg-status-locked/10' },

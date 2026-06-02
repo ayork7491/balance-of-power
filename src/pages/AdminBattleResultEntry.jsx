@@ -258,7 +258,7 @@ export default function AdminBattleResultEntry() {
     );
   }
 
-  const isDelayed = card.status === 'delayed';
+  const isDelayed = ['delayed', 'active_carryover'].includes(card.status);
   const isForfeited = card.status === 'forfeited';
   const testPlayers = players.filter(p => p.is_test_player);
   const isDoubleSiege       = card.battle_type === 'double_siege';

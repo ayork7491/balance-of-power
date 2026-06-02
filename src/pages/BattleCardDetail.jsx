@@ -11,6 +11,7 @@ import { base44 } from '@/api/base44Client';
 import AppShell from '@/components/layout/AppShell';
 import BattleTypeTag from '@/components/phases/battle/BattleTypeTag';
 import BattleStatusTag from '@/components/phases/battle/BattleStatusTag';
+import BattlePreferencePanel, { PreferenceRecord } from '@/components/phases/battle/BattlePreferencePanel';
 import { PLAYER_COLORS } from '@/config/theme';
 import { getMap } from '@/features/maps';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -159,19 +160,21 @@ export default function BattleCardDetail() {
   const participantIds = [...new Set([...attackerIds, ...(card?.defender_player_id ? [card.defender_player_id] : [])])];
 
   const canSubmit  = isAdmin && card &&
-    ['pending', 'awaiting_result', 'delayed', 'result_submitted', 'awaiting_approval'].includes(card.status);
+    ['pending', 'awaiting_result', 'delayed', 'active_carryover', 'pending_approval', 'result_submitted', 'awaiting_approval'].includes(card.status);
 
   const canApprove = effectivePlayer && card &&
     participantIds.includes(effectivePlayer.id) &&
-    ['result_submitted', 'awaiting_approval'].includes(card.status) &&
+    ['result_submitted', 'awaiting_approval', 'pending_approval'].includes(card.status) &&
     card.result?.submitted_by !== effectivePlayer.id;
 
   const canVote    = effectivePlayer && card &&
     participantIds.includes(effectivePlayer.id) &&
-    ['pending', 'awaiting_result'].includes(card.status);
+    ['pending', 'awaiting_result', 'active_carryover'].includes(card.status);
 
-  const canForfeit        = canVote && !(card?.player_forfeits?.[effectivePlayer?.id ?? '']);
-  const myAutoResolveVote = card?.auto_resolve_votes?.[effectivePlayer?.id ?? ''] ?? null;
+  // Battle preference — single choice per player
+  const myPreference = card?.battle_preferences?.[effectivePlayer?.id ?? ''] ?? 'play_tabletop';
+  const votingClosed = card?.voting_closed ?? false;
+  const canSetPreference = canVote && !votingClosed;
 
   // Troop breakdown for display
   const totalTroops   = card?.total_troops_in_battle ?? 0;
@@ -191,9 +194,6 @@ export default function BattleCardDetail() {
       return { pid, bopTroops, tabletopTroops, isAttacker, isDefender };
     });
   }, [card, participantIds, totalTroops, tabletopSize]);
-
-  // Derive current vote for the CURRENTLY SELECTED perspective player
-  const myVote = card?.delay_votes?.[effectivePlayer?.id ?? ''] ?? null;
 
   const reloadCard = async () => {
     // Try current round first, then search prior rounds for delayed cards
@@ -257,64 +257,44 @@ export default function BattleCardDetail() {
     if (res.data?.error) { setError(res.data.error); } else { await reloadCard(); }
   };
 
-  const handleVoteDelay = async (vote) => {
+  const handleSetPreference = async (preference) => {
+    if (preference === 'forfeit') {
+      if (!window.confirm(`Forfeit as ${effectivePlayer?.display_name}? You will lose all committed troops.`)) return;
+    }
     setActionLoading(true);
     setError(null);
     const res = await base44.functions.invoke('battlePhase', {
-      action: 'voteDelay',
+      action: 'setPreference',
       campaign_id: campaignId,
       battle_card_id: battleId,
-      vote,
+      preference,
       acting_as_player_id: actingAsId ?? null,
     });
     setActionLoading(false);
     if (res.data?.error) {
       setError(res.data.error);
     } else {
-      if (res.data?.delay_votes) {
-        setCard(prev => prev ? { ...prev, delay_votes: res.data.delay_votes, status: res.data.status ?? prev.status } : prev);
+      if (res.data?.battle_preferences) {
+        setCard(prev => prev ? {
+          ...prev,
+          battle_preferences: res.data.battle_preferences,
+          status: res.data.status ?? prev.status,
+        } : prev);
       }
       await reloadCard();
     }
   };
 
-  const handleVoteAutoResolve = async (vote) => {
+  const handleCloseVoting = async () => {
     setActionLoading(true);
     setError(null);
     const res = await base44.functions.invoke('battlePhase', {
-      action: 'voteAutoResolve',
+      action: 'closeBattleVoting',
       campaign_id: campaignId,
       battle_card_id: battleId,
-      vote,
-      acting_as_player_id: actingAsId ?? null,
     });
     setActionLoading(false);
-    if (res.data?.error) {
-      setError(res.data.error);
-    } else {
-      if (res.data?.auto_resolve_votes) {
-        setCard(prev => prev ? { ...prev, auto_resolve_votes: res.data.auto_resolve_votes, status: res.data.status ?? prev.status } : prev);
-      }
-      await reloadCard();
-    }
-  };
-
-  const handlePlayerForfeit = async () => {
-    if (!window.confirm(`Forfeit as ${effectivePlayer?.display_name}? You will lose all committed troops.`)) return;
-    setActionLoading(true);
-    setError(null);
-    const res = await base44.functions.invoke('battlePhase', {
-      action: 'playerForfeit',
-      campaign_id: campaignId,
-      battle_card_id: battleId,
-      acting_as_player_id: actingAsId ?? null,
-    });
-    setActionLoading(false);
-    if (res.data?.error) {
-      setError(res.data.error);
-    } else {
-      await reloadCard();
-    }
+    if (res.data?.error) { setError(res.data.error); } else { await reloadCard(); }
   };
 
   if (loading) {
@@ -506,112 +486,27 @@ export default function BattleCardDetail() {
             )}
           </div>
 
-          {/* Player actions: Vote Delay, Vote Auto-Resolve, Forfeit */}
+          {/* Battle Preference — single choice per player */}
           {canVote && (
-            <div className="panel p-3 space-y-3">
-              <p className="text-xs font-display tracking-wider uppercase text-muted-foreground">Player Actions</p>
-
-              {/* Vote to Delay */}
-              <div className="space-y-1.5">
-                <p className="text-xs text-muted-foreground flex items-center gap-1.5"><Clock className="w-3 h-3" /> Vote to Delay</p>
-                <div className="space-y-1">
-                  {participantIds.map(pid => {
-                    const vote = card.delay_votes?.[pid];
-                    const p = players.find(pl => pl.id === pid);
-                    const hex = getPlayerHex(players, pid);
-                    return (
-                      <div key={pid} className="flex items-center gap-2 text-xs px-2 py-1 rounded border border-border bg-muted/10">
-                        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: hex }} />
-                        <span className="flex-1">{p?.display_name ?? '?'}</span>
-                        {vote === 'yes' && <span className="text-warning font-medium">Delay</span>}
-                        {vote === 'no'  && <span className="text-status-locked font-medium">No Delay</span>}
-                        {!vote          && <span className="text-muted-foreground/50 italic">Not voted</span>}
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={() => handleVoteDelay('yes')} disabled={actionLoading}
-                    className={`flex-1 px-3 py-2 rounded text-xs font-display tracking-widest uppercase transition-all ${myVote === 'yes' ? 'bg-warning/20 text-warning border border-warning' : 'bg-muted/20 text-muted-foreground border border-border hover:bg-warning/10'}`}>
-                    Delay{actingAsId && effectivePlayer ? ` (${effectivePlayer.display_name})` : ''}
-                  </button>
-                  <button onClick={() => handleVoteDelay('no')} disabled={actionLoading}
-                    className={`flex-1 px-3 py-2 rounded text-xs font-display tracking-widest uppercase transition-all ${myVote === 'no' ? 'bg-status-locked/20 text-status-locked border border-status-locked' : 'bg-muted/20 text-muted-foreground border border-border hover:bg-status-locked/10'}`}>
-                    No Delay{actingAsId && effectivePlayer ? ` (${effectivePlayer.display_name})` : ''}
-                  </button>
-                </div>
-                <p className="text-[10px] text-muted-foreground">Requires unanimous yes from all {participantIds.length} participants.</p>
-              </div>
-
-              {/* Vote to Auto-Resolve */}
-              <div className="space-y-1.5 pt-2 border-t border-border">
-                <p className="text-xs text-muted-foreground flex items-center gap-1.5"><Swords className="w-3 h-3" /> Vote to Auto-Resolve</p>
-                <div className="space-y-1">
-                  {participantIds.map(pid => {
-                    const vote = card.auto_resolve_votes?.[pid];
-                    const p = players.find(pl => pl.id === pid);
-                    const hex = getPlayerHex(players, pid);
-                    return (
-                      <div key={pid} className="flex items-center gap-2 text-xs px-2 py-1 rounded border border-border bg-muted/10">
-                        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: hex }} />
-                        <span className="flex-1">{p?.display_name ?? '?'}</span>
-                        {vote === 'yes' && <span className="text-status-info font-medium">Auto-Resolve</span>}
-                        {vote === 'no'  && <span className="text-muted-foreground font-medium">Declined</span>}
-                        {!vote          && <span className="text-muted-foreground/50 italic">Not voted</span>}
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={() => handleVoteAutoResolve('yes')} disabled={actionLoading}
-                    className={`flex-1 px-3 py-2 rounded text-xs font-display tracking-widest uppercase transition-all ${myAutoResolveVote === 'yes' ? 'bg-status-info/20 text-status-info border border-status-info' : 'bg-muted/20 text-muted-foreground border border-border hover:bg-status-info/10'}`}>
-                    Auto-Resolve{actingAsId && effectivePlayer ? ` (${effectivePlayer.display_name})` : ''}
-                  </button>
-                  <button onClick={() => handleVoteAutoResolve('no')} disabled={actionLoading}
-                    className={`flex-1 px-3 py-2 rounded text-xs font-display tracking-widest uppercase transition-all bg-muted/20 text-muted-foreground border border-border hover:bg-muted/30`}>
-                    Decline
-                  </button>
-                </div>
-                <p className="text-[10px] text-muted-foreground">Requires unanimous yes. Result is random but weighted by troop count.</p>
-              </div>
-
-              {/* Forfeit */}
-              {canForfeit && (
-                <div className="pt-2 border-t border-border">
-                  <button onClick={handlePlayerForfeit} disabled={actionLoading}
-                    className="w-full px-3 py-2 rounded border border-destructive text-destructive text-xs font-display tracking-widest uppercase hover:bg-destructive/10 transition-all disabled:opacity-40">
-                    <Flag className="w-3 h-3 inline mr-1" />
-                    Forfeit{actingAsId && effectivePlayer ? ` as ${effectivePlayer.display_name}` : ''} — Lose Committed Troops
-                  </button>
-                  <p className="text-[10px] text-muted-foreground mt-1">
-                    You surrender. Opponent wins by default. Your committed troops are lost.
-                  </p>
-                </div>
-              )}
-            </div>
+            <BattlePreferencePanel
+              card={card}
+              players={players}
+              participantIds={participantIds}
+              effectivePlayer={effectivePlayer}
+              actingAsId={actingAsId}
+              myPreference={myPreference}
+              votingClosed={votingClosed}
+              canSetPreference={canSetPreference}
+              actionLoading={actionLoading}
+              isAdmin={isAdmin}
+              onSetPreference={handleSetPreference}
+              onCloseVoting={handleCloseVoting}
+            />
           )}
 
-          {/* Vote status visible to admin when voting is no longer available */}
-          {isAdmin && !canVote && (card.delay_votes || card.auto_resolve_votes) && (
-            <div className="panel p-3 space-y-1">
-              <p className="text-xs font-display tracking-wider uppercase text-muted-foreground flex items-center gap-2">
-                <Clock className="w-3 h-3" /> Vote Record
-              </p>
-              {participantIds.map(pid => {
-                const dv = card.delay_votes?.[pid];
-                const arv = card.auto_resolve_votes?.[pid];
-                const p = players.find(pl => pl.id === pid);
-                const hex = getPlayerHex(players, pid);
-                return (
-                  <div key={pid} className="flex items-center gap-2 text-xs px-2 py-1 rounded border border-border bg-muted/10">
-                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: hex }} />
-                    <span className="flex-1">{p?.display_name ?? '?'}</span>
-                    {dv && <span className="text-muted-foreground">Delay: <span className={dv === 'yes' ? 'text-warning' : 'text-status-locked'}>{dv}</span></span>}
-                    {arv && <span className="text-muted-foreground ml-2">Auto: <span className="text-status-info">{arv}</span></span>}
-                  </div>
-                );
-              })}
-            </div>
+          {/* Preference record visible to admin after voting closes */}
+          {isAdmin && !canVote && card.battle_preferences && Object.keys(card.battle_preferences).length > 0 && (
+            <PreferenceRecord card={card} players={players} participantIds={participantIds} />
           )}
 
           {/* Admin actions */}

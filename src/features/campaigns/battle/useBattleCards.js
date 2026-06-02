@@ -42,8 +42,9 @@ export function useBattleCards({ campaignId, round, enabled = true }) {
     return () => clearInterval(intervalRef.current);
   }, [fetchCards, enabled]);
 
-  // Separate out the delayed-from-prior-rounds cards for UI callouts
-  const delayedCards = cards.filter(c => c.status === 'delayed' && c.round !== round);
+  // Cards that are actively being carried over or awaiting approval from prior rounds
+  const ACTIVE_CARRYOVER_STATUSES = ['delayed', 'active_carryover', 'pending_approval', 'awaiting_approval', 'result_submitted'];
+  const delayedCards = cards.filter(c => c.round !== round && ACTIVE_CARRYOVER_STATUSES.includes(c.status) && !c.result_applied);
 
   return { cards, delayedCards, loading, error, reload: fetchCards };
 }

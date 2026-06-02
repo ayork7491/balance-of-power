@@ -24,10 +24,13 @@ export default function BattlePanel({ campaign, players, myPlayer, mapDef, onPha
 
   // Current-round cards only for summary counts
   const currentRoundCards = cards.filter(c => c.round === round);
-  const pendingCount  = cards.filter(c => ['pending','awaiting_result','result_submitted','awaiting_approval'].includes(c.status)).length;
+  const UNRESOLVED_STATUSES = ['pending','awaiting_result','result_submitted','awaiting_approval','active_carryover','pending_approval'];
+  const pendingCount  = cards.filter(c => UNRESOLVED_STATUSES.includes(c.status)).length;
   const resolvedCount = cards.filter(c => ['resolved','auto_resolved','forfeited'].includes(c.status)).length;
   // Resolved carried-over cards (prior rounds, resolved) — kept visible for review
   const resolvedCarriedOver = cards.filter(c => c.round !== round && ['resolved','auto_resolved','forfeited'].includes(c.status));
+  // Block advance if ANY carryover is still active/pending
+  const hasUnresolvedCarryover = delayedCards.some(c => ['active_carryover','pending_approval','awaiting_approval','result_submitted'].includes(c.status));
   // All resolved = no pending AND no unresolved delayed
   const allResolved   = cards.length > 0 && pendingCount === 0 && delayedCards.length === 0;
 
@@ -117,7 +120,13 @@ export default function BattlePanel({ campaign, players, myPlayer, mapDef, onPha
       {/* Admin controls */}
       {isAdmin && (
         <div className="pt-2 border-t border-border space-y-2">
-          {allResolved ? (
+          {hasUnresolvedCarryover && (
+            <p className="text-xs text-orange-400 flex items-center gap-1.5">
+              <Clock className="w-3 h-3" />
+              Resolve all carried-over battles before advancing.
+            </p>
+          )}
+          {allResolved && !hasUnresolvedCarryover ? (
             <button
               onClick={handleProcessEnd}
               disabled={processing}
@@ -131,7 +140,7 @@ export default function BattlePanel({ campaign, players, myPlayer, mapDef, onPha
               <p className="text-xs text-muted-foreground">{pendingCount} battle{pendingCount !== 1 ? 's' : ''} pending resolution.</p>
               <button
                 onClick={handleProcessEnd}
-                disabled={processing}
+                disabled={processing || hasUnresolvedCarryover}
                 className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded border border-border text-xs text-muted-foreground font-display tracking-wider uppercase hover:text-foreground transition-colors disabled:opacity-40"
               >
                 {processing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}

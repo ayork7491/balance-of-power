@@ -55,8 +55,8 @@ export default function BattleCardRow({ card, players, mapDef, campaignId }) {
         </div>
       </div>
       <div className="flex items-center gap-2 shrink-0">
-        {card.status === 'delayed' && (
-          <span className="text-warning" title="Delayed">
+        {['delayed', 'active_carryover', 'pending_approval'].includes(card.status) && (
+          <span className={card.status === 'pending_approval' ? 'text-yellow-400' : 'text-orange-400'} title={card.status === 'active_carryover' ? 'Carried Over' : card.status === 'pending_approval' ? 'Pending Approval' : 'Delayed'}>
             <Hourglass className="w-3.5 h-3.5" />
           </span>
         )}

@@ -85,6 +85,24 @@ export default function StepSettings({ form, setField }) {
         />
       </Setting>
 
+      <Setting label="Battle Phase Start" hint="Time battle phase opens (24h). E.g. 01:00.">
+        <input
+          type="time"
+          value={s.battle_phase_start_time ?? '01:00'}
+          onChange={e => set('battle_phase_start_time', e.target.value)}
+          className="bg-input border border-border rounded px-2 py-1 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+        />
+      </Setting>
+
+      <Setting label="Voting Cutoff Time" hint="Time preference voting closes on battle day. E.g. 20:00.">
+        <input
+          type="time"
+          value={s.battle_voting_cutoff_time ?? '20:00'}
+          onChange={e => set('battle_voting_cutoff_time', e.target.value)}
+          className="bg-input border border-border rounded px-2 py-1 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+        />
+      </Setting>
+
       <Setting label="Victory Condition">
         <SelectInput
           value={s.victory_condition}

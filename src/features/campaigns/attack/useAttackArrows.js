@@ -23,7 +23,8 @@ export function useAttackArrows({
     // Build base arrows from attack reveals
     const reveals = attackReveals.map(a => ({ ...a, is_delayed: false }));
 
-    // During battle phase: overlay delayed carried-over battle arrows
+    // During battle phase: overlay arrows for all unresolved carryover cards
+    // Arrow persists through: delayed, active_carryover, pending_approval, result_submitted, awaiting_approval
     if (phase === 'battle' && delayedBattleCards.length > 0) {
       const delayedArrows = [];
       for (const card of delayedBattleCards) {

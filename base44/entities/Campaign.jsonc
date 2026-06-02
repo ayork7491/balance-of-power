@@ -3,16 +3,13 @@
   "type": "object",
   "properties": {
     "name": {
-      "type": "string",
-      "description": "Display name of the campaign."
+      "type": "string"
     },
     "description": {
-      "type": "string",
-      "description": "Optional description shown in the lobby."
+      "type": "string"
     },
     "admin_user_id": {
-      "type": "string",
-      "description": "User ID of the campaign admin."
+      "type": "string"
     },
     "status": {
       "type": "string",
@@ -24,29 +21,23 @@
         "archived",
         "deleted"
       ],
-      "default": "lobby",
-      "description": "Campaign lifecycle status. archived = hidden from Home but data preserved. deleted = permanently hidden from all normal app views."
+      "default": "lobby"
     },
     "game_profile_id": {
-      "type": "string",
-      "description": "ID of the TabletopGameProfile selected for this campaign."
+      "type": "string"
     },
     "game_profile_name": {
-      "type": "string",
-      "description": "Denormalized game profile name for display."
+      "type": "string"
     },
     "map_id": {
-      "type": "string",
-      "description": "ID of the map used for this campaign."
+      "type": "string"
     },
     "invite_code": {
-      "type": "string",
-      "description": "Short alphanumeric code players can use to request to join."
+      "type": "string"
     },
     "current_round": {
       "type": "number",
-      "default": 0,
-      "description": "Current round number. 0 = setup phases."
+      "default": 0
     },
     "current_phase": {
       "type": "string",
@@ -59,25 +50,21 @@
         "battle",
         "fortify",
         "complete"
-      ],
-      "description": "Current active phase."
+      ]
     },
     "phase_deadline": {
-      "type": "string",
-      "description": "ISO timestamp when the current phase ends."
+      "type": "string"
     },
     "setup_order": {
       "type": "array",
       "items": {
         "type": "string"
       },
-      "default": [],
-      "description": "Randomized CampaignPlayer.id array. Determines faction selection and draft pick order."
+      "default": []
     },
     "setup_current_index": {
       "type": "number",
-      "default": 0,
-      "description": "Index into setup_order for whose turn it is in the current sequential setup phase."
+      "default": 0
     },
     "draft_snake_direction": {
       "type": "string",
@@ -85,37 +72,30 @@
         "forward",
         "backward"
       ],
-      "default": "forward",
-      "description": "Current snake draft direction."
+      "default": "forward"
     },
     "draft_picks_remaining": {
       "type": "number",
-      "default": 0,
-      "description": "Total picks remaining across all players in territory draft."
+      "default": 0
     },
     "initial_deploy_reveal_started_at": {
-      "type": "string",
-      "description": "ISO timestamp when initial deploy reveal was claimed. Used to prevent concurrent duplicate reveals."
+      "type": "string"
     },
     "initial_deploy_reveal_completed_at": {
-      "type": "string",
-      "description": "ISO timestamp when initial deploy reveal completed. Idempotency guard \u2014 if set, processPhaseEnd is a no-op."
+      "type": "string"
     },
     "deploy_reveal_applied_at": {
-      "type": "string",
-      "description": "ISO timestamp when round deploy reveal was applied. Idempotency guard \u2014 if set, processPhaseEnd is a no-op for this round."
+      "type": "string"
     },
     "locked_territory_ids": {
       "type": "array",
       "items": {
         "type": "string"
       },
-      "default": [],
-      "description": "Territory IDs locked due to unresolved delayed battles. Territories in this list cannot be deployed to, attacked from/to, fortified, or built on until the delayed battle is resolved."
+      "default": []
     },
     "settings": {
       "type": "object",
-      "description": "Per-campaign gameplay setting overrides.",
       "properties": {
         "max_players": {
           "type": "number",
@@ -158,6 +138,16 @@
             "sunday"
           ],
           "default": "saturday"
+        },
+        "battle_phase_start_time": {
+          "type": "string",
+          "description": "Time-of-day when the battle phase starts on battle_day. Format: HH:MM (24h). E.g. '01:00'.",
+          "default": "01:00"
+        },
+        "battle_voting_cutoff_time": {
+          "type": "string",
+          "description": "Time-of-day when battle preference voting closes on battle_day. Format: HH:MM (24h). E.g. '20:00'.",
+          "default": "20:00"
         },
         "allow_faction_duplicates": {
           "type": "boolean",
