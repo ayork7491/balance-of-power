@@ -378,16 +378,23 @@ Deno.serve(async (req) => {
     const queryRound = body.round ?? round;
     const currentCards = await base44.asServiceRole.entities.BattleCard.filter({ campaign_id, round: queryRound });
 
-    // Fetch unresolved carryover cards from prior rounds (delayed, active_carryover, pending_approval)
+    // Fetch carryover cards from prior rounds — both unresolved AND recently resolved
+    // (so players can review results of carryover battles in the current phase).
     let carryoverCards = [];
     if (queryRound > 1) {
       for (let r = queryRound - 1; r >= Math.max(1, queryRound - 10); r--) {
         const priorCards = await base44.asServiceRole.entities.BattleCard.filter({ campaign_id, round: r });
-        const unresolved = priorCards.filter(c =>
-          ['delayed', 'active_carryover', 'pending_approval', 'result_submitted', 'awaiting_approval'].includes(c.status) &&
-          !c.result_applied
+        // Include unresolved + resolved carryover cards (resolved ones are read-only for review)
+        const relevant = priorCards.filter(c =>
+          ['delayed', 'active_carryover', 'pending_approval', 'result_submitted', 'awaiting_approval',
+           'resolved', 'auto_resolved', 'forfeited'].includes(c.status) &&
+          // Only include resolved cards that were carried over (came from a prior round)
+          (
+            !c.result_applied
+            || ['resolved', 'auto_resolved', 'forfeited'].includes(c.status)
+          )
         );
-        carryoverCards = [...carryoverCards, ...unresolved];
+        carryoverCards = [...carryoverCards, ...relevant];
         if (priorCards.length === 0) break;
       }
     }
@@ -458,23 +465,32 @@ Deno.serve(async (req) => {
     const prefs = card.battle_preferences ?? {};
     const now   = new Date().toISOString();
 
-    // Count preferences (default = play_tabletop)
-    const prefCounts = { play_tabletop: 0, auto_resolve: 0, delay: 0, forfeit: 0 };
-    for (const pid of participantIds) {
+    const forfeitPlayers = participantIds.filter(pid => prefs[pid] === 'forfeit');
+    const activePlayers  = participantIds.filter(pid => prefs[pid] !== 'forfeit');
+    const hasForfeit     = forfeitPlayers.length > 0;
+
+    // Count preferences among NON-forfeiting players for unanimity checks
+    // Forfeiting players are removed from the active pool and do not block unanimity.
+    const prefCounts = { play_tabletop: 0, auto_resolve: 0, delay: 0, forfeit: forfeitPlayers.length };
+    for (const pid of activePlayers) {
       const p = prefs[pid] ?? 'play_tabletop';
       prefCounts[p] = (prefCounts[p] ?? 0) + 1;
     }
 
-    const totalPlayers   = participantIds.length;
-    const allAutoResolve = prefCounts.auto_resolve === totalPlayers;
-    const allDelay       = prefCounts.delay === totalPlayers;
-    const hasForfeit     = prefCounts.forfeit > 0;
-    const forfeitPlayers = participantIds.filter(pid => (prefs[pid] ?? 'play_tabletop') === 'forfeit');
+    const activeCount    = activePlayers.length;
+    const allAutoResolve = activeCount > 0 && prefCounts.auto_resolve === activeCount;
+    const allDelay       = activeCount > 0 && prefCounts.delay === activeCount;
 
     let outcome = 'tabletop';
-    if (allAutoResolve) {
+    if (hasForfeit && activeCount === 0) {
+      outcome = 'forfeit_only'; // everyone forfeited
+    } else if (allAutoResolve && !hasForfeit) {
       outcome = 'auto_resolve';
-    } else if (allDelay) {
+    } else if (allAutoResolve && hasForfeit) {
+      outcome = 'auto_resolve'; // forfeits processed first, then remaining auto-resolve
+    } else if (allDelay && !hasForfeit) {
+      outcome = 'delay';
+    } else if (allDelay && hasForfeit) {
       outcome = 'delay';
     } else if (hasForfeit) {
       outcome = 'forfeit_only';
@@ -492,14 +508,14 @@ Deno.serve(async (req) => {
 
     // ── Apply tally outcomes ────────────────────────────────────────────────────
 
-    if (allAutoResolve) {
+    if (!hasForfeit && allAutoResolve) {
       const freshCards = await base44.asServiceRole.entities.BattleCard.filter({ id: battle_card_id });
       const autoResult = autoResolveBattle(freshCards[0], campaign_id);
       await applyAutoResolve(freshCards[0], autoResult, base44, campaign_id, round);
       return Response.json({ success: true, outcome, status: 'auto_resolved', result: autoResult });
     }
 
-    if (allDelay) {
+    if (!hasForfeit && allDelay) {
       await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
         status: 'delayed', delayed_at: now,
       });
@@ -508,9 +524,8 @@ Deno.serve(async (req) => {
     }
 
     if (hasForfeit) {
-      // Apply each forfeit — reuse existing forfeit logic per player
-      // For simplicity: if a single player forfeits in 1v1, resolve immediately
-      const activePlayers = participantIds.filter(pid => (prefs[pid] ?? 'play_tabletop') !== 'forfeit');
+      // Apply forfeits. After processing, re-check if remaining active players
+      // are unanimous for auto_resolve or delay — and apply that outcome.
       const currentForfeits = {};
       for (const pid of forfeitPlayers) currentForfeits[pid] = true;
 
@@ -574,7 +589,12 @@ Deno.serve(async (req) => {
 
           const forfeitingAtkName   = players.find(p => p.id === forfeitingAttackerId)?.display_name ?? forfeitingAttackerId;
 
-          // Mutate the existing card in place: convert to siege, preserve conversion history
+          // Mutate the existing card in place: convert to siege, preserve conversion history.
+          // Carry over existing preferences of the remaining 2 participants (minus forfeiter).
+          const remainingPrefs = {};
+          if (prefs[remainingAttacker]) remainingPrefs[remainingAttacker] = prefs[remainingAttacker];
+          if (prefs[card.defender_player_id]) remainingPrefs[card.defender_player_id] = prefs[card.defender_player_id];
+
           await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
             battle_type: 'siege',
             attackers: remainingAtkEntry
@@ -587,7 +607,7 @@ Deno.serve(async (req) => {
             is_mutual: false,
             status: card.status, // preserve active_carryover / pending / etc.
             player_forfeits: currentForfeits,
-            battle_preferences: {}, // reset preferences for remaining participants
+            battle_preferences: remainingPrefs, // preserve remaining players' preferences
             voting_closed: false,
             // Preserve conversion history in result field (not applied)
             result: {
@@ -603,17 +623,37 @@ Deno.serve(async (req) => {
             },
           });
 
-          await refreshLockedTerritories(base44, campaign_id);
           await log(base44, campaign_id, card.round, 'double_siege_converted_to_siege', myPlayer.id, {
             battle_card_id, forfeiting_player: forfeitingAttackerId, remaining_attacker: remainingAttacker,
             troops_lost: forfeitingAtkEntry?.committed_troops ?? 0,
           }, true);
+
+          // Re-check unanimous preference among the 2 remaining participants
+          const remainingParticipants = [remainingAttacker, card.defender_player_id].filter(Boolean);
+          const remAutoResolve = remainingParticipants.length > 0 &&
+            remainingParticipants.every(pid => remainingPrefs[pid] === 'auto_resolve');
+          const remDelay = remainingParticipants.length > 0 &&
+            remainingParticipants.every(pid => remainingPrefs[pid] === 'delay');
+
+          if (remAutoResolve) {
+            const freshConverted = await base44.asServiceRole.entities.BattleCard.filter({ id: battle_card_id });
+            const autoResult = autoResolveBattle(freshConverted[0], campaign_id);
+            await applyAutoResolve(freshConverted[0], autoResult, base44, campaign_id, round);
+            return Response.json({ success: true, outcome: 'auto_resolve', status: 'auto_resolved', converted_to_siege: true, battle_card_id, result: autoResult });
+          }
+          if (remDelay) {
+            await base44.asServiceRole.entities.BattleCard.update(battle_card_id, { status: 'delayed', delayed_at: now });
+            await refreshLockedTerritories(base44, campaign_id);
+            return Response.json({ success: true, outcome: 'delay', status: 'delayed', converted_to_siege: true, battle_card_id });
+          }
+
+          await refreshLockedTerritories(base44, campaign_id);
           return Response.json({ success: true, outcome, status: card.status, converted_to_siege: true, battle_card_id });
         }
       }
 
-      // Standard 1v1 forfeit (siege, bloodbath)
-      if (activePlayers.length === 1 && forfeitPlayers.length === 1) {
+      // Standard 1v1 forfeit (or multi-player where only 1 non-forfeiter remains)
+      if (activePlayers.length === 1 && forfeitPlayers.length >= 1) {
         const winnerId = activePlayers[0];
         const winnerCommitted = getWinnerCommittedTroops(card, winnerId);
         const forfeitResult = {
@@ -956,20 +996,24 @@ Deno.serve(async (req) => {
       const participantIds = getParticipantIds(card);
       const prefs = card.battle_preferences ?? {};
 
-      const prefCounts = { play_tabletop: 0, auto_resolve: 0, delay: 0, forfeit: 0 };
-      for (const pid of participantIds) {
+      const forfeitPlayers = participantIds.filter(pid => prefs[pid] === 'forfeit');
+      const activePlayerIds = participantIds.filter(pid => prefs[pid] !== 'forfeit');
+      const hasForfeit = forfeitPlayers.length > 0;
+
+      // Unanimity among NON-forfeiting players only
+      const prefCounts = { play_tabletop: 0, auto_resolve: 0, delay: 0, forfeit: forfeitPlayers.length };
+      for (const pid of activePlayerIds) {
         const p = prefs[pid] ?? 'play_tabletop';
         prefCounts[p] = (prefCounts[p] ?? 0) + 1;
       }
 
-      const totalPlayers   = participantIds.length;
-      const allAutoResolve = prefCounts.auto_resolve === totalPlayers;
-      const allDelay       = prefCounts.delay === totalPlayers;
-      const hasForfeit     = prefCounts.forfeit > 0;
-      const forfeitPlayers = participantIds.filter(pid => (prefs[pid] ?? 'play_tabletop') === 'forfeit');
+      const activeCount    = activePlayerIds.length;
+      const allAutoResolve = activeCount > 0 && prefCounts.auto_resolve === activeCount;
+      const allDelay       = activeCount > 0 && prefCounts.delay === activeCount;
 
       let outcome = 'tabletop';
-      if (allAutoResolve) outcome = 'auto_resolve';
+      if (hasForfeit && activeCount === 0) outcome = 'forfeit_only';
+      else if (allAutoResolve) outcome = 'auto_resolve';
       else if (allDelay) outcome = 'delay';
       else if (hasForfeit) outcome = 'forfeit_only';
 
@@ -985,7 +1029,7 @@ Deno.serve(async (req) => {
 
       // ── Apply outcomes ──────────────────────────────────────────────────────
 
-      if (allAutoResolve) {
+      if (!hasForfeit && allAutoResolve) {
         const freshCards = await base44.asServiceRole.entities.BattleCard.filter({ id: card.id });
         const autoResult = autoResolveBattle(freshCards[0], campaign_id);
         await applyAutoResolve(freshCards[0], autoResult, base44, campaign_id, round);
@@ -993,14 +1037,13 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      if (allDelay) {
+      if (!hasForfeit && allDelay) {
         await base44.asServiceRole.entities.BattleCard.update(card.id, { status: 'delayed', delayed_at: now });
         results.push({ card_id: card.id, outcome: 'delayed' });
         continue;
       }
 
       if (hasForfeit) {
-        const activePlayers = participantIds.filter(pid => (prefs[pid] ?? 'play_tabletop') !== 'forfeit');
         const currentForfeits = {};
         for (const pid of forfeitPlayers) currentForfeits[pid] = true;
 
@@ -1058,6 +1101,11 @@ Deno.serve(async (req) => {
               const newTabletopSize    = Math.round(newTotalTroops / newScaleFactor);
               const forfeitingAtkName  = players.find(p => p.id === forfeitingAttackerId)?.display_name ?? forfeitingAttackerId;
 
+              // Carry over remaining participants' preferences
+              const remainingPrefs = {};
+              if (prefs[remainingAttacker]) remainingPrefs[remainingAttacker] = prefs[remainingAttacker];
+              if (card.defender_player_id && prefs[card.defender_player_id]) remainingPrefs[card.defender_player_id] = prefs[card.defender_player_id];
+
               await base44.asServiceRole.entities.BattleCard.update(card.id, {
                 battle_type: 'siege',
                 attackers: remainingAtkEntry ? [{ player_id: remainingAttacker, origin_territory_id: remainingAtkEntry.origin_territory_id, committed_troops: remainingAtkTroops }] : [],
@@ -1067,7 +1115,7 @@ Deno.serve(async (req) => {
                 tabletop_size: newTabletopSize,
                 is_mutual: false,
                 player_forfeits: currentForfeits,
-                battle_preferences: {},
+                battle_preferences: remainingPrefs,
                 voting_closed: false,
                 tally_result: {},
                 result: {
@@ -1085,15 +1133,31 @@ Deno.serve(async (req) => {
               await log(base44, campaign_id, card.round, 'double_siege_converted_to_siege', myPlayer.id, {
                 battle_card_id: card.id, forfeiting_player: forfeitingAttackerId, remaining_attacker: remainingAttacker,
               }, true);
-              results.push({ card_id: card.id, outcome: 'converted_to_siege' });
+
+              // Re-check unanimous preference for the 2 remaining participants
+              const remParticipants = [remainingAttacker, card.defender_player_id].filter(Boolean);
+              const remAutoRes = remParticipants.length > 0 && remParticipants.every(pid => remainingPrefs[pid] === 'auto_resolve');
+              const remDelayed = remParticipants.length > 0 && remParticipants.every(pid => remainingPrefs[pid] === 'delay');
+
+              if (remAutoRes) {
+                const freshConverted = await base44.asServiceRole.entities.BattleCard.filter({ id: card.id });
+                const autoResult = autoResolveBattle(freshConverted[0], campaign_id);
+                await applyAutoResolve(freshConverted[0], autoResult, base44, campaign_id, round);
+                results.push({ card_id: card.id, outcome: 'auto_resolved_after_conversion' });
+              } else if (remDelayed) {
+                await base44.asServiceRole.entities.BattleCard.update(card.id, { status: 'delayed', delayed_at: now });
+                results.push({ card_id: card.id, outcome: 'delayed_after_conversion' });
+              } else {
+                results.push({ card_id: card.id, outcome: 'converted_to_siege' });
+              }
               continue;
             }
           }
         }
 
-        // Standard 1v1 forfeit
-        if (activePlayers.length === 1 && forfeitPlayers.length === 1) {
-          const winnerId = activePlayers[0];
+        // Standard 1v1 forfeit (or multi-player where only 1 remains)
+        if (activePlayerIds.length === 1 && forfeitPlayers.length >= 1) {
+          const winnerId = activePlayerIds[0];
           const winnerCommitted = getWinnerCommittedTroops(card, winnerId);
           const forfeitResult = {
             winner_player_id: winnerId,

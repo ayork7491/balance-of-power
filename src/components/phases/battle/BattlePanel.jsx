@@ -185,7 +185,8 @@ export default function BattlePanel({ campaign, players, myPlayer, mapDef, onPha
   const UNRESOLVED_STATUSES = ['pending','awaiting_result','result_submitted','awaiting_approval','active_carryover','pending_approval'];
   const pendingCount  = cards.filter(c => UNRESOLVED_STATUSES.includes(c.status)).length;
   const resolvedCount = cards.filter(c => ['resolved','auto_resolved','forfeited'].includes(c.status)).length;
-  const resolvedCarriedOver = cards.filter(c => c.round !== round && ['resolved','auto_resolved','forfeited'].includes(c.status));
+  // Resolved carryover: from a prior round, now fully resolved — show in "Resolved This Phase"
+  const resolvedCarriedOver = cards.filter(c => c.round !== round && ['resolved','auto_resolved','forfeited'].includes(c.status) && c.result_applied);
   const hasUnresolvedCarryover = delayedCards.some(c => ['active_carryover','pending_approval','awaiting_approval','result_submitted'].includes(c.status));
   const allResolved   = cards.length > 0 && pendingCount === 0 && delayedCards.length === 0;
 

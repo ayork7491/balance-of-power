@@ -593,13 +593,13 @@ Deno.serve(async (req) => {
     const consumedTargets = new Set(); // bloodbath targets already processed
 
     for (const targetId of targetIds) {
-      if (consumedTargets.has(targetId)) continue; // already handled as part of a bloodbath
+      if (consumedTargets.has(targetId)) continue; // already handled as the non-target side of a bloodbath pair
 
-      const attacksOnTarget = allAttacks.filter(a => a.target_territory_id === targetId);
+      let attacksOnTarget = allAttacks.filter(a => a.target_territory_id === targetId);
 
       // ── Bloodbath detection ──
       // A bloodbath exists when at least one attacker's origin is ALSO a target
-      // of an attack coming back from targetId. Find all such pairs.
+      // of an attack coming back from targetId. Find all such mutual-attack origins.
       const mutualOrigins = attacksOnTarget
         .map(atk => atk.origin_territory_id)
         .filter(originId =>
@@ -612,16 +612,18 @@ Deno.serve(async (req) => {
       const isBloodbath = mutualOrigins.length > 0;
 
       if (isBloodbath) {
-        // Generate ONE bloodbath card per mutual pair. Mark both targets consumed.
-        // There may be multiple mutual origins (e.g. B→A and C→A while A→B and A→C).
-        // Each mutual pair gets its own bloodbath card.
+        // Generate ONE bloodbath card per mutual pair.
+        // IMPORTANT: only mark the *other* territory (originId) as consumed —
+        // NOT targetId itself. This ensures non-mutual attacks against targetId
+        // (e.g. C→B when A↔B is a bloodbath) still get their own battle card.
         const pairedOrigins = new Set();
         for (const originId of mutualOrigins) {
           const pairKey = bloodbathKey(targetId, originId);
           if (pairedOrigins.has(pairKey)) continue;
           pairedOrigins.add(pairKey);
 
-          consumedTargets.add(targetId);
+          // Only consume originId so it isn't processed again as a target.
+          // targetId is NOT consumed here — non-mutual attacks on it proceed below.
           consumedTargets.add(originId);
 
           // Combine all attacks involved in this mutual pair
@@ -666,7 +668,18 @@ Deno.serve(async (req) => {
             tabletop_size,
           }, true);
         }
-        continue; // do not fall through to regular card generation for this target
+
+        // After generating bloodbath cards, check whether there are any NON-mutual
+        // attacks on this same targetId (e.g. C→B when A↔B bloodbath was just processed).
+        // If so, fall through to generate a separate battle card for those.
+        const mutualOriginSet = new Set(mutualOrigins);
+        const nonMutualAttacks = attacksOnTarget.filter(
+          atk => !mutualOriginSet.has(atk.origin_territory_id)
+        );
+        if (nonMutualAttacks.length === 0) continue; // all attacks were part of bloodbath pairs
+
+        // Re-scope to only non-mutual attacks and fall through to card generation
+        attacksOnTarget = nonMutualAttacks;
       }
 
       // ── Normal (non-bloodbath) card generation ──
