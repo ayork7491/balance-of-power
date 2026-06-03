@@ -296,6 +296,137 @@ async function applyTerritoryUpdates(base44, updates) {
   }
 }
 
+/**
+ * buildTerritoryUpdatesWithRecovery — wraps buildTerritoryUpdates with bloodbath
+ * origin-captured check (Issue 2) and Recovery Siege creation (Issue 3).
+ *
+ * For bloodbath cards only:
+ *   - If the winner's origin territory was captured by a third party during this
+ *     battle phase, do NOT restore/split troops there. Place all survivors into
+ *     the territory won through the bloodbath (loser's origin) instead.
+ *   - If the winner still has no legal destination after the above (e.g. they didn't
+ *     capture the loser's territory either), create a Recovery Siege BattleCard
+ *     targeting the winner's former origin territory.
+ */
+async function buildTerritoryUpdatesWithRecovery(base44, campaign_id, round, card, result, territoryStates) {
+  if (!card.is_mutual) {
+    // Non-bloodbath: use standard logic unchanged
+    return buildTerritoryUpdates(card, result, territoryStates);
+  }
+
+  const { winner_player_id, surviving_tabletop_troops } = result;
+  if (!winner_player_id) return buildTerritoryUpdates(card, result, territoryStates);
+
+  const committedBOP = getWinnerCommittedTroops(card, winner_player_id);
+  let survivingTroops = 0;
+  if ((card.tabletop_size ?? 0) <= 0) {
+    survivingTroops = committedBOP;
+  } else {
+    survivingTroops = scaleBackSurvivors(surviving_tabletop_troops ?? 0, card.tabletop_size, card.total_troops_in_battle ?? 0, committedBOP);
+  }
+
+  const winnerEntry  = (card.attackers ?? []).find(a => a.player_id === winner_player_id);
+  const loserEntries = (card.attackers ?? []).filter(a => a.player_id !== winner_player_id);
+
+  // Check if winner's origin is still owned by the winner at resolution time
+  const winnerOriginState = winnerEntry
+    ? territoryStates.find(s => s.territory_id === winnerEntry.origin_territory_id)
+    : null;
+  const winnerStillOwnsOrigin = winnerOriginState &&
+    winnerOriginState.owner_player_id === winner_player_id;
+
+  const updates = [];
+  let homelessSurvivors = 0;
+  let homelessOriginId = winnerEntry?.origin_territory_id ?? null;
+
+  for (const loserEntry of loserEntries) {
+    const loserOriginState = territoryStates.find(s => s.territory_id === loserEntry.origin_territory_id);
+    if (!loserOriginState) continue;
+
+    const loserHasGarrison = (loserOriginState.troop_count ?? 0) > 0 && loserOriginState.owner_player_id === loserEntry.player_id;
+    if (!loserHasGarrison) {
+      // Winner captures loser's vacated origin — place all survivors here (no split)
+      // regardless of whether winner's own origin is captured.
+      updates.push({
+        id: loserOriginState.id,
+        territory_id: loserEntry.origin_territory_id,
+        owner_player_id: winner_player_id,
+        troop_count: Math.max(survivingTroops > 0 ? 1 : 0, survivingTroops),
+      });
+      // No split to winner's origin when it was captured by a third party
+      if (winnerStillOwnsOrigin && winnerOriginState) {
+        // Winner still owns origin — standard split
+        const splitCapture = Math.floor(survivingTroops / 2);
+        const splitOrigin  = survivingTroops - splitCapture;
+        updates[updates.length - 1].troop_count = Math.max(survivingTroops > 0 ? 1 : 0, splitCapture);
+        updates.push({
+          id: winnerOriginState.id,
+          territory_id: winnerEntry.origin_territory_id,
+          owner_player_id: winner_player_id,
+          troop_count: (winnerOriginState.troop_count ?? 0) + splitOrigin,
+        });
+      }
+      // else: origin was captured — all survivors go to loser's territory only (no split)
+      return updates;
+    }
+  }
+
+  // Loser held their origin (had a garrison). Winner keeps all survivors at own origin.
+  if (winnerStillOwnsOrigin && winnerOriginState) {
+    updates.push({
+      id: winnerOriginState.id,
+      territory_id: winnerEntry.origin_territory_id,
+      owner_player_id: winner_player_id,
+      troop_count: (winnerOriginState.troop_count ?? 0) + survivingTroops,
+    });
+    return updates;
+  }
+
+  // ── Issue 3: Homeless survivors — no legal destination ──
+  // Winner's origin was captured AND loser held their own territory.
+  // Survivors have nowhere to go. Create a Recovery Siege.
+  if (survivingTroops > 0 && homelessOriginId) {
+    const homelessOriginState = territoryStates.find(s => s.territory_id === homelessOriginId);
+    const currentController   = homelessOriginState?.owner_player_id ?? null;
+    const avgBattleSize = 1000; // fallback; will be recalculated with scale
+    const totalTroops   = survivingTroops + (homelessOriginState?.troop_count ?? 0);
+    const scaleFactor   = parseFloat(Math.max(totalTroops / avgBattleSize, 1).toFixed(2));
+    const tabletopSize  = Math.round(totalTroops / scaleFactor);
+
+    await base44.asServiceRole.entities.BattleCard.create({
+      campaign_id,
+      round: round + 1, // appears in next battle phase
+      battle_type: 'siege',
+      target_territory_id: homelessOriginId,
+      defender_player_id: currentController,
+      defender_troops: homelessOriginState?.troop_count ?? 0,
+      attackers: [{
+        player_id: winner_player_id,
+        origin_territory_id: homelessOriginId, // army is "from" the same territory
+        committed_troops: survivingTroops,
+      }],
+      total_attacking_troops: survivingTroops,
+      total_troops_in_battle: totalTroops,
+      scale_factor: scaleFactor,
+      tabletop_size: tabletopSize,
+      status: 'active_carryover',
+      is_mutual: false,
+      battle_preferences: {},
+      result: {
+        recovery_siege: true,
+        reason: 'Bloodbath winner origin captured by third party. Homeless survivors attempting to reclaim origin.',
+      },
+    });
+
+    await log(base44, campaign_id, round, 'recovery_siege_created', null, {
+      winner_player_id, homeless_survivors: survivingTroops, origin_territory_id: homelessOriginId, current_controller: currentController,
+    }, true);
+  }
+
+  // Return empty updates — survivors placed via Recovery Siege card, not directly
+  return updates;
+}
+
 async function log(base44, campaignId, round, eventType, playerId, payload, isPublic = true) {
   await base44.asServiceRole.entities.SetupLog.create({
     campaign_id: campaignId, phase: 'battle', round,
@@ -356,12 +487,14 @@ Deno.serve(async (req) => {
 
   async function applyAutoResolve(card, autoResult, base44Ref, campaign_idRef, roundRef) {
     const now = new Date().toISOString();
+    const isCarryover = ['active_carryover', 'pending_approval'].includes(card.status);
     await base44Ref.asServiceRole.entities.BattleCard.update(card.id, {
       status: 'auto_resolved', resolved_at: now,
+      ...(isCarryover ? { resolved_in_battle_round: roundRef } : {}),
       result: { ...autoResult, submitted_by: 'system', submitted_at: now, applied_at: null },
     });
     const territoryStates = await base44Ref.asServiceRole.entities.TerritoryState.filter({ campaign_id: campaign_idRef });
-    const updates = buildTerritoryUpdates(card, autoResult, territoryStates);
+    const updates = await buildTerritoryUpdatesWithRecovery(base44Ref, campaign_idRef, roundRef, card, autoResult, territoryStates);
     await applyTerritoryUpdates(base44Ref, updates);
     await base44Ref.asServiceRole.entities.BattleCard.update(card.id, {
       result_applied: true,
@@ -378,22 +511,25 @@ Deno.serve(async (req) => {
     const queryRound = body.round ?? round;
     const currentCards = await base44.asServiceRole.entities.BattleCard.filter({ campaign_id, round: queryRound });
 
-    // Fetch carryover cards from prior rounds — both unresolved AND recently resolved
-    // (so players can review results of carryover battles in the current phase).
+    // Fetch carryover cards from prior rounds.
+    // Unresolved: show from all prior rounds so they remain actionable.
+    // Resolved: ONLY show those resolved during the CURRENT battle phase
+    //   (i.e. active_carryover cards that were resolved since processPhaseEnd last ran).
+    //   These are identified by having resolved_in_battle_round === queryRound.
+    //   Older resolved carryover cards belong in History only.
     let carryoverCards = [];
     if (queryRound > 1) {
       for (let r = queryRound - 1; r >= Math.max(1, queryRound - 10); r--) {
         const priorCards = await base44.asServiceRole.entities.BattleCard.filter({ campaign_id, round: r });
-        // Include unresolved + resolved carryover cards (resolved ones are read-only for review)
-        const relevant = priorCards.filter(c =>
-          ['delayed', 'active_carryover', 'pending_approval', 'result_submitted', 'awaiting_approval',
-           'resolved', 'auto_resolved', 'forfeited'].includes(c.status) &&
-          // Only include resolved cards that were carried over (came from a prior round)
-          (
-            !c.result_applied
-            || ['resolved', 'auto_resolved', 'forfeited'].includes(c.status)
-          )
-        );
+        const relevant = priorCards.filter(c => {
+          // Always include unresolved carryover cards
+          if (!c.result_applied && ['delayed', 'active_carryover', 'pending_approval', 'result_submitted', 'awaiting_approval'].includes(c.status)) return true;
+          // Include resolved carryover cards ONLY if they were resolved during this battle phase
+          if (c.result_applied && ['resolved', 'auto_resolved', 'forfeited'].includes(c.status)) {
+            return (c.resolved_in_battle_round ?? null) === queryRound;
+          }
+          return false;
+        });
         carryoverCards = [...carryoverCards, ...relevant];
         if (priorCards.length === 0) break;
       }
@@ -508,14 +644,17 @@ Deno.serve(async (req) => {
 
     // ── Apply tally outcomes ────────────────────────────────────────────────────
 
-    if (!hasForfeit && allAutoResolve) {
+    if (allAutoResolve && !hasForfeit) {
       const freshCards = await base44.asServiceRole.entities.BattleCard.filter({ id: battle_card_id });
       const autoResult = autoResolveBattle(freshCards[0], campaign_id);
       await applyAutoResolve(freshCards[0], autoResult, base44, campaign_id, round);
       return Response.json({ success: true, outcome, status: 'auto_resolved', result: autoResult });
     }
 
-    if (!hasForfeit && allDelay) {
+    // Issue 4: Delay tally must actually delay the card and lock territories.
+    // This covers both pure-delay and forfeit+delay (forfeiters are excluded from tally;
+    // remaining unanimous delay means the card should be delayed).
+    if (allDelay) {
       await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
         status: 'delayed', delayed_at: now,
       });
@@ -819,11 +958,14 @@ Deno.serve(async (req) => {
       const result = card.result;
       const isDoubleSiegeResult = card.battle_type === 'double_siege' && result?.double_siege_result != null;
       if (result?.winner_player_id || isDoubleSiegeResult) {
+        const isCarryoverCard = ['active_carryover', 'pending_approval'].includes(card.status);
         const territoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
-        const updates = buildTerritoryUpdates(card, result, territoryStates);
+        const updates = await buildTerritoryUpdatesWithRecovery(base44, campaign_id, round, card, result, territoryStates);
         await applyTerritoryUpdates(base44, updates);
         await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
-          result_applied: true, result: { ...result, applied_at: new Date().toISOString() },
+          result_applied: true,
+          ...(isCarryoverCard ? { resolved_in_battle_round: round } : {}),
+          result: { ...result, applied_at: new Date().toISOString() },
         });
         await refreshLockedTerritories(base44, campaign_id);
         await log(base44, campaign_id, card.round, 'battle_result_applied', null, { battle_card_id, winner_player_id: result.winner_player_id ?? null }, true);
@@ -851,13 +993,15 @@ Deno.serve(async (req) => {
     if (!hasResult) return Response.json({ error: 'No result to override with' }, { status: 400 });
 
     if (force_resolve) {
+      const isCarryoverCard = ['active_carryover', 'pending_approval'].includes(card.status);
       await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
         status: 'resolved', resolved_at: new Date().toISOString(),
+        ...(isCarryoverCard ? { resolved_in_battle_round: round } : {}),
         approvals: [...(card.approvals ?? []), { player_id: myPlayer.id, approved: true, flagged: false, admin_override: true, at: new Date().toISOString() }],
       });
       if (!card.result_applied) {
         const territoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
-        await applyTerritoryUpdates(base44, buildTerritoryUpdates(card, card.result, territoryStates));
+        await applyTerritoryUpdates(base44, await buildTerritoryUpdatesWithRecovery(base44, campaign_id, round, card, card.result, territoryStates));
         await base44.asServiceRole.entities.BattleCard.update(battle_card_id, { result_applied: true, result: { ...card.result, applied_at: new Date().toISOString() } });
         await refreshLockedTerritories(base44, campaign_id);
       }
@@ -932,7 +1076,12 @@ Deno.serve(async (req) => {
         winner_bop_survivors: winnerCommittedBOP, notes: 'Victory by forfeit.',
         submitted_by: 'admin', submitted_at: new Date().toISOString(), result_source: 'forfeit', applied_at: null,
       };
-      await base44.asServiceRole.entities.BattleCard.update(battle_card_id, { status: 'forfeited', resolved_at: new Date().toISOString(), result: forfeitResult });
+      const isCarryoverForForfeit = ['active_carryover', 'pending_approval'].includes(card.status);
+      await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
+        status: 'forfeited', resolved_at: new Date().toISOString(),
+        ...(isCarryoverForForfeit ? { resolved_in_battle_round: round } : {}),
+        result: forfeitResult,
+      });
 
       const territoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
       const targetState = territoryStates.find(s => s.territory_id === card.target_territory_id);
@@ -1029,7 +1178,7 @@ Deno.serve(async (req) => {
 
       // ── Apply outcomes ──────────────────────────────────────────────────────
 
-      if (!hasForfeit && allAutoResolve) {
+      if (allAutoResolve && !hasForfeit) {
         const freshCards = await base44.asServiceRole.entities.BattleCard.filter({ id: card.id });
         const autoResult = autoResolveBattle(freshCards[0], campaign_id);
         await applyAutoResolve(freshCards[0], autoResult, base44, campaign_id, round);
@@ -1037,7 +1186,8 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      if (!hasForfeit && allDelay) {
+      // Issue 4: allDelay covers both pure-delay and forfeit+delay cases.
+      if (allDelay) {
         await base44.asServiceRole.entities.BattleCard.update(card.id, { status: 'delayed', delayed_at: now });
         results.push({ card_id: card.id, outcome: 'delayed' });
         continue;
@@ -1313,10 +1463,13 @@ Deno.serve(async (req) => {
 
       const resultIsDS = card.battle_type === 'double_siege' && resultToApply?.double_siege_result?.defender_held === false;
       if (resultToApply?.winner_player_id || resultIsDS) {
+        const wasCarryover = card.round < round;
         const freshStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
-        await applyTerritoryUpdates(base44, buildTerritoryUpdates(card, resultToApply, freshStates));
+        await applyTerritoryUpdates(base44, await buildTerritoryUpdatesWithRecovery(base44, campaign_id, round, card, resultToApply, freshStates));
         await base44.asServiceRole.entities.BattleCard.update(card.id, {
-          result_applied: true, result: { ...resultToApply, applied_at: new Date().toISOString() },
+          result_applied: true,
+          ...(wasCarryover ? { resolved_in_battle_round: round } : {}),
+          result: { ...resultToApply, applied_at: new Date().toISOString() },
         });
       }
     }

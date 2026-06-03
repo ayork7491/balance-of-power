@@ -336,7 +336,7 @@ export default function BattlePanel({ campaign, players, myPlayer, mapDef, onPha
       {resolvedCarriedOver.length > 0 && (
         <div className="rounded border border-border bg-muted/5 p-3 space-y-2">
           <p className="text-xs font-display tracking-wider uppercase text-muted-foreground flex items-center gap-2">
-            <Check className="w-3 h-3 text-status-locked" /> Resolved Carried-Over ({resolvedCarriedOver.length})
+            <Check className="w-3 h-3 text-status-locked" /> Resolved This Phase ({resolvedCarriedOver.length})
           </p>
           {resolvedCarriedOver.map(card => (
             <BattleCardRow key={card.id} card={card} players={players} mapDef={mapDef} campaignId={campaign.id} />
