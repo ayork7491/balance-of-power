@@ -111,7 +111,6 @@ export default function BattlePreferencePanel({
   actionLoading,
   isAdmin,
   onSetPreference,
-  onCloseVoting,
 }) {
   const prefs = card.battle_preferences ?? {};
   const votingClosesAt = card.voting_closes_at ? new Date(card.voting_closes_at) : null;
@@ -191,16 +190,7 @@ export default function BattlePreferencePanel({
             Unanimous auto-resolve or delay triggers automatically when voting closes.
           </p>
 
-          {/* Admin: manual close voting */}
-          {isAdmin && (
-            <button
-              onClick={onCloseVoting}
-              disabled={actionLoading}
-              className="w-full px-3 py-2 rounded border border-warning text-warning text-xs font-display tracking-widest uppercase hover:bg-warning/10 transition-all disabled:opacity-40"
-            >
-              Close Voting &amp; Tally Now
-            </button>
-          )}
+          {/* Note: voting is closed phase-wide via "Close Battle Voting & Tally All Cards" in the Battle Panel */}
         </>
       )}
     </div>

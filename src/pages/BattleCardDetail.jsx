@@ -394,8 +394,21 @@ export default function BattleCardDetail() {
           </p>
         </div>
 
-        {/* Result (if submitted) */}
-        {card.result && Object.keys(card.result).length > 0 && (
+        {/* Conversion history (double siege → siege) */}
+        {card.result?.conversion_history && (
+          <div className="panel p-3 space-y-1 border-yellow-500/30 bg-yellow-900/10">
+            <p className="text-xs font-display tracking-wider uppercase text-yellow-400">Converted Battle</p>
+            <p className="text-xs text-foreground">{card.result.conversion_history.reason}</p>
+            <p className="text-[10px] text-muted-foreground">
+              Original type: {card.result.conversion_history.original_type} ·
+              Troops lost: {card.result.conversion_history.forfeiting_troops_lost ?? 0} ·
+              {new Date(card.result.conversion_history.converted_at).toLocaleString()}
+            </p>
+          </div>
+        )}
+
+        {/* Result (if submitted, and not just a conversion history placeholder) */}
+        {card.result && Object.keys(card.result).length > 0 && !card.result.conversion_history && (
           <div className="panel p-4 space-y-3">
             <p className="text-xs font-display tracking-wider uppercase text-muted-foreground">Battle Result</p>
             <div className="flex items-center gap-2 flex-wrap">
@@ -500,7 +513,6 @@ export default function BattleCardDetail() {
               actionLoading={actionLoading}
               isAdmin={isAdmin}
               onSetPreference={handleSetPreference}
-              onCloseVoting={handleCloseVoting}
             />
           )}
 

@@ -556,60 +556,59 @@ Deno.serve(async (req) => {
           return Response.json({ success: true, outcome, status: 'forfeited' });
 
         } else if (forfeitPlayers.length === 1) {
-          // One attacker forfeits → convert to normal siege
+          // One attacker forfeits → convert the SAME card to a normal siege (no new card)
           const forfeitingAttackerId = forfeitPlayers[0];
           const remainingAttacker = attackerPlayerIds.find(pid => pid !== forfeitingAttackerId);
           if (!remainingAttacker) {
             return Response.json({ error: 'Cannot determine remaining attacker for double siege conversion' }, { status: 400 });
           }
-          // Return the forfeiting attacker's troops to their origin (they lose them — already committed/removed)
-          // Mark original card as forfeited with conversion note
-          const forfeitNote = `${forfeitingAttackerId} forfeited. Double siege converted to normal siege: ${remainingAttacker} vs defender.`;
+
+          const forfeitingAtkEntry  = (card.attackers ?? []).find(a => a.player_id === forfeitingAttackerId);
+          const remainingAtkEntry   = (card.attackers ?? []).find(a => a.player_id === remainingAttacker);
+          const remainingAtkTroops  = remainingAtkEntry?.committed_troops ?? 0;
+          const defenderTroops      = card.defender_troops ?? 0;
+          const newTotalTroops      = remainingAtkTroops + defenderTroops;
+          const avgSize             = campaign.settings?.average_battle_size ?? 1000;
+          const newScaleFactor      = parseFloat(Math.max(newTotalTroops / avgSize, 1).toFixed(4));
+          const newTabletopSize     = Math.round(newTotalTroops / newScaleFactor);
+
+          const forfeitingAtkName   = players.find(p => p.id === forfeitingAttackerId)?.display_name ?? forfeitingAttackerId;
+
+          // Mutate the existing card in place: convert to siege, preserve conversion history
           await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
-            status: 'forfeited', resolved_at: now, player_forfeits: currentForfeits,
-            result: {
-              winner_player_id: null, surviving_tabletop_troops: 0,
-              notes: forfeitNote, submitted_by: myPlayer.id, submitted_at: now,
-              result_source: 'forfeit', applied_at: now,
-              converted_to_siege: true,
-            },
-            result_applied: true,
-          });
-
-          // Build new siege card from remaining attacker vs defender
-          const remainingAtkEntry = (card.attackers ?? []).find(a => a.player_id === remainingAttacker);
-          const remainingAtkTroops = remainingAtkEntry?.committed_troops ?? 0;
-          const defenderTroops = card.defender_troops ?? 0;
-          const newTotalTroops = remainingAtkTroops + defenderTroops;
-          const avgSize = campaign.settings?.average_battle_size ?? 1000;
-          const scaleFactor = Math.max(newTotalTroops / avgSize, 1);
-          const tabletopSize = Math.round(newTotalTroops / scaleFactor);
-
-          await base44.asServiceRole.entities.BattleCard.create({
-            campaign_id,
-            round: card.round,
             battle_type: 'siege',
-            target_territory_id: card.target_territory_id,
-            defender_player_id: card.defender_player_id,
-            defender_troops: defenderTroops,
-            attackers: remainingAtkEntry ? [{ player_id: remainingAttacker, origin_territory_id: remainingAtkEntry.origin_territory_id, committed_troops: remainingAtkTroops }] : [],
+            attackers: remainingAtkEntry
+              ? [{ player_id: remainingAttacker, origin_territory_id: remainingAtkEntry.origin_territory_id, committed_troops: remainingAtkTroops }]
+              : [],
             total_attacking_troops: remainingAtkTroops,
             total_troops_in_battle: newTotalTroops,
-            scale_factor: parseFloat(scaleFactor.toFixed(4)),
-            tabletop_size: tabletopSize,
-            status: 'active_carryover',
+            scale_factor: newScaleFactor,
+            tabletop_size: newTabletopSize,
             is_mutual: false,
-            result: {},
-            approvals: [],
-            battle_preferences: {},
+            status: card.status, // preserve active_carryover / pending / etc.
+            player_forfeits: currentForfeits,
+            battle_preferences: {}, // reset preferences for remaining participants
             voting_closed: false,
+            // Preserve conversion history in result field (not applied)
+            result: {
+              conversion_history: {
+                original_type: 'double_siege',
+                converted_at: now,
+                converted_by: 'forfeit',
+                forfeiting_player_id: forfeitingAttackerId,
+                forfeiting_player_name: forfeitingAtkName,
+                forfeiting_troops_lost: forfeitingAtkEntry?.committed_troops ?? 0,
+                reason: `${forfeitingAtkName} forfeited. Double siege converted to siege.`,
+              },
+            },
           });
 
           await refreshLockedTerritories(base44, campaign_id);
           await log(base44, campaign_id, card.round, 'double_siege_converted_to_siege', myPlayer.id, {
-            original_card_id: battle_card_id, forfeiting_player: forfeitingAttackerId, remaining_attacker: remainingAttacker,
+            battle_card_id, forfeiting_player: forfeitingAttackerId, remaining_attacker: remainingAttacker,
+            troops_lost: forfeitingAtkEntry?.committed_troops ?? 0,
           }, true);
-          return Response.json({ success: true, outcome, status: 'forfeited', converted_to_siege: true });
+          return Response.json({ success: true, outcome, status: card.status, converted_to_siege: true, battle_card_id });
         }
       }
 
@@ -923,6 +922,224 @@ Deno.serve(async (req) => {
       await refreshLockedTerritories(base44, campaign_id);
       return Response.json({ success: true, status: 'awaiting_result' });
     }
+  }
+
+  // ── tallyAllCards — close voting and tally preferences for ALL active cards ───
+  if (action === 'tallyAllCards') {
+    if (!isAdmin) return Response.json({ error: 'Admin only' }, { status: 403 });
+
+    // Gather all active (votable) cards for current round + carryovers
+    const currentRoundCards = await base44.asServiceRole.entities.BattleCard.filter({ campaign_id, round });
+    let priorCards = [];
+    for (let r = round - 1; r >= Math.max(1, round - 10); r--) {
+      const pc = await base44.asServiceRole.entities.BattleCard.filter({ campaign_id, round: r });
+      const unresolved = pc.filter(c =>
+        ['active_carryover'].includes(c.status) && !c.result_applied
+      );
+      priorCards = [...priorCards, ...unresolved];
+      if (pc.length === 0) break;
+    }
+
+    const votableStatuses = ['pending', 'awaiting_result', 'active_carryover'];
+    const votableCards = [...currentRoundCards, ...priorCards].filter(c =>
+      votableStatuses.includes(c.status) && !c.voting_closed
+    );
+
+    if (votableCards.length === 0) {
+      return Response.json({ success: true, tallied: 0, message: 'No votable cards found.' });
+    }
+
+    const results = [];
+    const now = new Date().toISOString();
+
+    for (const card of votableCards) {
+      const participantIds = getParticipantIds(card);
+      const prefs = card.battle_preferences ?? {};
+
+      const prefCounts = { play_tabletop: 0, auto_resolve: 0, delay: 0, forfeit: 0 };
+      for (const pid of participantIds) {
+        const p = prefs[pid] ?? 'play_tabletop';
+        prefCounts[p] = (prefCounts[p] ?? 0) + 1;
+      }
+
+      const totalPlayers   = participantIds.length;
+      const allAutoResolve = prefCounts.auto_resolve === totalPlayers;
+      const allDelay       = prefCounts.delay === totalPlayers;
+      const hasForfeit     = prefCounts.forfeit > 0;
+      const forfeitPlayers = participantIds.filter(pid => (prefs[pid] ?? 'play_tabletop') === 'forfeit');
+
+      let outcome = 'tabletop';
+      if (allAutoResolve) outcome = 'auto_resolve';
+      else if (allDelay) outcome = 'delay';
+      else if (hasForfeit) outcome = 'forfeit_only';
+
+      // Mark voting closed
+      await base44.asServiceRole.entities.BattleCard.update(card.id, {
+        voting_closed: true,
+        tally_result: { outcome, tallied_at: now, pref_counts: prefCounts },
+      });
+
+      await log(base44, campaign_id, card.round, 'battle_voting_closed', myPlayer.id, {
+        battle_card_id: card.id, outcome, pref_counts: prefCounts,
+      }, true);
+
+      // ── Apply outcomes ──────────────────────────────────────────────────────
+
+      if (allAutoResolve) {
+        const freshCards = await base44.asServiceRole.entities.BattleCard.filter({ id: card.id });
+        const autoResult = autoResolveBattle(freshCards[0], campaign_id);
+        await applyAutoResolve(freshCards[0], autoResult, base44, campaign_id, round);
+        results.push({ card_id: card.id, outcome: 'auto_resolved' });
+        continue;
+      }
+
+      if (allDelay) {
+        await base44.asServiceRole.entities.BattleCard.update(card.id, { status: 'delayed', delayed_at: now });
+        results.push({ card_id: card.id, outcome: 'delayed' });
+        continue;
+      }
+
+      if (hasForfeit) {
+        const activePlayers = participantIds.filter(pid => (prefs[pid] ?? 'play_tabletop') !== 'forfeit');
+        const currentForfeits = {};
+        for (const pid of forfeitPlayers) currentForfeits[pid] = true;
+
+        if (card.battle_type === 'double_siege') {
+          const attackerPlayerIds = [...new Set((card.attackers ?? []).map(a => a.player_id))];
+          const defenderForfeited = currentForfeits[card.defender_player_id ?? ''];
+          const allAttackersForfeited = attackerPlayerIds.every(pid => currentForfeits[pid]);
+
+          if (defenderForfeited) {
+            const forfeitResult = {
+              winner_player_id: null, surviving_tabletop_troops: 0,
+              notes: 'Defender forfeited. Territory unclaimed.',
+              submitted_by: myPlayer.id, submitted_at: now, result_source: 'forfeit', applied_at: null,
+              double_siege_result: {
+                defender_held: false, defender_surviving_tabletop: 0,
+                attacker_survivors: attackerPlayerIds.map(pid => ({ player_id: pid, tabletop_survivors: winnerCommittedTabletop(card, pid) })),
+              },
+            };
+            await base44.asServiceRole.entities.BattleCard.update(card.id, { status: 'forfeited', resolved_at: now, player_forfeits: currentForfeits, result: forfeitResult });
+            const ts = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+            await applyTerritoryUpdates(base44, buildTerritoryUpdates(card, forfeitResult, ts));
+            await base44.asServiceRole.entities.BattleCard.update(card.id, { result_applied: true, result: { ...forfeitResult, applied_at: new Date().toISOString() } });
+            results.push({ card_id: card.id, outcome: 'forfeited' });
+            continue;
+          } else if (allAttackersForfeited) {
+            const defenderCommitted = getWinnerCommittedTroops(card, card.defender_player_id);
+            const forfeitResult = {
+              winner_player_id: card.defender_player_id, surviving_tabletop_troops: winnerCommittedTabletop(card, card.defender_player_id),
+              notes: 'All attackers forfeited. Defender holds.',
+              submitted_by: myPlayer.id, submitted_at: now, result_source: 'forfeit', applied_at: null,
+              double_siege_result: {
+                defender_held: true, defender_surviving_tabletop: winnerCommittedTabletop(card, card.defender_player_id),
+                attacker_survivors: attackerPlayerIds.map(pid => ({ player_id: pid, tabletop_survivors: 0 })),
+              },
+            };
+            await base44.asServiceRole.entities.BattleCard.update(card.id, { status: 'forfeited', resolved_at: now, player_forfeits: currentForfeits, result: forfeitResult });
+            const ts = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+            const targetState = ts.find(s => s.territory_id === card.target_territory_id);
+            if (targetState) await base44.asServiceRole.entities.TerritoryState.update(targetState.id, { owner_player_id: card.defender_player_id, troop_count: defenderCommitted });
+            await base44.asServiceRole.entities.BattleCard.update(card.id, { result_applied: true, result: { ...forfeitResult, applied_at: new Date().toISOString() } });
+            results.push({ card_id: card.id, outcome: 'forfeited' });
+            continue;
+          } else if (forfeitPlayers.length === 1) {
+            // One attacker forfeits → convert same card to siege
+            const forfeitingAttackerId = forfeitPlayers[0];
+            const remainingAttacker = attackerPlayerIds.find(pid => pid !== forfeitingAttackerId);
+            if (remainingAttacker) {
+              const forfeitingAtkEntry = (card.attackers ?? []).find(a => a.player_id === forfeitingAttackerId);
+              const remainingAtkEntry  = (card.attackers ?? []).find(a => a.player_id === remainingAttacker);
+              const remainingAtkTroops = remainingAtkEntry?.committed_troops ?? 0;
+              const defenderTroops     = card.defender_troops ?? 0;
+              const newTotalTroops     = remainingAtkTroops + defenderTroops;
+              const avgSize            = campaign.settings?.average_battle_size ?? 1000;
+              const newScaleFactor     = parseFloat(Math.max(newTotalTroops / avgSize, 1).toFixed(4));
+              const newTabletopSize    = Math.round(newTotalTroops / newScaleFactor);
+              const forfeitingAtkName  = players.find(p => p.id === forfeitingAttackerId)?.display_name ?? forfeitingAttackerId;
+
+              await base44.asServiceRole.entities.BattleCard.update(card.id, {
+                battle_type: 'siege',
+                attackers: remainingAtkEntry ? [{ player_id: remainingAttacker, origin_territory_id: remainingAtkEntry.origin_territory_id, committed_troops: remainingAtkTroops }] : [],
+                total_attacking_troops: remainingAtkTroops,
+                total_troops_in_battle: newTotalTroops,
+                scale_factor: newScaleFactor,
+                tabletop_size: newTabletopSize,
+                is_mutual: false,
+                player_forfeits: currentForfeits,
+                battle_preferences: {},
+                voting_closed: false,
+                tally_result: {},
+                result: {
+                  conversion_history: {
+                    original_type: 'double_siege',
+                    converted_at: now,
+                    converted_by: 'forfeit',
+                    forfeiting_player_id: forfeitingAttackerId,
+                    forfeiting_player_name: forfeitingAtkName,
+                    forfeiting_troops_lost: forfeitingAtkEntry?.committed_troops ?? 0,
+                    reason: `${forfeitingAtkName} forfeited. Double siege converted to siege.`,
+                  },
+                },
+              });
+              await log(base44, campaign_id, card.round, 'double_siege_converted_to_siege', myPlayer.id, {
+                battle_card_id: card.id, forfeiting_player: forfeitingAttackerId, remaining_attacker: remainingAttacker,
+              }, true);
+              results.push({ card_id: card.id, outcome: 'converted_to_siege' });
+              continue;
+            }
+          }
+        }
+
+        // Standard 1v1 forfeit
+        if (activePlayers.length === 1 && forfeitPlayers.length === 1) {
+          const winnerId = activePlayers[0];
+          const winnerCommitted = getWinnerCommittedTroops(card, winnerId);
+          const forfeitResult = {
+            winner_player_id: winnerId,
+            surviving_tabletop_troops: winnerCommittedTabletop(card, winnerId),
+            winner_bop_survivors: winnerCommitted,
+            notes: 'Forfeit by preference tally.',
+            submitted_by: myPlayer.id, submitted_at: now, result_source: 'forfeit', applied_at: null,
+          };
+          await base44.asServiceRole.entities.BattleCard.update(card.id, { status: 'forfeited', resolved_at: now, player_forfeits: currentForfeits, result: forfeitResult });
+          const ts = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+          const targetState = ts.find(s => s.territory_id === card.target_territory_id);
+          if (card.battle_type === 'bloodbath') {
+            const loserEntry  = (card.attackers ?? []).find(a => a.player_id === forfeitPlayers[0]);
+            const winnerEntry = (card.attackers ?? []).find(a => a.player_id === winnerId);
+            if (loserEntry && winnerEntry) {
+              const loserState  = ts.find(s => s.territory_id === loserEntry.origin_territory_id);
+              const winnerState = ts.find(s => s.territory_id === winnerEntry.origin_territory_id);
+              if (loserState && (loserState.troop_count ?? 0) === 0) {
+                const splitCapture = Math.floor(winnerCommitted / 2);
+                const splitOrigin  = winnerCommitted - splitCapture;
+                if (loserState) await base44.asServiceRole.entities.TerritoryState.update(loserState.id, { owner_player_id: winnerId, troop_count: Math.max(winnerCommitted > 0 ? 1 : 0, splitCapture) });
+                if (winnerState) await base44.asServiceRole.entities.TerritoryState.update(winnerState.id, { owner_player_id: winnerId, troop_count: (winnerState.troop_count ?? 0) + splitOrigin });
+              } else if (winnerState) {
+                await base44.asServiceRole.entities.TerritoryState.update(winnerState.id, { owner_player_id: winnerId, troop_count: (winnerState.troop_count ?? 0) + winnerCommitted });
+              }
+            }
+          } else if (targetState) {
+            await base44.asServiceRole.entities.TerritoryState.update(targetState.id, { owner_player_id: winnerId, troop_count: winnerCommitted });
+          }
+          await base44.asServiceRole.entities.BattleCard.update(card.id, { result_applied: true, result: { ...forfeitResult, applied_at: new Date().toISOString() } });
+          results.push({ card_id: card.id, outcome: 'forfeited' });
+          continue;
+        }
+
+        // Mixed forfeits — record and stay tabletop
+        await base44.asServiceRole.entities.BattleCard.update(card.id, { player_forfeits: currentForfeits });
+        results.push({ card_id: card.id, outcome: 'tabletop_with_forfeits' });
+        continue;
+      }
+
+      // play_tabletop — stays open
+      results.push({ card_id: card.id, outcome: 'tabletop' });
+    }
+
+    await refreshLockedTerritories(base44, campaign_id);
+    return Response.json({ success: true, tallied: votableCards.length, results });
   }
 
   // ── Legacy: voteDelay → setPreference(delay/play_tabletop) ───────────────────
