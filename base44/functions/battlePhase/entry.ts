@@ -1200,9 +1200,18 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Delayed cards from this round → promote to active_carryover for next round
+      // Delayed cards from this round → promote to active_carryover for next round.
+      // Reset all preferences so players can vote fresh in the new round.
       if (card.status === 'delayed') {
-        await base44.asServiceRole.entities.BattleCard.update(card.id, { status: 'active_carryover' });
+        await base44.asServiceRole.entities.BattleCard.update(card.id, {
+          status: 'active_carryover',
+          battle_preferences: {},
+          voting_closed: false,
+          tally_result: {},
+          delay_votes: {},
+          auto_resolve_votes: {},
+          player_forfeits: {},
+        });
         delayedCount++;
         await log(base44, campaign_id, round, 'battle_carried_over', null, {
           battle_card_id: card.id, target_territory_id: card.target_territory_id, original_round: card.round, carry_to_round: round + 1,

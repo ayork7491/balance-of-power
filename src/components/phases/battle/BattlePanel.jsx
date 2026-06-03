@@ -34,10 +34,11 @@ function getPlayerHex(players, playerId) {
 }
 
 /** Inline preference dropdown for a single battle card */
-function InlinePreferenceRow({ card, players, effectivePlayerId, campaignId, onChanged }) {
+function InlinePreferenceRow({ card, players, effectivePlayerId, campaignId, onUpdated }) {
   const [loading, setLoading] = useState(false);
   const prefs = card.battle_preferences ?? {};
-  const myPref = prefs[effectivePlayerId] ?? 'play_tabletop';
+  // null = no preference submitted yet (shows placeholder)
+  const myPref = prefs[effectivePlayerId] ?? null;
 
   const participantIds = [
     ...(card.attackers ?? []).map(a => a.player_id),
@@ -46,11 +47,16 @@ function InlinePreferenceRow({ card, players, effectivePlayerId, campaignId, onC
 
   const handleChange = async (e) => {
     const pref = e.target.value;
+    if (!pref) return; // placeholder selected — ignore
     if (pref === 'forfeit') {
       const player = players.find(p => p.id === effectivePlayerId);
       if (!window.confirm(`Forfeit as ${player?.display_name ?? 'you'}? You will lose all committed troops.`)) return;
     }
     setLoading(true);
+    // Optimistic update — patch card locally before API returns
+    onUpdated?.(card.id, {
+      battle_preferences: { ...prefs, [effectivePlayerId]: pref },
+    });
     await base44.functions.invoke('battlePhase', {
       action: 'setPreference',
       campaign_id: campaignId,
@@ -59,7 +65,6 @@ function InlinePreferenceRow({ card, players, effectivePlayerId, campaignId, onC
       acting_as_player_id: effectivePlayerId,
     });
     setLoading(false);
-    onChanged?.();
   };
 
   const votingClosed = card.voting_closed;
@@ -73,7 +78,7 @@ function InlinePreferenceRow({ card, players, effectivePlayerId, campaignId, onC
           const p   = players.find(pl => pl.id === pid);
           const hex = getPlayerHex(players, pid);
           const isMe = pid === effectivePlayerId;
-          const pref = prefs[pid];
+          const pref = prefs[pid] ?? null;
           return (
             <span key={pid} className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-border bg-muted/10">
               <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: hex }} />
@@ -81,10 +86,10 @@ function InlinePreferenceRow({ card, players, effectivePlayerId, campaignId, onC
               {isMe && pref
                 ? <span className={`font-medium ${prefColor(pref)}`}> · {prefLabel(pref)}</span>
                 : isMe
-                ? <span className="text-muted-foreground/50"> · not set</span>
+                ? <span className="text-muted-foreground/50"> · no preference submitted</span>
                 : pref
                 ? <span className="text-status-locked"> · set</span>
-                : null
+                : <span className="text-muted-foreground/40"> · waiting</span>
               }
             </span>
           );
@@ -95,11 +100,12 @@ function InlinePreferenceRow({ card, players, effectivePlayerId, campaignId, onC
       {canVote ? (
         <div className="flex items-center gap-2">
           <select
-            value={myPref}
+            value={myPref ?? ''}
             onChange={handleChange}
             disabled={loading}
             className="flex-1 bg-input border border-border rounded px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
           >
+            <option value="" disabled>Select resolution preference</option>
             {PREF_OPTIONS.map(o => (
               <option key={o.key} value={o.key}>{o.label}</option>
             ))}
@@ -114,7 +120,7 @@ function InlinePreferenceRow({ card, players, effectivePlayerId, campaignId, onC
 }
 
 /** Compact battle card row with inline voting for the current player */
-function BattleCardVoteRow({ card, players, mapDef, campaignId, effectivePlayerId, onChanged }) {
+function BattleCardVoteRow({ card, players, mapDef, campaignId, effectivePlayerId, onUpdated }) {
   const targetName = mapDef?.territories?.find(t => t.territory_id === card.target_territory_id)?.name
     ?? card.target_territory_id ?? '—';
 
@@ -156,7 +162,7 @@ function BattleCardVoteRow({ card, players, mapDef, campaignId, effectivePlayerI
         players={players}
         effectivePlayerId={effectivePlayerId}
         campaignId={campaignId}
-        onChanged={onChanged}
+        onUpdated={onUpdated}
       />
     </div>
   );
@@ -169,7 +175,7 @@ export default function BattlePanel({ campaign, players, myPlayer, mapDef, onPha
   const [tallying, setTallying]       = useState(false);
   const [tallyResult, setTallyResult] = useState(null);
 
-  const { cards, delayedCards, loading, reload } = useBattleCards({
+  const { cards, delayedCards, loading, reload, updateCard } = useBattleCards({
     campaignId: campaign?.id,
     round,
     enabled: !!campaign?.id,
@@ -299,7 +305,7 @@ export default function BattlePanel({ campaign, players, myPlayer, mapDef, onPha
                     mapDef={mapDef}
                     campaignId={campaign.id}
                     effectivePlayerId={effectivePlayerId}
-                    onChanged={reload}
+                    onUpdated={updateCard}
                   />
                 ) : (
                   <BattleCardRow key={card.id} card={card} players={players} mapDef={mapDef} campaignId={campaign.id} />

@@ -34,17 +34,20 @@ export function useBattleCards({ campaignId, round, enabled = true }) {
     setLoading(false);
   }, [campaignId, round, enabled]);
 
+  /** Optimistically update a single card in the local list — no refetch */
+  const updateCard = useCallback((cardId, patch) => {
+    setCards(prev => prev.map(c => c.id === cardId ? { ...c, ...patch } : c));
+  }, []);
+
+  // Fetch once on mount / when round or campaign changes. No polling — cards
+  // are refreshed explicitly after voting closes, battles resolve, or manually.
   useEffect(() => {
     fetchCards();
-    if (enabled) {
-      intervalRef.current = setInterval(fetchCards, 20_000);
-    }
-    return () => clearInterval(intervalRef.current);
-  }, [fetchCards, enabled]);
+  }, [fetchCards]);
 
   // Cards that are actively being carried over or awaiting approval from prior rounds
   const ACTIVE_CARRYOVER_STATUSES = ['delayed', 'active_carryover', 'pending_approval', 'awaiting_approval', 'result_submitted'];
   const delayedCards = cards.filter(c => c.round !== round && ACTIVE_CARRYOVER_STATUSES.includes(c.status) && !c.result_applied);
 
-  return { cards, delayedCards, loading, error, reload: fetchCards };
+  return { cards, delayedCards, loading, error, reload: fetchCards, updateCard };
 }

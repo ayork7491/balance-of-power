@@ -80,17 +80,18 @@ export function PreferenceRecord({ card, players, participantIds }) {
         <Shield className="w-3 h-3" /> Battle Preferences
       </p>
       {participantIds.map(pid => {
-        const pref = prefs[pid] ?? 'play_tabletop';
+        const pref = prefs[pid] ?? null; // null = never submitted
         const p = players.find(pl => pl.id === pid);
         const hex = getPlayerHex(players, pid);
-        const opt = PREFERENCE_OPTIONS.find(o => o.key === pref);
+        const opt = pref ? PREFERENCE_OPTIONS.find(o => o.key === pref) : null;
         return (
           <div key={pid} className="flex items-center gap-2 text-xs px-2 py-1 rounded border border-border bg-muted/10">
             <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: hex }} />
             <span className="flex-1">{p?.display_name ?? '?'}</span>
-            <span className={`font-medium ${opt?.activeClass?.split(' ').find(c => c.startsWith('text-')) ?? 'text-foreground'}`}>
-              {prefLabel(pref)}
-            </span>
+            {pref
+              ? <span className={`font-medium ${opt?.activeClass?.split(' ').find(c => c.startsWith('text-')) ?? 'text-foreground'}`}>{prefLabel(pref)}</span>
+              : <span className="text-muted-foreground/50 italic">No preference submitted</span>
+            }
           </div>
         );
       })}
@@ -115,8 +116,8 @@ export default function BattlePreferencePanel({
   const prefs = card.battle_preferences ?? {};
   const votingClosesAt = card.voting_closes_at ? new Date(card.voting_closes_at) : null;
 
-  // How many participants have set a non-default preference
-  const votedCount = participantIds.filter(pid => prefs[pid] && prefs[pid] !== 'play_tabletop').length;
+  // How many participants have actively submitted any preference (including play_tabletop)
+  const votedCount = participantIds.filter(pid => !!prefs[pid]).length;
 
   return (
     <div className="panel p-3 space-y-3">
@@ -148,10 +149,10 @@ export default function BattlePreferencePanel({
                   {isMe && pref
                     ? <span className="font-medium text-primary">{prefLabel(pref)}</span>
                     : isMe
-                    ? <span className="text-muted-foreground/60 italic">Not set (Play Tabletop)</span>
+                    ? <span className="text-muted-foreground/60 italic">No preference submitted</span>
                     : pref
                     ? <span className="text-status-locked font-medium">Preference set</span>
-                    : <span className="text-muted-foreground/50 italic">No preference yet</span>
+                    : <span className="text-muted-foreground/50 italic">No preference submitted</span>
                   }
                 </div>
               );
@@ -186,7 +187,7 @@ export default function BattlePreferencePanel({
           )}
 
           <p className="text-[10px] text-muted-foreground">
-            {votedCount}/{participantIds.length} players set a preference.
+            {votedCount}/{participantIds.length} player{participantIds.length !== 1 ? 's' : ''} submitted a preference.
             Unanimous auto-resolve or delay triggers automatically when voting closes.
           </p>
 
