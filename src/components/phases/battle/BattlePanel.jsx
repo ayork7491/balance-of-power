@@ -297,7 +297,7 @@ export default function BattlePanel({ campaign, players, myPlayer, mapDef, onPha
                 <Shield className="w-3 h-3 text-primary" /> Your Battles
               </p>
               {myCards.map(card => (
-                VOTABLE_STATUSES.includes(card.status) ? (
+                VOTABLE_STATUSES.includes(card.status) && !card.voting_closed ? (
                   <BattleCardVoteRow
                     key={card.id}
                     card={card}
