@@ -15,6 +15,7 @@ import BattleCardRow from './BattleCardRow';
 import { useState } from 'react';
 import { PLAYER_COLORS } from '@/config/theme';
 
+// Preference options — source of truth: config/battleConstants.js → PREFERENCE_UI
 const PREF_OPTIONS = [
   { key: 'play_tabletop', label: 'Play Tabletop', color: 'text-status-locked' },
   { key: 'auto_resolve',  label: 'Auto-Resolve',  color: 'text-status-info' },

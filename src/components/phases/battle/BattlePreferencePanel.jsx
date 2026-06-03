@@ -13,6 +13,7 @@
 import { Clock, Swords, Shield, Flag } from 'lucide-react';
 import { PLAYER_COLORS } from '@/config/theme';
 
+// Preference options — source of truth: config/battleConstants.js → PREFERENCE_UI
 const PREFERENCE_OPTIONS = [
   {
     key: 'play_tabletop',

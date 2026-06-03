@@ -1,6 +1,41 @@
 /**
  * battlePhase — backend handler for BattleCard lifecycle.
  *
+ * ─── MODULE STRUCTURE ────────────────────────────────────────────────────────
+ *
+ * Because Base44 deploys each backend function independently, this file is
+ * intentionally self-contained (no local imports). Logic is organized into
+ * clearly-labelled internal sections:
+ *
+ *   § PURE HELPERS         — scaleBackSurvivors, seededRandom, getParticipantIds,
+ *                            getWinnerCommittedTroops, winnerCommittedTabletop,
+ *                            buildSides
+ *   § AUTO-RESOLVE         — autoResolveBattle()
+ *   § TERRITORY UPDATES    — buildTerritoryUpdates(), applyTerritoryUpdates()
+ *   § RECOVERY SIEGE       — buildTerritoryUpdatesWithRecovery()
+ *   § LOGGING              — log()
+ *   § LOCKED TERRITORIES   — computeLockedTerritoryIds(), refreshLockedTerritories()
+ *   § MAIN HANDLER         — Deno.serve() + all action dispatch
+ *   § LEGACY HELPERS       — handleSetPreferenceDirect() (voteDelay/voteAutoResolve)
+ *
+ * ─── CONSTANTS REFERENCE ─────────────────────────────────────────────────────
+ *
+ * Shared enums (battle types, statuses, preferences, tally outcomes) are
+ * documented in config/battleConstants.js on the frontend. This file inlines
+ * the same string values directly (no import path available in Deno).
+ *
+ * Any new status/type/preference string added here MUST also be added to
+ * config/battleConstants.js to keep frontend and backend in sync.
+ *
+ * ─── AUTHORITATIVE BATTLE LOGIC ──────────────────────────────────────────────
+ *
+ * This is the ONLY place battle resolution rules live. Do NOT modify:
+ *   services/rules-engine/battle/battleResolution.js  ← DEPRECATED
+ *
+ * The active frontend helper (classification + scaling) is:
+ *   services/rules-engine/battle/battleClassification.js
+ *
+ *
  * Actions:
  *   getBattleCards      — list cards (current round + carryover from prior rounds)
  *   setPreference       — participant sets battle resolution preference (replaces voteDelay/voteAutoResolve/playerForfeit)
@@ -46,7 +81,10 @@
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-// ─── Pure helpers ──────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// § PURE HELPERS
+// Stateless utility functions — no DB access, no side effects.
+// ═══════════════════════════════════════════════════════════════════════════════
 
 function scaleBackSurvivors(survivingTabletop, tabletopSize, totalTroopsInBattle, committedBOP) {
   if (tabletopSize <= 0 || totalTroopsInBattle <= 0) return 0;
@@ -113,6 +151,11 @@ function buildSides(card) {
   }
   return sides;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// § AUTO-RESOLVE
+// Seeded-RNG battle resolution by type (siege, double_siege, bloodbath, etc.)
+// ═══════════════════════════════════════════════════════════════════════════════
 
 function autoResolveBattle(card, campaignId) {
   const rng   = seededRandom(`${campaignId}:${card.round}:${card.id}`);
@@ -182,6 +225,12 @@ function autoResolveBattle(card, campaignId) {
     result_source: 'auto',
   };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// § TERRITORY UPDATES
+// Pure computation of territory changes — no DB writes. Covers all battle types:
+// siege, double_siege, capture_objectives, bloodbath, skirmish.
+// ═══════════════════════════════════════════════════════════════════════════════
 
 function buildTerritoryUpdates(card, result, territoryStates) {
   const { winner_player_id, surviving_tabletop_troops } = result;
@@ -281,6 +330,8 @@ function buildTerritoryUpdates(card, result, territoryStates) {
   return updates;
 }
 
+// ─── DB application ────────────────────────────────────────────────────────────
+
 async function applyTerritoryUpdates(base44, updates) {
   for (const upd of updates) {
     if (upd._create) {
@@ -295,6 +346,13 @@ async function applyTerritoryUpdates(base44, updates) {
     }
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// § RECOVERY SIEGE
+// Wraps territory updates with bloodbath edge-case handling:
+//   - Winner's origin captured by 3rd party → all survivors to loser territory (no split)
+//   - Homeless survivors (no legal destination) → create Recovery Siege BattleCard
+// ═══════════════════════════════════════════════════════════════════════════════
 
 /**
  * buildTerritoryUpdatesWithRecovery — wraps buildTerritoryUpdates with bloodbath
@@ -427,6 +485,10 @@ async function buildTerritoryUpdatesWithRecovery(base44, campaign_id, round, car
   return updates;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// § LOGGING + LOCKED TERRITORIES
+// ═══════════════════════════════════════════════════════════════════════════════
+
 async function log(base44, campaignId, round, eventType, playerId, payload, isPublic = true) {
   await base44.asServiceRole.entities.SetupLog.create({
     campaign_id: campaignId, phase: 'battle', round,
@@ -452,7 +514,9 @@ async function refreshLockedTerritories(base44, campaign_id) {
   await base44.asServiceRole.entities.Campaign.update(campaign_id, { locked_territory_ids: lockedIds });
 }
 
-// ─── Main handler ──────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// § MAIN HANDLER — action dispatch
+// ═══════════════════════════════════════════════════════════════════════════════
 
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
@@ -1519,7 +1583,13 @@ Deno.serve(async (req) => {
   return Response.json({ error: `Unknown action: ${action}` }, { status: 400 });
 });
 
-// ── Legacy setPreference helper (used by voteDelay, voteAutoResolve, playerForfeit) ──
+// ═══════════════════════════════════════════════════════════════════════════════
+// § LEGACY HELPERS
+// Backward-compat shims for voteDelay / voteAutoResolve / playerForfeit actions.
+// These map to setPreference internally and are kept for any old clients.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Legacy setPreference helper (used by voteDelay, voteAutoResolve, playerForfeit)
 async function handleSetPreferenceDirect(base44, campaign_id, battle_card_id, preference, acting_as_player_id, round, isAdmin, myPlayer, players, resolveEffectivePlayer, logFn) {
   if (!battle_card_id) return Response.json({ error: 'battle_card_id required' }, { status: 400 });
 

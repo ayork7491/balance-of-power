@@ -1,5 +1,11 @@
 # Battle Card System — Design Notes
 
+> **Authoritative engine:** `functions/battlePhase` (Deno backend)
+> **Shared constants:** `config/battleConstants.js`
+> **Deprecated frontend copy:** `services/rules-engine/battle/battleResolution.js` — do not use
+
+---
+
 ## Overview
 
 Battle cards represent conflicts requiring tabletop resolution. Generated at the end of the attack phase, they encode the battle type, participants, troop counts, and scaling factors needed for players to resolve battles on the tabletop.
@@ -11,14 +17,25 @@ Battle cards represent conflicts requiring tabletop resolution. Generated at the
 ### Status Transitions
 
 ```
-pending
-  → awaiting_result  (admin sets, or auto on phase start)
-  → result_submitted (participant submits result)
-  → awaiting_approval (system sets, waiting for other participants)
-  → resolved         (all participants approve)
-  
-pending → auto_resolved (admin force-resolve or timeout)
-pending → forfeited     (admin sets)
+[pending / awaiting_result]
+  │
+  ├─ unanimous auto_resolve  ──→ auto_resolved ──→ result_applied
+  ├─ unanimous delay         ──→ delayed
+  ├─ forfeit(s) tallied      ──→ forfeited ──→ result_applied
+  │
+  ├─ admin submits result    ──→ result_submitted
+  │     └─ participants approve ──→ resolved ──→ result_applied
+  │     └─ participant flags ──→ awaiting_approval
+  │           └─ admin override ──→ resolved ──→ result_applied
+  │
+  └─ processPhaseEnd (force) ──→ auto_resolved ──→ result_applied
+
+[delayed] ──→ processPhaseEnd ──→ active_carryover (next round)
+
+[active_carryover]
+  ├─ result submitted        ──→ pending_approval
+  │     └─ approved          ──→ resolved ──→ result_applied (resolved_in_battle_round = N)
+  └─ processPhaseEnd         ──→ auto_resolved ──→ result_applied
 ```
 
 ### Canonical Statuses
@@ -26,13 +43,19 @@ pending → forfeited     (admin sets)
 | Status | Description |
 |--------|-------------|
 | `pending` | Battle card generated, waiting for players to play on tabletop |
-| `awaiting_result` | Players should submit result (V1: same as pending) |
+| `awaiting_result` | Players should submit result |
 | `result_submitted` | Result submitted, awaiting approval from other participants |
 | `awaiting_approval` | Disputed or waiting on approvals |
-| `resolved` | All participants approved — ready for phase end |
+| `resolved` | All participants approved — territories updated |
 | `auto_resolved` | System auto-resolved (timeout or admin force) |
-| `delayed` | Admin paused this battle |
-| `forfeited` | Admin marked as forfeit |
+| `delayed` | Card paused this round — carried to next round as `active_carryover` |
+| `active_carryover` | Carried-over card, active in the new round |
+| `pending_approval` | Carryover card: result submitted, awaiting sign-off |
+| `forfeited` | Resolved by forfeit preference tally |
+
+### `resolved_in_battle_round`
+
+When a carryover card is finally resolved, `resolved_in_battle_round` is stamped with the **current round** number. This is used by `getBattleCards` to surface resolved carryover cards only during the phase they were resolved — preventing stale cards from cluttering the battle panel in future rounds.
 
 ---
 
@@ -50,269 +73,209 @@ pending → forfeited     (admin sets)
 }
 ```
 
-**Important fields:**
-- `result_source`: Distinguishes manual player submission from auto-resolution
-- `applied_at`: Set when `processPhaseEnd` applies territory updates
-- `result_applied` (boolean on BattleCard): Prevents double-application
+**Key fields:**
+- `result_source`: Distinguishes manual player submission from auto-resolution or forfeit
+- `applied_at`: Set when territory updates are applied
+- `result_applied` (boolean on BattleCard): Idempotency guard — prevents double-application
 
 ---
 
-## Bloodbath V1 Rule
-
-**Scenario:** Two players mutually attack each other's territories in the same phase (A↔B).
-
-**Resolution:**
-1. One battle card is generated with `is_mutual: true`
-2. `target_territory_id` = lexicographically first of the pair
-3. Winner captures **BOTH** contested territories
-4. **Surviving troops are placed in `target_territory_id` ONLY**
-5. Winner's origin territory remains **empty/unclaimed** (already vacated during attack phase)
-
-**Rationale:**
-- Prevents troop duplication (survivors don't appear in both territories)
-- Winner gains strategic advantage (both territories) but must reinforce separately
-- Simple, deterministic rule easy to implement and explain
-
-**Example:**
-```
-Player A attacks from Territory_X → Territory_Y
-Player B attacks from Territory_Y → Territory_X
-→ Bloodbath card: target = Territory_X (lex-first)
-→ A wins, 300 survivors (tabletop)
-→ A captures both X and Y
-→ 300 full-scale troops placed in Territory_X only
-→ Territory_Y is empty (A can reinforce next round)
-```
-
----
-
-## Multi-Attacker Handling
-
-### Battle Types
+## Battle Types
 
 | Type | Attackers | Defender | Notes |
 |------|-----------|----------|-------|
-| `siege` | 1 | 1 (live) | Standard 1v1 |
-| `double_siege` | 2+ | 1 (live) | Multiple attackers vs defender |
-| `capture_objectives` | 2+ | 0 (neutral/vacated) | Multiple attackers vs empty territory |
-| `bloodbath` | 2 (mutual) | none | Special case |
-
-### Winner Selection
-
-- **Any participant can win** (attacker or defender)
-- Result submission validates `winner_player_id` is in participant list
-- For multi-attacker battles, the winning attacker is **explicit** (not collapsed to first)
-- Each attacker is a separate "side" in auto-resolution
-
-### Example: Double Siege
-
-```
-Player A attacks from X → Z (100 troops)
-Player B attacks from Y → Z (150 troops)
-Player C defends Z (200 troops)
-
-Battle card:
-  battle_type: "double_siege"
-  attackers: [
-    { player_id: A, origin: X, committed: 100 },
-    { player_id: B, origin: Y, committed: 150 }
-  ]
-  defender_player_id: C
-  defender_troops: 200
-
-Sides for auto-resolve:
-  - A: 100 troops
-  - B: 150 troops
-  - C: 200 troops
-
-If B wins:
-  - B captures territory Z
-  - B's surviving troops placed in Z
-```
+| `skirmish` | 1 | 0 (neutral/vacated) | Auto-resolved, no card generated |
+| `siege` | 1 | 1 (live) | Standard 1v1 battle card |
+| `double_siege` | 2+ | 1 (live) | Multi-attacker vs defender |
+| `capture_objectives` | 2+ | 0 (neutral/vacated) | Multi-attacker vs empty territory |
+| `bloodbath` | 2 (mutual) | none | Mutual attack — special resolution |
 
 ---
 
-## Auto-Resolve Behavior
+## Battle Preference System
+
+Each participant submits one preference per card before voting closes:
+
+| Preference | Meaning |
+|---|---|
+| `play_tabletop` | Default — play the battle on the tabletop |
+| `auto_resolve` | Vote to skip tabletop, resolve automatically |
+| `delay` | Vote to delay the battle to next round |
+| `forfeit` | Concede — lose all committed troops |
+
+### Tally Rules (closeBattleVoting / tallyAllCards)
+
+- Forfeiting players are **excluded** from unanimity checks.
+- Remaining players: if ALL vote `auto_resolve` → auto-resolved immediately.
+- Remaining players: if ALL vote `delay` → card status set to `delayed`.
+- Any forfeit(s) with one remaining active player → forfeit resolved, winner takes territory.
+- `double_siege` partial forfeit (1 attacker forfeits): card **converted in-place** to a standard `siege` between the remaining attacker and defender. Converted card preserves remaining participants' preferences.
+- Otherwise: card stays open for tabletop play.
+
+---
+
+## Bloodbath Resolution
+
+**Scenario:** Two players mutually attack each other's territories in the same phase (A↔B).
+
+### Standard Resolution
+
+1. One battle card is generated with `is_mutual: true`
+2. Winner's survivors placed in the captured loser origin territory (split if winner origin still held)
+3. If winner still owns their origin AND loser vacated: split survivors (half to loser's origin, half to winner's origin)
+4. If loser held their garrison: all winner survivors return to winner's origin
+
+### Edge Cases (Sprint 2)
+
+**Winner's origin captured by third party:**
+- Winner's origin was taken during the same attack phase
+- All survivors go entirely to the loser's territory (no split)
+- No troops are placed in the captured origin
+
+**Recovery Siege (homeless survivors):**
+- Winner's origin captured AND loser held their territory → survivors have nowhere to go
+- A new `siege` BattleCard is automatically generated:
+  - `round: current_round + 1`
+  - `status: active_carryover`
+  - `result.recovery_siege: true`
+  - Winner's surviving troops attack their own former origin
+- Ensures no survivors are silently lost
+
+---
+
+## Double Siege
+
+### Defender Forfeits
+Territory becomes unclaimed. Both attackers retain their committed troops (return to origin).
+
+### All Attackers Forfeit
+Defender holds the territory with their full committed troop count.
+
+### One Attacker Forfeits (Partial Forfeit)
+The forfeiting attacker loses their committed troops. The card is **converted in-place** to a normal `siege` between the remaining attacker and the defender. The conversion history is recorded in `result.conversion_history`.
+
+---
+
+## Auto-Resolve
 
 ### When It Happens
 
-1. Admin manually force-resolves a battle card
-2. `processPhaseEnd` runs and battle is still `pending` or `result_submitted`
-3. (Future) Timeout deadline expires
+1. Unanimous `auto_resolve` preference tally
+2. Admin manually calls `autoResolve` action
+3. `processPhaseEnd` runs and battle is still `pending` / `awaiting_result` (force-advance path)
 
 ### Algorithm
 
-```javascript
-1. Build sides: each attacker + defender (if applicable)
+```
+1. Build sides: each participant with their BOP troop count
 2. Weighted random winner by troop contribution
-3. Winner retains 60–90% of their tabletop troops (random)
-4. Losers retain 0% (all committed troops lost)
+3. Winner retains 60–90% of their committed tabletop troops (random)
+4. seed = `${campaign_id}:${round}:${card.id}` — deterministic
 ```
 
-### Determinism
-
-Auto-resolve uses a seeded RNG:
-```
-seed = `${campaign_id}:${round}:${battle_card_id}`
-```
-
-Same inputs always produce same result.
+Special case — double siege: defender win probability = defender_troops / total_troops.
 
 ---
 
-## Result Application Timing
+## Troop Scaling
 
-### Manual Resolution Flow
+```
+scale_factor = max(totalTroopsInBattle / avgBattleSize, 1.0)
+tabletop_size = round(totalTroopsInBattle / scale_factor)
 
-1. Players submit result (`result_submitted`)
-2. Other participants approve/reject
-3. When all approve → `resolved`
-4. Admin clicks "Advance to Fortify"
-5. `processPhaseEnd` runs:
-   - Applies territory updates for all un-applied results
-   - Sets `result_applied: true`
-   - Sets `result.applied_at`
-
-### Auto-Resolve Flow
-
-1. Admin clicks "Force Advance" or timeout occurs
-2. `processPhaseEnd` auto-resolves pending battles
-3. Territory updates applied immediately
-4. `result_applied: true` set
-
----
-
-## Duplicate Result Application Prevention
-
-### The Problem
-
-Without safeguards, `processPhaseEnd` could apply the same battle result multiple times if:
-- Run twice accidentally
-- Battle card status already `resolved` but territory not updated
-
-### The Solution
-
-**`result_applied` flag on BattleCard:**
-
-```json
-{
-  "result_applied": false  // default
-}
+After tabletop battle:
+bop_survivors = round(tabletop_survivors / tabletop_size × totalTroopsInBattle)
+bop_survivors = min(bop_survivors, committed_bop_troops)  ← never exceeds committed
 ```
 
-**Logic in `processPhaseEnd`:**
-```javascript
-for (const card of allCards) {
-  if (card.result_applied) {
-    continue;  // Skip — already applied
-  }
-  // Apply result and set result_applied: true
-}
-```
-
-**Guarantees:**
-- Territory updates applied exactly once per battle
-- Idempotent phase-end processing
-- Safe to re-run if needed
+Scaling helper functions live in both:
+- `services/rules-engine/battle/battleClassification.js` (frontend, used by attack phase)
+- `functions/battlePhase` (backend, inlined — no local imports allowed in Deno)
 
 ---
 
-## Known Base44 Limitations
+## Carryover System
 
-### 1. No Local Imports in Backend Functions
+### Round N → Round N+1
 
-Base44 deploys each backend function independently. Cannot import from `services/` or other files.
+1. Round N battle phase: card created, players vote, tabletop played
+2. Admin clicks "Advance to Fortify": `processPhaseEnd` runs
+3. Cards with `status: delayed` are promoted → `status: active_carryover` with preferences/votes reset
+4. Campaign `locked_territory_ids` updated to include all carryover card territories
+5. Round N+1 battle phase: `getBattleCards` returns both new-round cards AND active carryover cards
 
-**Workaround:**
-- Inline pure helper functions directly in `battlePhase.js`
-- Keep matching versions in `services/rules-engine/battle/` for frontend use
-- Document that they must stay in sync
+### Blocking Rule
 
-### 2. Entity Field Size Limits
+Admin cannot advance past the battle phase if ANY `active_carryover` or `pending_approval` cards exist (unless `force: true` is passed).
 
-Cannot store large objects in entity fields.
+### getBattleCards Filter
 
-**Handled by:**
-- `result` object is small (winner ID, troop count, notes)
-- No battle replays or detailed combat logs stored
-
-### 3. No Server-Side Events
-
-Cannot trigger real-time notifications.
-
-**Workaround:**
-- Frontend polls `getBattleCards` every 20s
-- Manual refresh buttons
-
-### 4. Limited Query Filtering
-
-Cannot do complex queries (e.g., "all battles where I'm a participant").
-
-**Workaround:**
-- Fetch all battles for campaign/round
-- Filter client-side
+- **Unresolved carryover**: always returned (actionable)
+- **Resolved carryover**: returned **only** if `resolved_in_battle_round === currentRound` (show once, then history)
 
 ---
 
-## Future Enhancements (Not in V1)
+## Duplicate Result Prevention
 
-- [ ] Timeout deadlines per battle card
-- [ ] Email/push notifications for result submissions
-- [ ] Detailed combat logs (round-by-round)
-- [ ] Battle replay system
-- [ ] Custom scenarios / special rules
-- [ ] Commander abilities affecting battles
-- [ ] Terrain modifiers in auto-resolve
-- [ ] Partial approval (majority rules)
-- [ ] Battle card attachments (photos, rosters)
+`result_applied: true` is set immediately after territory updates are written. All resolution paths check this flag before applying updates, ensuring idempotent phase-end processing.
 
 ---
 
-## Files Modified in This Pass
+## Known Base44 Constraints
 
-| File | Purpose |
-|------|---------|
-| `entities/BattleCard.json` | Added `result_applied` field, updated `result` schema |
-| `functions/battlePhase.js` | Full lifecycle with bloodbath V1, multi-attacker, duplicate prevention |
-| `pages/BattleCardDetail.jsx` | Battle detail view (created) |
-| `pages/BattleResultEntry.jsx` | Result submission form (created) |
-| `BATTLE_NOTES.md` | This documentation |
+### No Local Imports in Backend Functions
 
----
+Base44 deploys each backend function independently. Cannot import from `services/` or `config/`.
 
-## Testing Checklist
+**Pattern:**
+- Frontend constants → `config/battleConstants.js`
+- Backend inlines the same logic/values directly in `functions/battlePhase`
+- `services/rules-engine/battle/battleClassification.js` still used by `attackPhase` (frontend-safe import)
+- `services/rules-engine/battle/battleResolution.js` — **DEPRECATED**, see header
 
-- [ ] Bloodbath: winner captures both, survivors in one territory only
-- [ ] Double siege: each attacker tracked separately, explicit winner
-- [ ] Result submission: validates participant, winner is participant
-- [ ] Approval flow: all non-submitter participants must approve
-- [ ] Auto-resolve: deterministic, weighted random
-- [ ] `processPhaseEnd`: skips `result_applied` cards
-- [ ] Elimination: players with 0 territories eliminated
-- [ ] Snapshot: phase-end state captured
+### No Server-Side Events
+
+Frontend polls `getBattleCards` (manual reload on action, no auto-poll).
 
 ---
 
-## Quick Reference
+## Files — Battle System
 
-### Bloodbath V1 Rule
-> Winner captures BOTH territories, survivors placed in `target_territory_id` ONLY. Winner's origin remains empty.
+| File | Status | Purpose |
+|------|--------|---------|
+| `functions/battlePhase` | ✅ Active (authoritative) | Full battle lifecycle backend |
+| `config/battleConstants.js` | ✅ Active | Shared enums: types, statuses, preferences |
+| `services/rules-engine/battle/battleClassification.js` | ✅ Active | Classification + scaling helpers (used by attackPhase) |
+| `services/rules-engine/battle/battleResolution.js` | ⚠️ Deprecated | Old frontend prototype — do not use |
+| `components/phases/battle/BattlePanel` | ✅ Active | Battle phase left-dock panel |
+| `components/phases/battle/BattleCardRow` | ✅ Active | Compact battle card list row |
+| `components/phases/battle/BattleCardDetail` → `pages/BattleCardDetail` | ✅ Active | Full detail view |
+| `components/phases/battle/BattlePreferencePanel` | ✅ Active | Preference voting UI |
+| `components/phases/battle/BattleTypeTag` | ✅ Active | Badge component |
+| `components/phases/battle/BattleStatusTag` | ✅ Active | Badge component |
+| `features/campaigns/battle/useBattleCards.js` | ✅ Active | Data hook |
+| `pages/BattleResultEntry` | ✅ Active | Result submission form |
+| `pages/AdminBattleResultEntry` | ✅ Active | Admin result management |
 
-### Multi-Attacker Rule
-> Each attacker is a separate side. Winner is explicit (any participant). No collapse to first attacker.
+---
 
-### Result Schema
-```json
-{
-  "winner_player_id": "...",
-  "surviving_tabletop_troops": 450,
-  "notes": "...",
-  "submitted_by": "...",
-  "submitted_at": "2026-05-26T...",
-  "result_source": "manual",
-  "applied_at": "2026-05-26T..."
-}
-```
+## Testing Checklist (Sprint 2 Scenarios)
 
-### Duplicate Prevention
-> `result_applied: true` prevents territory updates from being applied twice.
+- [ ] Siege: attacker wins, troops placed in target territory
+- [ ] Siege: defender wins, troops stay in target territory
+- [ ] Double siege: explicit winner among 3 participants
+- [ ] Double siege: defender forfeit → territory unclaimed, attackers return
+- [ ] Double siege: all attackers forfeit → defender holds
+- [ ] Double siege: one attacker forfeits → converts to siege, plays out
+- [ ] Bloodbath: winner captures loser's territory + split back to origin
+- [ ] Bloodbath: winner's origin captured by 3rd party → all survivors to loser territory
+- [ ] Bloodbath: homeless survivors → Recovery Siege created for next phase
+- [ ] Capture objectives: multiple attackers vs empty territory
+- [ ] Delay: unanimous delay → active_carryover next round
+- [ ] Delay: forfeit + unanimous delay among remaining → card delayed correctly
+- [ ] Auto-resolve: unanimous preference → deterministic result
+- [ ] Carryover: resolved_in_battle_round stamped correctly
+- [ ] Carryover: old resolved cards do NOT appear in current battle panel
+- [ ] Forfeit: 1v1 forfeit → winner takes territory with committed troops
+- [ ] processPhaseEnd: skips result_applied cards (idempotent)
+- [ ] Recovery Siege: auto-resolves or plays out in next battle phase
