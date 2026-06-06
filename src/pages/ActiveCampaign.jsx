@@ -120,6 +120,7 @@ function ActiveCampaignContent() {
 
   const phase = campaign?.current_phase;
   const isArchived = campaign?.status === 'archived';
+  const isAdmin = myPlayer?.is_admin;
 
   // Effective viewing player — resolves from context (self for normal players)
   const effectivePlayer = effectiveViewingPlayer ?? myPlayer;
@@ -170,7 +171,6 @@ function ActiveCampaignContent() {
   );
 
   const displayCampaign = campaign ?? { name: 'Loading…', current_round: 0, current_phase: 'faction_selection', phase_deadline: null };
-  const isAdmin = myPlayer?.is_admin;
 
   // Own staged attacks — only loaded during attack phase, only own player (user-scoped)
   const {
