@@ -77,13 +77,19 @@ export default function ResourceDebugPanel({ campaign }) {
   const [genResult, setGenResult] = useState(null);
 
   const loadDebug = async () => {
+    if (!campaign?.id) return;
     setLoading(true);
-    const res = await base44.functions.invoke('resourcePhase', {
-      action: 'getDebugState',
-      campaign_id: campaign.id,
-    });
-    setDebug(res.data);
-    setLoading(false);
+    try {
+      const res = await base44.functions.invoke('resourcePhase', {
+        action: 'getDebugState',
+        campaign_id: campaign.id,
+      });
+      setDebug(res.data);
+    } catch (e) {
+      console.warn('[ResourceDebugPanel] load error:', e?.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleInit = async () => {

@@ -130,5 +130,5 @@ export default function RightDockRouter({
         </div>
       </div>
     );
-  }, [activeTab, campaign, players, mapDef]);
+  }, [activeTab, campaign, players, mapDef, myPlayer, isAdmin]);
 }

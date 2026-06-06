@@ -97,15 +97,23 @@ export default function ResourcePhasePanel({ campaign, myPlayer, mapDef, isAdmin
   const [collectResult, setCollectResult] = useState(null);
   const [buildingHub, setBuildingHub] = useState(null);
 
+  const [error, setError] = useState(null);
+
   const load = useCallback(async () => {
-    if (!campaign?.id) return;
+    if (!campaign?.id || !myPlayer) return;
     setLoading(true);
-    const res = await base44.functions.invoke('resourcePhase', {
-      action: 'getResourceState',
-      campaign_id: campaign.id,
-    });
-    setState(res.data);
-    setLoading(false);
+    setError(null);
+    try {
+      const res = await base44.functions.invoke('resourcePhase', {
+        action: 'getResourceState',
+        campaign_id: campaign.id,
+      });
+      setState(res.data);
+    } catch (e) {
+      setError(e?.response?.data?.error ?? 'Failed to load resource state');
+    } finally {
+      setLoading(false);
+    }
   }, [campaign?.id]);
 
   useEffect(() => { load(); }, [load]);
@@ -163,6 +171,10 @@ export default function ResourcePhasePanel({ campaign, myPlayer, mapDef, isAdmin
         <div className="flex items-center gap-2 text-muted-foreground text-xs py-4">
           <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading resources…
         </div>
+      )}
+
+      {error && (
+        <p className="text-xs text-destructive py-2">{error}</p>
       )}
 
       {state && (
