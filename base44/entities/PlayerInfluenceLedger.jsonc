@@ -1,0 +1,43 @@
+{
+  "name": "PlayerInfluenceLedger",
+  "type": "object",
+  "description": "Tracks a player's diplomatic influence balance \u2014 globally and per region. Also stores active objective card state. One record per player per campaign. Sprint 3A: schema only \u2014 influence actions and card drawing not yet implemented.",
+  "properties": {
+    "campaign_id": {
+      "type": "string",
+      "description": "FK \u2192 Campaign.id"
+    },
+    "player_id": {
+      "type": "string",
+      "description": "FK \u2192 CampaignPlayer.id"
+    },
+    "global_influence": {
+      "type": "number",
+      "default": 0,
+      "description": "Total influence accumulated across all regions and objective completions."
+    },
+    "regional_influence_json": {
+      "type": "object",
+      "description": "Map of region_id \u2192 influence score for region-scoped influence tracking. e.g. { north_coast: 12, heartland: 5 }",
+      "default": {}
+    },
+    "objective_cards_json": {
+      "type": "object",
+      "description": "Active objective card state. e.g. { held: [card_id, ...], completed: [{ card_id, completed_round }], ... }",
+      "default": {}
+    },
+    "updated_at_round": {
+      "type": "number",
+      "default": 0,
+      "description": "Round number when this ledger was last updated."
+    },
+    "updated_at_phase": {
+      "type": "string",
+      "description": "Phase name when this ledger was last updated."
+    }
+  },
+  "required": [
+    "campaign_id",
+    "player_id"
+  ]
+}

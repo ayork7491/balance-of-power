@@ -79,20 +79,65 @@ export const TERRAIN_TYPES = [
 
 export type TerrainType = typeof TERRAIN_TYPES[number];
 
-// ─── V1 Resources ─────────────────────────────────────────────────────────────
-// Catan-inspired set. Do NOT add mana / fuel / data / gold — removed as non-canon.
+// ─── Sprint 3A Resources ──────────────────────────────────────────────────────
+// Three-pillar canonical resource set. Replaces V1 Catan-inspired resources.
 // Must stay in sync with ResourceType union in types/Resources.ts.
 
 export const RESOURCE_TYPES = [
-  'brick', 'lumber', 'wool', 'grain', 'ore',
+  'gold', 'iron', 'timber', 'stone', 'food',
 ] as const;
 
-// ─── V1 Structures ────────────────────────────────────────────────────────────
-// Minimal set for V1 launch.
-// factory / shrine / supply_depot removed as non-canon for V1.
-// Must stay in sync with StructureType union in types/Resources.ts.
+export const RESOURCE_LABELS: Record<string, string> = {
+  gold:   'Gold',
+  iron:   'Iron',
+  timber: 'Timber',
+  stone:  'Stone',
+  food:   'Food',
+};
 
-export const STRUCTURE_TYPES = [
+export const RESOURCE_DESCRIPTIONS: Record<string, string> = {
+  gold:   'Universal construction and building currency',
+  iron:   'Military specialty structures',
+  timber: 'Economic infrastructure and supply routes',
+  stone:  'Diplomatic structures, monuments, embassies',
+  food:   'Maintenance and sustainment (troops, population, stability)',
+};
+
+// ─── Power Types ──────────────────────────────────────────────────────────────
+
+export const POWER_TYPE_CONFIG = {
+  military:   { label: 'Military',   color: 'text-destructive',    bg: 'bg-destructive/10',    border: 'border-destructive/40',    icon: '⚔️'  },
+  economic:   { label: 'Economic',   color: 'text-status-pending', bg: 'bg-status-pending/10', border: 'border-status-pending/40', icon: '💰'  },
+  diplomatic: { label: 'Diplomatic', color: 'text-status-info',    bg: 'bg-status-info/10',    border: 'border-status-info/40',    icon: '🕊️'  },
+} as const;
+
+// ─── Win Conditions ───────────────────────────────────────────────────────────
+
+export const WIN_CONDITION_CONFIG = {
+  rule_the_world: { label: 'Rule the World', description: 'Military domination — hold the most territories and regions', pillar: 'military'   as const },
+  own_the_world:  { label: 'Own the World',  description: 'Economic supremacy — control resources and trade networks',   pillar: 'economic'   as const },
+  lead_the_world: { label: 'Lead the World', description: 'Diplomatic leadership — accumulate influence and objectives', pillar: 'diplomatic' as const },
+} as const;
+
+// ─── Building Types (Three-Pillar) ────────────────────────────────────────────
+// Full definitions in config/buildingDefinitions.ts.
+// Must stay in sync with BuildingType union in types/Resources.ts.
+
+export const BUILDING_TYPES = [
+  // Military
+  'barracks', 'war_council', 'logistics_corps',
+  // Diplomatic
+  'embassy', 'council_chamber', 'foreign_office',
+  // Economic
+  'marketplace', 'builders_guild', 'trade_network',
+  'resource_hub', 'supply_route', 'warehouse',
+] as const;
+
+// ─── Legacy V1 Structures (kept for backward compat) ──────────────────────────
+// Existing ConstructionProject records still reference these types.
+// Do not remove until V1 construction is fully migrated.
+
+export const LEGACY_STRUCTURE_TYPES = [
   'castle', 'barracks', 'stables',
 ] as const;
 

@@ -1,0 +1,62 @@
+{
+  "name": "VictoryTracker",
+  "type": "object",
+  "description": "Tracks each player's progress toward all active win conditions. One record per player per campaign. Updated at phase boundaries. Win conditions are configured at campaign creation and stored in Campaign.settings.active_win_conditions.",
+  "properties": {
+    "campaign_id": {
+      "type": "string",
+      "description": "FK \u2192 Campaign.id"
+    },
+    "player_id": {
+      "type": "string",
+      "description": "FK \u2192 CampaignPlayer.id"
+    },
+    "occupancy_score": {
+      "type": "number",
+      "default": 0,
+      "description": "Military/territorial score. Based on territories held, region control via military power, and troop strength."
+    },
+    "wealth_score": {
+      "type": "number",
+      "default": 0,
+      "description": "Economic score. Based on resource production, trade network reach, and economic region control."
+    },
+    "influence_score": {
+      "type": "number",
+      "default": 0,
+      "description": "Diplomatic score. Based on global_influence, objective cards completed, and diplomatic region control."
+    },
+    "active_win_conditions_json": {
+      "type": "object",
+      "description": "Per-condition progress tracking. e.g. { rule_the_world: { score: 45, threshold: 100, met: false }, own_the_world: {...}, lead_the_world: {...} }",
+      "default": {}
+    },
+    "has_won": {
+      "type": "boolean",
+      "default": false,
+      "description": "True when any active win condition threshold has been met."
+    },
+    "winning_condition": {
+      "type": "string",
+      "enum": [
+        "rule_the_world",
+        "own_the_world",
+        "lead_the_world"
+      ],
+      "description": "Which win condition was satisfied first. Null until has_won = true."
+    },
+    "updated_at_round": {
+      "type": "number",
+      "default": 0,
+      "description": "Round number when this tracker was last updated."
+    },
+    "updated_at_phase": {
+      "type": "string",
+      "description": "Phase name when this tracker was last updated."
+    }
+  },
+  "required": [
+    "campaign_id",
+    "player_id"
+  ]
+}

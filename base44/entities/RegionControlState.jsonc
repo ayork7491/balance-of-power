@@ -1,0 +1,70 @@
+{
+  "name": "RegionControlState",
+  "type": "object",
+  "description": "Tracks which player controls each region and what bonus they receive. One record per region per campaign. The controlling player is the one with the highest total_power across all three pillar types. The bonus type is derived from the controller's strongest power type in that region.",
+  "properties": {
+    "campaign_id": {
+      "type": "string",
+      "description": "FK \u2192 Campaign.id"
+    },
+    "region_id": {
+      "type": "string",
+      "description": "Canonical region identifier matching MapDefinition.regions[].id"
+    },
+    "controlling_player_id": {
+      "type": "string",
+      "description": "FK \u2192 CampaignPlayer.id \u2014 the player with the highest total regional power. Null if no player has presence."
+    },
+    "controlling_power_type": {
+      "type": "string",
+      "enum": [
+        "military",
+        "economic",
+        "diplomatic"
+      ],
+      "description": "The strongest power type of the controlling player \u2014 determines which bonus they receive."
+    },
+    "total_power": {
+      "type": "number",
+      "default": 0,
+      "description": "The controlling player's total power score in this region."
+    },
+    "occupancy_power": {
+      "type": "number",
+      "default": 0,
+      "description": "The controlling player's military power component."
+    },
+    "wealth_power": {
+      "type": "number",
+      "default": 0,
+      "description": "The controlling player's economic power component."
+    },
+    "influence_power": {
+      "type": "number",
+      "default": 0,
+      "description": "The controlling player's diplomatic power component."
+    },
+    "active_bonus_type": {
+      "type": "string",
+      "enum": [
+        "military",
+        "economic",
+        "diplomatic"
+      ],
+      "description": "Same as controlling_power_type \u2014 explicit field for clarity in queries."
+    },
+    "calculated_at_round": {
+      "type": "number",
+      "default": 0,
+      "description": "Round number when this record was last recalculated."
+    },
+    "calculated_at_phase": {
+      "type": "string",
+      "description": "Phase name when this record was last recalculated."
+    }
+  },
+  "required": [
+    "campaign_id",
+    "region_id"
+  ]
+}

@@ -159,7 +159,23 @@
             "domination",
             "score"
           ],
-          "default": "domination"
+          "default": "domination",
+          "description": "Legacy single-condition field. Use active_win_conditions for three-pillar multi-condition play."
+        },
+        "active_win_conditions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "rule_the_world",
+              "own_the_world",
+              "lead_the_world"
+            ]
+          },
+          "default": [
+            "rule_the_world"
+          ],
+          "description": "Which win conditions are active for this campaign. Multiple can be enabled simultaneously. rule_the_world=military, own_the_world=economic, lead_the_world=diplomatic."
         }
       },
       "default": {}

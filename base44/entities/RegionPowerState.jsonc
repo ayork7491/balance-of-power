@@ -1,0 +1,62 @@
+{
+  "name": "RegionPowerState",
+  "type": "object",
+  "description": "Tracks each player's military, economic, and diplomatic power within a specific region. One record per player per region per campaign. Recalculated at phase boundaries.",
+  "properties": {
+    "campaign_id": {
+      "type": "string",
+      "description": "FK \u2192 Campaign.id"
+    },
+    "region_id": {
+      "type": "string",
+      "description": "Canonical region identifier matching MapDefinition.regions[].id"
+    },
+    "player_id": {
+      "type": "string",
+      "description": "FK \u2192 CampaignPlayer.id"
+    },
+    "occupancy_power": {
+      "type": "number",
+      "default": 0,
+      "description": "Military power score in this region (based on territories held, troops, military buildings)."
+    },
+    "wealth_power": {
+      "type": "number",
+      "default": 0,
+      "description": "Economic power score in this region (based on resource production, trade networks, economic buildings)."
+    },
+    "influence_power": {
+      "type": "number",
+      "default": 0,
+      "description": "Diplomatic power score in this region (based on influence actions, embassies, objective cards)."
+    },
+    "total_power": {
+      "type": "number",
+      "default": 0,
+      "description": "Sum of occupancy_power + wealth_power + influence_power. Used to determine region control."
+    },
+    "strongest_power_type": {
+      "type": "string",
+      "enum": [
+        "military",
+        "economic",
+        "diplomatic"
+      ],
+      "description": "The power type with the highest score for this player in this region. Determines bonus type if they control the region."
+    },
+    "calculated_at_round": {
+      "type": "number",
+      "default": 0,
+      "description": "Round number when this record was last recalculated."
+    },
+    "calculated_at_phase": {
+      "type": "string",
+      "description": "Phase name when this record was last recalculated (e.g. 'deploy', 'battle')."
+    }
+  },
+  "required": [
+    "campaign_id",
+    "region_id",
+    "player_id"
+  ]
+}

@@ -103,15 +103,40 @@ export default function StepSettings({ form, setField }) {
         />
       </Setting>
 
-      <Setting label="Victory Condition">
-        <SelectInput
-          value={s.victory_condition}
-          onChange={v => set('victory_condition', v)}
-          options={[
-            { value: 'domination', label: 'Domination' },
-            { value: 'score', label: 'Score' },
-          ]}
-        />
+      <Setting label="Win Conditions" hint="Select which victory paths are active. Multiple can be enabled.">
+        <div className="flex flex-col gap-1.5">
+          {[
+            { value: 'rule_the_world', label: '⚔️ Rule the World', hint: 'Military' },
+            { value: 'own_the_world',  label: '💰 Own the World',  hint: 'Economic' },
+            { value: 'lead_the_world', label: '🕊️ Lead the World', hint: 'Diplomatic' },
+          ].map(({ value: v, label, hint }) => {
+            const active = (s.active_win_conditions ?? ['rule_the_world']).includes(v);
+            return (
+              <button
+                key={v}
+                type="button"
+                onClick={() => {
+                  const current = s.active_win_conditions ?? ['rule_the_world'];
+                  const next = active
+                    ? current.filter(c => c !== v)
+                    : [...current, v];
+                  if (next.length > 0) set('active_win_conditions', next);
+                }}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded border text-xs transition-colors ${
+                  active
+                    ? 'border-primary/60 bg-primary/10 text-primary'
+                    : 'border-border bg-muted/20 text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center text-[8px] ${active ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground'}`}>
+                  {active ? '✓' : ''}
+                </span>
+                {label}
+                <span className="text-muted-foreground">({hint})</span>
+              </button>
+            );
+          })}
+        </div>
       </Setting>
 
       <Setting label="Allow Duplicate Factions" hint="Can multiple players pick the same faction?">

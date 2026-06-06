@@ -1,0 +1,53 @@
+{
+  "name": "PlayerResourceLedger",
+  "type": "object",
+  "description": "Persistent cumulative resource balance per player per campaign. One record per player. Updated when resources are generated (deploy phase) or spent (construction, influence actions, supply routes). Sprint 3A: schema only \u2014 generation not yet implemented.",
+  "properties": {
+    "campaign_id": {
+      "type": "string",
+      "description": "FK \u2192 Campaign.id"
+    },
+    "player_id": {
+      "type": "string",
+      "description": "FK \u2192 CampaignPlayer.id"
+    },
+    "gold": {
+      "type": "number",
+      "default": 0,
+      "description": "Universal construction/building currency."
+    },
+    "iron": {
+      "type": "number",
+      "default": 0,
+      "description": "Military specialty structures."
+    },
+    "timber": {
+      "type": "number",
+      "default": 0,
+      "description": "Economic infrastructure and supply routes."
+    },
+    "stone": {
+      "type": "number",
+      "default": 0,
+      "description": "Diplomatic structures, monuments, embassies."
+    },
+    "food": {
+      "type": "number",
+      "default": 0,
+      "description": "Maintenance/sustainment resource. Future: supports troops, population, influence and gold stability."
+    },
+    "updated_at_round": {
+      "type": "number",
+      "default": 0,
+      "description": "Round number when this ledger was last updated."
+    },
+    "updated_at_phase": {
+      "type": "string",
+      "description": "Phase name when this ledger was last updated."
+    }
+  },
+  "required": [
+    "campaign_id",
+    "player_id"
+  ]
+}

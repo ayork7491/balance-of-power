@@ -1,0 +1,83 @@
+{
+  "name": "TerritoryBuilding",
+  "type": "object",
+  "description": "Tracks buildings constructed in territories under the three-pillar system. One record per building per territory. Replaces the legacy ConstructionProject model for new Sprint 3B+ buildings. Sprint 3A: schema only \u2014 construction gameplay not yet implemented.",
+  "properties": {
+    "campaign_id": {
+      "type": "string",
+      "description": "FK \u2192 Campaign.id"
+    },
+    "territory_id": {
+      "type": "string",
+      "description": "Territory where the building is located."
+    },
+    "player_id": {
+      "type": "string",
+      "description": "FK \u2192 CampaignPlayer.id \u2014 player who built this."
+    },
+    "building_type": {
+      "type": "string",
+      "enum": [
+        "barracks",
+        "war_council",
+        "logistics_corps",
+        "embassy",
+        "council_chamber",
+        "foreign_office",
+        "marketplace",
+        "builders_guild",
+        "trade_network",
+        "resource_hub",
+        "supply_route",
+        "warehouse"
+      ],
+      "description": "Building type from the three-pillar building definition framework."
+    },
+    "pillar_type": {
+      "type": "string",
+      "enum": [
+        "military",
+        "economic",
+        "diplomatic"
+      ],
+      "description": "Which pillar this building belongs to."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "planned",
+        "under_construction",
+        "active",
+        "damaged",
+        "destroyed"
+      ],
+      "default": "planned",
+      "description": "Current building lifecycle status."
+    },
+    "started_round": {
+      "type": "number",
+      "description": "Round construction was initiated."
+    },
+    "completed_round": {
+      "type": "number",
+      "description": "Round construction was completed and building became active."
+    },
+    "construction_progress": {
+      "type": "number",
+      "default": 0,
+      "description": "Rounds of construction completed. Building activates when this reaches rounds_required (from BuildingDefinition)."
+    },
+    "metadata_json": {
+      "type": "object",
+      "description": "Building-specific runtime state. e.g. supply route connections, resource hub config, warehouse contents.",
+      "default": {}
+    }
+  },
+  "required": [
+    "campaign_id",
+    "territory_id",
+    "player_id",
+    "building_type",
+    "pillar_type"
+  ]
+}

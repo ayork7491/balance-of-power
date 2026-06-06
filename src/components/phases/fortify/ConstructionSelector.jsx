@@ -5,6 +5,11 @@ import { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Castle, Hammer, X } from 'lucide-react';
 
+// ⚠ SPRINT 3B: These legacy V1 structures (castle/barracks/stables) with old
+// resource costs (brick/lumber/wool/grain/ore) are retained for backward
+// compatibility with existing ConstructionProject records. Replace with
+// TerritoryBuilding + new BuildingDefinitions when Sprint 3B construction
+// gameplay is implemented.
 const STRUCTURE_CONFIG = {
   castle: {
     cost: { brick: 2, lumber: 1, ore: 1 },

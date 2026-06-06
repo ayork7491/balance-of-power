@@ -1,0 +1,64 @@
+{
+  "name": "SupplyRoute",
+  "type": "object",
+  "description": "Represents a supply route connecting a Resource Hub territory to a source territory within range. Supply routes extract resources from connected territories. Sprint 3A: schema only \u2014 extraction not yet implemented.",
+  "properties": {
+    "campaign_id": {
+      "type": "string",
+      "description": "FK \u2192 Campaign.id"
+    },
+    "owner_player_id": {
+      "type": "string",
+      "description": "FK \u2192 CampaignPlayer.id \u2014 player who owns this route."
+    },
+    "hub_territory_id": {
+      "type": "string",
+      "description": "Territory with a Resource Hub building that anchors this route."
+    },
+    "source_territory_id": {
+      "type": "string",
+      "description": "Territory from which resources are extracted. Must be within range_distance of hub."
+    },
+    "route_status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "disrupted",
+        "inactive"
+      ],
+      "default": "active",
+      "description": "active = extracting; disrupted = blocked by enemy action or territory loss; inactive = manually paused."
+    },
+    "range_distance": {
+      "type": "number",
+      "default": 1,
+      "description": "Number of territory hops from hub to source. Max 3 per Resource Hub rules."
+    },
+    "resource_type": {
+      "type": "string",
+      "enum": [
+        "gold",
+        "iron",
+        "timber",
+        "stone",
+        "food"
+      ],
+      "description": "Which resource this route extracts from the source territory."
+    },
+    "created_round": {
+      "type": "number",
+      "description": "Round this route was established."
+    },
+    "metadata_json": {
+      "type": "object",
+      "description": "Route-specific runtime data (extraction rates, disruption history, etc.).",
+      "default": {}
+    }
+  },
+  "required": [
+    "campaign_id",
+    "owner_player_id",
+    "hub_territory_id",
+    "source_territory_id"
+  ]
+}
