@@ -6,9 +6,11 @@
 import { useState } from 'react';
 import { base44 } from '@/api/base44Client';
 import { Loader2, Bug, RefreshCw, Zap, ChevronDown, ChevronRight } from 'lucide-react';
+import { RESOURCE_KEYS, RESOURCE_CONFIG } from '@/config/resourceConfig';
 
-const RESOURCE_ICONS = { gold: '🥇', iron: '⚙️', timber: '🪵', stone: '🪨', food: '🌾' };
-const VALID_RESOURCES = ['gold', 'iron', 'timber', 'stone', 'food'];
+// Aliases for existing usage in this file
+const RESOURCE_ICONS = Object.fromEntries(RESOURCE_KEYS.map(r => [r, RESOURCE_CONFIG[r].icon]));
+const VALID_RESOURCES = RESOURCE_KEYS;
 
 function StorageSummary({ storage }) {
   if (!storage) return <span className="text-muted-foreground/50 text-[10px]">empty</span>;

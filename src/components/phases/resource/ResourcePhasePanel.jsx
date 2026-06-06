@@ -1,24 +1,18 @@
 /**
  * ResourcePhasePanel — Sprint 3B resource generation UI.
  *
- * Shows during the deploy phase (alongside troop deployment).
- * Players can see their territory resource types, activate generation,
- * and view stored resources.
- *
- * Does NOT replace or overlap with troop deployment UI.
- * This is a separate sub-panel — show it in the right dock or as a tab.
+ * Correct model:
+ *   - Player has a limited number of activations per round (based on territory count + hubs).
+ *   - Player selects up to that limit via checkboxes.
+ *   - Clicking "Lock Resource Activations" generates +1 of each territory's resource type
+ *     INTO that territory's storage. Resources stay in territories.
+ *   - The ledger summary is aggregate/reference only — it shows totals across territories.
+ *   - NO "Collect All" behavior.
  */
 import { useState, useEffect, useCallback } from 'react';
 import { base44 } from '@/api/base44Client';
-import { Loader2, RefreshCw, Zap, Package, ZapOff } from 'lucide-react';
-
-const RESOURCE_CONFIG = {
-  gold:   { label: 'Gold',   icon: '🥇', color: 'text-yellow-400',  bg: 'bg-yellow-900/20',  border: 'border-yellow-600/30' },
-  iron:   { label: 'Iron',   icon: '⚙️', color: 'text-slate-400',   bg: 'bg-slate-800/30',   border: 'border-slate-600/30'  },
-  timber: { label: 'Timber', icon: '🪵', color: 'text-amber-600',   bg: 'bg-amber-900/20',   border: 'border-amber-700/30'  },
-  stone:  { label: 'Stone',  icon: '🪨', color: 'text-stone-400',   bg: 'bg-stone-800/20',   border: 'border-stone-600/30'  },
-  food:   { label: 'Food',   icon: '🌾', color: 'text-green-400',   bg: 'bg-green-900/20',   border: 'border-green-600/30'  },
-};
+import { Loader2, RefreshCw, Lock, Package } from 'lucide-react';
+import { RESOURCE_KEYS, RESOURCE_CONFIG, calcActivationLimit, sumStorage } from '@/config/resourceConfig';
 
 function ResourceBadge({ type, amount }) {
   const cfg = RESOURCE_CONFIG[type] ?? { label: type, icon: '?', color: 'text-foreground', bg: 'bg-muted/20', border: 'border-border' };
@@ -30,74 +24,23 @@ function ResourceBadge({ type, amount }) {
   );
 }
 
-function ResourceSummaryRow({ label, totals }) {
-  const entries = Object.entries(totals).filter(([, v]) => v > 0);
-  if (!entries.length) return (
-    <div className="flex items-center justify-between text-xs py-1">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="text-muted-foreground/50 text-[10px]">none</span>
-    </div>
-  );
+function StorageBadges({ storage }) {
+  const entries = RESOURCE_KEYS.filter(r => (storage?.[r] ?? 0) > 0);
+  if (!entries.length) return <span className="text-[10px] text-muted-foreground/50">empty</span>;
   return (
-    <div className="flex items-start justify-between gap-2 text-xs py-1">
-      <span className="text-muted-foreground shrink-0">{label}</span>
-      <div className="flex flex-wrap gap-1 justify-end">
-        {entries.map(([type, amount]) => <ResourceBadge key={type} type={type} amount={amount} />)}
-      </div>
+    <div className="flex gap-1 flex-wrap">
+      {entries.map(r => <ResourceBadge key={r} type={r} amount={storage[r]} />)}
     </div>
   );
 }
 
-function TerritoryResourceRow({ territory, mapDef, onActivate, activating }) {
-  const name = mapDef?.territories?.find(t => t.territory_id === territory.territory_id)?.name ?? territory.territory_id;
-  const cfg = RESOURCE_CONFIG[territory.resource_type] ?? { label: territory.resource_type, icon: '?', color: 'text-foreground', bg: 'bg-muted/20', border: 'border-border' };
-  const storageEntries = Object.entries(territory.resource_storage ?? {}).filter(([, v]) => v > 0);
-  const isActivating = activating === territory.territory_id;
-
-  return (
-    <div className={`rounded border ${cfg.border} ${cfg.bg} px-2.5 py-2 space-y-1.5`}>
-      <div className="flex items-center justify-between gap-2">
-        <div>
-          <p className="text-xs font-medium text-foreground">{name}</p>
-          <p className={`text-[10px] ${cfg.color}`}>{cfg.icon} {cfg.label}</p>
-        </div>
-        <div className="flex items-center gap-1.5">
-          {storageEntries.length > 0 && (
-            <div className="flex gap-1">
-              {storageEntries.map(([type, amount]) => (
-                <ResourceBadge key={type} type={type} amount={amount} />
-              ))}
-            </div>
-          )}
-          <button
-            onClick={() => onActivate(territory.territory_id)}
-            disabled={isActivating}
-            title="Activate resource generation (+1 this round)"
-            className={`flex items-center gap-1 px-2 py-1 rounded border text-[10px] font-display tracking-wider uppercase transition-all disabled:opacity-40 ${
-              cfg.border + ' hover:brightness-110 ' + cfg.bg
-            } ${cfg.color}`}
-          >
-            {isActivating ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Zap className="w-2.5 h-2.5" />}
-            +1
-          </button>
-        </div>
-      </div>
-      {territory.has_resource_hub && (
-        <p className="text-[10px] text-status-info">🏭 Resource Hub</p>
-      )}
-    </div>
-  );
-}
-
-export default function ResourcePhasePanel({ campaign, myPlayer, mapDef, isAdmin }) {
+export default function ResourcePhasePanel({ campaign, myPlayer, mapDef }) {
   const [state, setState] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [activating, setActivating] = useState(null);
-  const [collecting, setCollecting] = useState(false);
-  const [collectResult, setCollectResult] = useState(null);
-  const [buildingHub, setBuildingHub] = useState(null);
-
   const [error, setError] = useState(null);
+  const [selected, setSelected] = useState(new Set());
+  const [locking, setLocking] = useState(false);
+  const [lockResult, setLockResult] = useState(null);
 
   const load = useCallback(async () => {
     if (!campaign?.id || !myPlayer) return;
@@ -109,50 +52,62 @@ export default function ResourcePhasePanel({ campaign, myPlayer, mapDef, isAdmin
         campaign_id: campaign.id,
       });
       setState(res.data);
+      // Reset selection on fresh load
+      setSelected(new Set());
+      setLockResult(null);
     } catch (e) {
       setError(e?.response?.data?.error ?? 'Failed to load resource state');
     } finally {
       setLoading(false);
     }
-  }, [campaign?.id]);
+  }, [campaign?.id, myPlayer]);
 
   useEffect(() => { load(); }, [load]);
 
-  const handleActivate = async (territoryId) => {
-    setActivating(territoryId);
-    await base44.functions.invoke('resourcePhase', {
-      action: 'activateTerritory',
-      campaign_id: campaign.id,
-      territory_id: territoryId,
+  const territories = state?.territories ?? [];
+  const hubCount = state?.hub_count ?? territories.filter(t => t.has_resource_hub).length;
+  // Prefer server-computed limit (avoids client/server drift); fall back to local calc
+  const activationLimit = state?.activation_limit ?? calcActivationLimit(territories.length, hubCount);
+
+  const toggleTerritory = (tid) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(tid)) {
+        next.delete(tid);
+      } else {
+        if (next.size >= activationLimit) return prev; // at limit
+        next.add(tid);
+      }
+      return next;
     });
-    setActivating(null);
-    await load();
   };
 
-  const handleCollect = async () => {
-    setCollecting(true);
-    setCollectResult(null);
-    const res = await base44.functions.invoke('resourcePhase', {
-      action: 'collectResources',
-      campaign_id: campaign.id,
-    });
-    setCollectResult(res.data);
-    setCollecting(false);
-    await load();
+  const handleLock = async () => {
+    if (selected.size === 0) return;
+    setLocking(true);
+    setLockResult(null);
+    try {
+      const res = await base44.functions.invoke('resourcePhase', {
+        action: 'lockActivations',
+        campaign_id: campaign.id,
+        territory_ids: [...selected],
+      });
+      setLockResult(res.data);
+      await load();
+    } catch (e) {
+      setError(e?.response?.data?.error ?? 'Failed to lock activations');
+    } finally {
+      setLocking(false);
+    }
   };
 
-  const handleBuildHub = async (territoryId) => {
-    setBuildingHub(territoryId);
-    await base44.functions.invoke('resourcePhase', {
-      action: 'buildResourceHub',
-      campaign_id: campaign.id,
-      territory_id: territoryId,
-    });
-    setBuildingHub(null);
-    await load();
-  };
-
-  const RESOURCES = ['gold', 'iron', 'timber', 'stone', 'food'];
+  // Aggregate storage totals across all owned territories (reference display)
+  const aggregateTotals = territories.reduce((acc, t) => {
+    for (const r of RESOURCE_KEYS) {
+      acc[r] = (acc[r] ?? 0) + (t.resource_storage?.[r] ?? 0);
+    }
+    return acc;
+  }, {});
 
   return (
     <div className="p-4 space-y-4 h-full overflow-y-auto dock-scroll">
@@ -173,19 +128,19 @@ export default function ResourcePhasePanel({ campaign, myPlayer, mapDef, isAdmin
         </div>
       )}
 
-      {error && (
-        <p className="text-xs text-destructive py-2">{error}</p>
-      )}
+      {error && <p className="text-xs text-destructive py-2">{error}</p>}
 
       {state && (
         <>
-          {/* Ledger summary */}
-          <div className="panel p-3 space-y-1">
-            <p className="text-xs font-display tracking-wider uppercase text-muted-foreground mb-2">Your Ledger</p>
+          {/* Aggregate ledger — reference only */}
+          <div className="panel p-3 space-y-2">
+            <p className="text-[10px] font-display tracking-wider uppercase text-muted-foreground">
+              Territory Storage (reference)
+            </p>
             <div className="grid grid-cols-5 gap-1">
-              {RESOURCES.map(r => {
+              {RESOURCE_KEYS.map(r => {
                 const cfg = RESOURCE_CONFIG[r];
-                const amount = state.ledger?.[r] ?? 0;
+                const amount = aggregateTotals[r] ?? 0;
                 return (
                   <div key={r} className={`flex flex-col items-center p-1.5 rounded border ${cfg.border} ${cfg.bg}`}>
                     <span className="text-base leading-none">{cfg.icon}</span>
@@ -195,64 +150,89 @@ export default function ResourcePhasePanel({ campaign, myPlayer, mapDef, isAdmin
                 );
               })}
             </div>
+            <p className="text-[10px] text-muted-foreground/60 text-center">
+              Resources are stored in territories. They stay there until spent.
+            </p>
           </div>
 
-          {/* Territory storage totals */}
-          {state.territory_storage_totals && (
-            <div className="panel p-3">
-              <ResourceSummaryRow label="In territories" totals={state.territory_storage_totals} />
-            </div>
-          )}
-
-          {/* Collect button */}
-          {state.territories?.length > 0 && (
-            <button
-              onClick={handleCollect}
-              disabled={collecting}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded border border-status-info/40 bg-status-info/10 text-status-info text-xs font-display tracking-widest uppercase hover:brightness-110 transition-all disabled:opacity-40"
-            >
-              {collecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Package className="w-3.5 h-3.5" />}
-              Collect All Resources
-            </button>
-          )}
-          {collectResult && collectResult.total_collected > 0 && (
-            <p className="text-[10px] text-status-locked text-center">
-              ✓ Collected {collectResult.total_collected} resource{collectResult.total_collected !== 1 ? 's' : ''} into your ledger.
-            </p>
-          )}
-          {collectResult && collectResult.total_collected === 0 && (
-            <p className="text-[10px] text-muted-foreground text-center">Nothing to collect yet.</p>
-          )}
-
-          {/* Territory list */}
-          {state.territories?.length > 0 ? (
+          {/* Activation selection */}
+          {territories.length > 0 ? (
             <div className="space-y-2">
-              <p className="text-xs font-display tracking-wider uppercase text-muted-foreground">
-                Your Territories ({state.territories.length})
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-display tracking-wider uppercase text-muted-foreground">
+                  Select Territories to Activate
+                </p>
+                <span className={`text-xs font-mono font-bold ${selected.size >= activationLimit ? 'text-primary' : 'text-muted-foreground'}`}>
+                  {selected.size} / {activationLimit}
+                </span>
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                You have <span className="text-foreground font-medium">{activationLimit}</span> activation{activationLimit !== 1 ? 's' : ''} this round.
+                {hubCount > 0 && <span className="text-status-info"> (+{hubCount} from Resource Hub{hubCount !== 1 ? 's' : ''})</span>}
               </p>
-              {state.territories.map(t => (
-                <div key={t.territory_id} className="space-y-1">
-                  <TerritoryResourceRow
-                    territory={t}
-                    mapDef={mapDef}
-                    onActivate={handleActivate}
-                    activating={activating}
-                  />
-                  {/* Resource Hub build button (if not already built) */}
-                  {!t.has_resource_hub && (
-                    <button
-                      onClick={() => handleBuildHub(t.territory_id)}
-                      disabled={buildingHub === t.territory_id}
-                      className="w-full flex items-center justify-center gap-1 px-2 py-1 rounded border border-border text-[10px] text-muted-foreground hover:text-foreground hover:border-status-pending/40 transition-colors disabled:opacity-40"
+
+              {lockResult && (
+                <p className="text-[10px] text-status-locked">
+                  ✓ Activated {lockResult.activated_count} territory{lockResult.activated_count !== 1 ? 'ies' : 'y'}. Resources generated into territory storage.
+                </p>
+              )}
+
+              <div className="space-y-1.5">
+                {territories.map(t => {
+                  const name = mapDef?.territories?.find(td => td.territory_id === t.territory_id)?.name ?? t.territory_id;
+                  const cfg = RESOURCE_CONFIG[t.resource_type] ?? { label: t.resource_type, icon: '?', color: 'text-foreground', bg: 'bg-muted/20', border: 'border-border' };
+                  const isSelected = selected.has(t.territory_id);
+                  const isDisabled = !isSelected && selected.size >= activationLimit;
+
+                  return (
+                    <label
+                      key={t.territory_id}
+                      className={`flex items-start gap-2.5 rounded border px-3 py-2 cursor-pointer transition-all ${
+                        isSelected
+                          ? `${cfg.border} ${cfg.bg}`
+                          : isDisabled
+                          ? 'border-border bg-muted/5 opacity-50 cursor-not-allowed'
+                          : 'border-border bg-muted/10 hover:border-muted-foreground/40'
+                      }`}
                     >
-                      {buildingHub === t.territory_id
-                        ? <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                        : <ZapOff className="w-2.5 h-2.5" />}
-                      Build Resource Hub
-                    </button>
-                  )}
-                </div>
-              ))}
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => !isDisabled && toggleTerritory(t.territory_id)}
+                        disabled={isDisabled && !isSelected}
+                        className="mt-0.5 accent-primary"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-medium text-foreground truncate">{name}</p>
+                          <span className={`text-[10px] shrink-0 ${cfg.color}`}>{cfg.icon} {cfg.label}</span>
+                        </div>
+                        {sumStorage(t.resource_storage) > 0 && (
+                          <div className="mt-1">
+                            <StorageBadges storage={t.resource_storage} />
+                          </div>
+                        )}
+                        {t.has_resource_hub && (
+                          <p className="text-[10px] text-status-info mt-0.5">🏭 Resource Hub — future supply routes will connect here</p>
+                        )}
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+
+              {/* Lock button */}
+              <button
+                onClick={handleLock}
+                disabled={selected.size === 0 || locking}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded border border-primary/40 bg-primary/10 text-primary text-xs font-display tracking-widest uppercase hover:brightness-110 transition-all disabled:opacity-40"
+              >
+                {locking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
+                Lock Resource Activations ({selected.size})
+              </button>
+              <p className="text-[10px] text-muted-foreground text-center">
+                Generates +1 resource into each selected territory's storage.
+              </p>
             </div>
           ) : (
             <p className="text-xs text-muted-foreground">You own no territories.</p>

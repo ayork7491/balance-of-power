@@ -8,6 +8,7 @@
  */
 import { X, Shield, Swords, MapPin, Check, Loader2, Lock } from 'lucide-react';
 import { PLAYER_COLORS } from '@/config/theme';
+import { getResourceConfig, getResourceIcon } from '@/config/resourceConfig';
 
 const TERRAIN_LABELS = {
   mountains: '⛰ Mountains',
@@ -19,15 +20,6 @@ const TERRAIN_LABELS = {
   urban:     '🏙 Urban',
   plains:    '🌾 Plains',
 };
-
-const RESOURCE_LABELS = {
-  brick: '🧱 Brick', lumber: '🪵 Lumber', wool: '🐑 Wool', grain: '🌾 Grain', ore: '⛏ Ore',
-};
-
-function topResource(dist) {
-  if (!dist) return null;
-  return Object.entries(dist).sort(([, a], [, b]) => b - a)[0]?.[0] ?? null;
-}
 
 export default function TerritoryDetailPanel({
   territory,            // TerritoryDefinition | null
@@ -54,7 +46,11 @@ export default function TerritoryDetailPanel({
   const ownerColor = owner
     ? PLAYER_COLORS.find(c => c.id === owner.color)
     : null;
-  const primaryResource = topResource(territory.resource_distribution);
+
+  // Resource type: prefer TerritoryState.resource_type (stamped at game start),
+  // fall back to territory definition metadata.
+  const resourceType = tState?.resource_type ?? territory?.resource_type ?? null;
+  const resourceCfg = resourceType ? getResourceConfig(resourceType) : null;
 
   const isDraftPhase = phase === 'territory_draft';
   const isClaimed    = !!tState?.owner_player_id;
@@ -131,10 +127,31 @@ export default function TerritoryDetailPanel({
           </div>
 
           {/* Primary resource */}
-          {primaryResource && (
+          {resourceCfg && (
             <div className="flex items-center justify-between text-xs">
-              <span className="text-muted-foreground">Primary Resource</span>
-              <span className="text-foreground">{RESOURCE_LABELS[primaryResource] ?? primaryResource}</span>
+              <span className="text-muted-foreground">Resource</span>
+              <span className={`${resourceCfg.color}`}>
+                {resourceCfg.icon} {resourceCfg.label}
+              </span>
+            </div>
+          )}
+
+          {/* Territory storage (if any resources are stored here) */}
+          {tState?.resource_storage && Object.values(tState.resource_storage).some(v => v > 0) && (
+            <div className="flex items-start justify-between text-xs gap-2">
+              <span className="text-muted-foreground shrink-0">Stored</span>
+              <div className="flex flex-wrap gap-1 justify-end">
+                {Object.entries(tState.resource_storage)
+                  .filter(([, v]) => v > 0)
+                  .map(([type, amount]) => {
+                    const cfg = getResourceConfig(type);
+                    return (
+                      <span key={type} className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border ${cfg.bg} ${cfg.border} ${cfg.color}`}>
+                        {cfg.icon} {amount}
+                      </span>
+                    );
+                  })}
+              </div>
             </div>
           )}
 

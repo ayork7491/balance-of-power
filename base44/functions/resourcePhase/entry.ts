@@ -189,6 +189,12 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Compute activation limit so frontend doesn't need to duplicate the formula
+    const hubCount = territories.filter(t => t.has_resource_hub).length;
+    const ownedCount = territories.length;
+    const activationLimit = ownedCount === 0 ? 0 :
+      Math.min(Math.max(1, Math.floor(ownedCount / 3)) + hubCount, ownedCount);
+
     return Response.json({
       territories,
       ledger: {
@@ -199,16 +205,21 @@ Deno.serve(async (req) => {
         food: ledger.food ?? 0,
       },
       territory_storage_totals: aggregated,
-      territories_count: territories.length,
+      territories_count: ownedCount,
+      activation_limit: activationLimit,
+      hub_count: hubCount,
     });
   }
 
-  // ── ACTION: activateTerritory ──────────────────────────────────────────────
-  if (action === 'activateTerritory') {
-    const { territory_id, acting_as_player_id } = body;
-    if (!territory_id) return Response.json({ error: 'territory_id required' }, { status: 400 });
+  // ── ACTION: lockActivations ───────────────────────────────────────────────
+  // Player selects up to their activation limit; this bulk-generates resources
+  // into each selected territory's storage. Resources remain in territories.
+  if (action === 'lockActivations') {
+    const { territory_ids, acting_as_player_id } = body;
+    if (!territory_ids || !Array.isArray(territory_ids) || territory_ids.length === 0) {
+      return Response.json({ error: 'territory_ids array required' }, { status: 400 });
+    }
 
-    // Resolve acting player
     let actingPlayer = myPlayer;
     if (acting_as_player_id) {
       const target = players.find(p => p.id === acting_as_player_id);
@@ -219,10 +230,66 @@ Deno.serve(async (req) => {
       actingPlayer = target;
     }
 
-    // Load territory state
-    const states = await base44.asServiceRole.entities.TerritoryState.filter({
-      campaign_id, territory_id,
+    // Load all territory states for this player to validate and compute limit
+    const allStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+    const myStates = allStates.filter(s => s.owner_player_id === actingPlayer.id);
+    const hubCount = myStates.filter(s => s.has_resource_hub).length;
+
+    // Activation limit: base = max(1, floor(owned / 3)), +1 per hub, capped at owned count
+    const ownedCount = myStates.length;
+    const activationLimit = ownedCount === 0 ? 0 :
+      Math.min(Math.max(1, Math.floor(ownedCount / 3)) + hubCount, ownedCount);
+
+    if (territory_ids.length > activationLimit) {
+      return Response.json({
+        error: `Exceeds activation limit of ${activationLimit}. You selected ${territory_ids.length}.`,
+      }, { status: 400 });
+    }
+
+    const results = [];
+    for (const territory_id of territory_ids) {
+      const ts = myStates.find(s => s.territory_id === territory_id);
+      if (!ts) continue; // silently skip territories not owned by this player
+      const resourceType = ts.resource_type ?? getResourceTypeForTerritory(mapId, territory_id);
+      const storageBefore = { ...emptyStorage(), ...(ts.resource_storage ?? {}) };
+      const storageAfter = addToStorage(storageBefore, resourceType, 1);
+
+      await base44.asServiceRole.entities.TerritoryState.update(ts.id, {
+        resource_storage: storageAfter,
+        resource_type: resourceType,
+      });
+
+      results.push({ territory_id, resource_type: resourceType, storage_after: storageAfter });
+    }
+
+    await log(base44, campaign_id, round, 'resource_activations_locked', actingPlayer.id, {
+      territory_ids, activated_count: results.length, activation_limit: activationLimit, results,
+    }, false);
+
+    return Response.json({
+      success: true,
+      activated_count: results.length,
+      activation_limit: activationLimit,
+      results,
     });
+  }
+
+  // ── ACTION: activateTerritory (legacy single-territory) ───────────────────
+  if (action === 'activateTerritory') {
+    const { territory_id, acting_as_player_id } = body;
+    if (!territory_id) return Response.json({ error: 'territory_id required' }, { status: 400 });
+
+    let actingPlayer = myPlayer;
+    if (acting_as_player_id) {
+      const target = players.find(p => p.id === acting_as_player_id);
+      if (!target) return Response.json({ error: 'Invalid acting_as_player_id' }, { status: 400 });
+      if (!isAdmin && target.id !== myPlayer.id) {
+        return Response.json({ error: 'Only admins can act as other players' }, { status: 403 });
+      }
+      actingPlayer = target;
+    }
+
+    const states = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id, territory_id });
     const ts = states[0];
     if (!ts) return Response.json({ error: 'Territory not found' }, { status: 404 });
     if (ts.owner_player_id !== actingPlayer.id) {
@@ -235,22 +302,14 @@ Deno.serve(async (req) => {
 
     await base44.asServiceRole.entities.TerritoryState.update(ts.id, {
       resource_storage: storageAfter,
-      resource_type: resourceType, // ensure stamped
+      resource_type: resourceType,
     });
 
     await log(base44, campaign_id, round, 'resource_generated', actingPlayer.id, {
       territory_id, resource_type: resourceType, amount: 1,
-      storage_before: storageBefore, storage_after: storageAfter,
     }, false);
 
-    return Response.json({
-      success: true,
-      territory_id,
-      resource_type: resourceType,
-      amount_generated: 1,
-      storage_before: storageBefore,
-      storage_after: storageAfter,
-    });
+    return Response.json({ success: true, territory_id, resource_type: resourceType, storage_after: storageAfter });
   }
 
   // ── ACTION: generateAll ────────────────────────────────────────────────────
