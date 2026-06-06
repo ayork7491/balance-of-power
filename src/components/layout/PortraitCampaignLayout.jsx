@@ -18,6 +18,7 @@ import PortraitBottomSheet from './PortraitBottomSheet';
 
 const TAB_TITLES = {
   phase:       'Phase Actions',
+  resources:   'Resources',
   battles:     'Battles',
   leaderboard: 'Standings',
   territories: 'Territories',

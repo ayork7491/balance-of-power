@@ -19,6 +19,10 @@ import InfoPanelPlaceholder from './InfoPanelPlaceholder';
 // Region legend (moved out of map viewport)
 import RegionLegend from '@/components/map/RegionLegend';
 
+// Resource panels (Sprint 3B)
+import ResourcePhasePanel from '@/components/phases/resource/ResourcePhasePanel';
+import ResourceDebugPanel from '@/components/phases/resource/ResourceDebugPanel';
+
 const SETUP_PHASES = new Set(['faction_selection', 'territory_draft', 'initial_deploy']);
 const GAMEPLAY_PHASES = new Set(['deploy', 'attack', 'battle', 'fortify']);
 
@@ -27,6 +31,8 @@ export default function RightDockRouter({
   campaign,
   players,
   mapDef,
+  myPlayer,
+  isAdmin,
 }) {
   return useMemo(() => {
     const phase = campaign?.current_phase;
@@ -36,7 +42,21 @@ export default function RightDockRouter({
       <div className="flex flex-col h-full">
         {/* Tab-based content - tabs ALWAYS control what's shown */}
         <div className="flex-1 min-h-0 overflow-y-auto">
-          {activeTab === 'leaderboard' ? (
+          {activeTab === 'resources' ? (
+            <div className="h-full overflow-y-auto">
+              <ResourcePhasePanel
+                campaign={campaign}
+                myPlayer={myPlayer}
+                mapDef={mapDef}
+                isAdmin={isAdmin}
+              />
+              {isAdmin && (
+                <div className="border-t border-border mt-2">
+                  <ResourceDebugPanel campaign={campaign} />
+                </div>
+              )}
+            </div>
+          ) : activeTab === 'leaderboard' ? (
             <>
               <LeaderboardPanel campaign={campaign} players={players} />
               {/* Region bonuses surfaced here for portrait access */}

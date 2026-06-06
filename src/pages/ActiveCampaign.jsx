@@ -164,6 +164,8 @@ function ActiveCampaignContent() {
       campaign={campaign}
       players={players}
       mapDef={mapDef}
+      myPlayer={effectivePlayer}
+      isAdmin={isAdmin}
     />
   );
 
