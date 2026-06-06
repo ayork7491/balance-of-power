@@ -29,7 +29,28 @@
         "type": "string"
       },
       "default": [],
-      "description": "StructureType keys built on this territory: 'castle', 'barracks', 'stables'."
+      "description": "Legacy V1 structure keys: 'castle', 'barracks', 'stables'."
+    },
+    "resource_type": {
+      "type": "string",
+      "enum": [
+        "gold",
+        "iron",
+        "timber",
+        "stone",
+        "food"
+      ],
+      "description": "The primary resource this territory produces. Set at campaign start from map metadata. Determines what is generated when the territory is activated."
+    },
+    "resource_storage": {
+      "type": "object",
+      "description": "Resources currently stored in this territory: { gold, iron, timber, stone, food }. Resources are generated here first. Players collect from territories they own.",
+      "default": {}
+    },
+    "has_resource_hub": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if a Resource Hub building is active in this territory. Enables supply route connections (Sprint 3C+)."
     }
   },
   "required": [
