@@ -145,6 +145,69 @@ function ActiveCampaignContent() {
   // Effective acting player — resolves from context (self for normal players)
   const actionPlayer = effectiveActingPlayer ?? myPlayer;
 
+  // Own staged attacks — only loaded during attack phase, only own player (user-scoped)
+  const {
+    attacks: myStagedAttacks,
+    handleStageAttack: stageAttack,
+    submitting: attackSubmitting,
+    error: attackError,
+    maxAttacks,
+    reload: reloadAttacks,
+  } = useAttackPhase({
+    campaign: phase === 'attack' ? campaign : null,
+    myPlayer,
+  });
+
+  // Logistics state — hubs, routes, warehouses for myPlayer
+  const { hubs: logisticsHubs, reload: reloadLogistics } = usePlayerLogistics({
+    campaignId: id,
+    playerId: myPlayer?.id,
+  });
+
+  // Influence state — all influence records for this campaign, indexed by territory_id
+  const { influenceByTerritory } = useInfluenceState({
+    campaignId: id,
+    enabled: !!id,
+  });
+
+  // Re-fetch campaign + territory state when a setup action completes
+  const handlePhaseChanged = useCallback(() => {
+    reloadCampaign();
+    reloadState();
+    loadTerritoryBuildings();
+    reloadLogistics();
+  }, [reloadCampaign, reloadState, loadTerritoryBuildings, reloadLogistics]);
+
+  // Attack reveals — loaded after attack phase ends (post-reveal)
+  const { reveals: attackReveals } = useAttackReveals({
+    campaignId: id,
+    round: campaign?.current_round ?? 1,
+    enabled: !!id && phase !== 'attack',
+  });
+
+  // Delayed battle cards — used to show carried-over battle arrows during battle phase
+  const { delayedCards: delayedBattleCards } = useBattleCards({
+    campaignId: id,
+    round: campaign?.current_round ?? 1,
+    enabled: !!id && phase === 'battle',
+  });
+
+  // Arrow layer (extracted logic)
+  const arrowAttacks = useAttackArrows({
+    phase,
+    myPlayer,
+    myStagedAttacks,
+    attackReveals,
+    delayedBattleCards,
+  });
+
+  // Index hubs by territory_id for O(1) lookup in TerritoryDetailPanel
+  const hubsByTerritoryId = useMemo(() => {
+    const m = {};
+    for (const h of logisticsHubs) m[h.territory_id] = h;
+    return m;
+  }, [logisticsHubs]);
+
   // ── Panel routing (extracted) ──────────────────────────────────────────────
 
   const leftDockContent = (
@@ -188,70 +251,6 @@ function ActiveCampaignContent() {
   );
 
   const displayCampaign = campaign ?? { name: 'Loading…', current_round: 0, current_phase: 'faction_selection', phase_deadline: null };
-
-  // Own staged attacks — only loaded during attack phase, only own player (user-scoped)
-  const {
-    attacks: myStagedAttacks,
-    handleStageAttack: stageAttack,
-    submitting: attackSubmitting,
-    error: attackError,
-    maxAttacks,
-    reload: reloadAttacks,
-  } = useAttackPhase({
-    campaign: phase === 'attack' ? campaign : null,
-    myPlayer,
-  });
-
-  // Logistics state — hubs, routes, warehouses for myPlayer
-  const { hubs: logisticsHubs, reload: reloadLogistics } = usePlayerLogistics({
-    campaignId: id,
-    playerId: myPlayer?.id,
-  });
-
-  // Influence state — all influence records for this campaign, indexed by territory_id
-  const { influenceByTerritory } = useInfluenceState({
-    campaignId: id,
-    enabled: !!id,
-  });
-
-  // Re-fetch campaign + territory state when a setup action completes
-  // Defined after all reload fns are in scope
-  const handlePhaseChanged = useCallback(() => {
-    reloadCampaign();
-    reloadState();
-    loadTerritoryBuildings();
-    reloadLogistics();
-  }, [reloadCampaign, reloadState, loadTerritoryBuildings, reloadLogistics]);
-
-  // Index hubs by territory_id for O(1) lookup in TerritoryDetailPanel
-  const hubsByTerritoryId = useMemo(() => {
-    const m = {};
-    for (const h of logisticsHubs) m[h.territory_id] = h;
-    return m;
-  }, [logisticsHubs]);
-
-  // Attack reveals — loaded after attack phase ends (post-reveal)
-  const { reveals: attackReveals } = useAttackReveals({
-    campaignId: id,
-    round: campaign?.current_round ?? 1,
-    enabled: !!id && phase !== 'attack',
-  });
-
-  // Delayed battle cards — used to show carried-over battle arrows during battle phase
-  const { delayedCards: delayedBattleCards } = useBattleCards({
-    campaignId: id,
-    round: campaign?.current_round ?? 1,
-    enabled: !!id && phase === 'battle',
-  });
-
-  // Arrow layer (extracted logic)
-  const arrowAttacks = useAttackArrows({
-    phase,
-    myPlayer,
-    myStagedAttacks,
-    attackReveals,
-    delayedBattleCards,
-  });
 
   // ── Map interaction callbacks ──────────────────────────────────────────────
 
