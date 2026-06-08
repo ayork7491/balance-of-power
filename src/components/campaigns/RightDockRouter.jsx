@@ -26,6 +26,9 @@ import ResourceDebugPanel from '@/components/phases/resource/ResourceDebugPanel'
 // Logistics panel (Sprint 4E)
 import LogisticsPanel from '@/components/logistics/LogisticsPanel';
 
+// Influence panel (Sprint 4G)
+import RegionalInfluencePanel from '@/components/influence/RegionalInfluencePanel';
+
 const SETUP_PHASES = new Set(['faction_selection', 'territory_draft', 'initial_deploy']);
 const GAMEPLAY_PHASES = new Set(['deploy', 'attack', 'battle', 'fortify']);
 
@@ -36,6 +39,8 @@ export default function RightDockRouter({
   mapDef,
   myPlayer,
   isAdmin,
+  influenceByRegion,
+  influencePlayerTotals,
 }) {
   return useMemo(() => {
     const phase = campaign?.current_phase;
@@ -58,6 +63,18 @@ export default function RightDockRouter({
                   <ResourceDebugPanel campaign={campaign} />
                 </div>
               )}
+            </div>
+          ) : activeTab === 'influence' ? (
+            <div className="p-3 h-full overflow-y-auto dock-scroll">
+              <p className="font-display text-xs tracking-widest uppercase text-status-info flex items-center gap-2 mb-3">
+                🕊 Regional Influence
+              </p>
+              <RegionalInfluencePanel
+                influenceByRegion={influenceByRegion ?? {}}
+                playerTotals={influencePlayerTotals ?? {}}
+                players={players}
+                loading={false}
+              />
             </div>
           ) : activeTab === 'logistics' ? (
             <LogisticsPanel campaign={campaign} myPlayer={myPlayer} mapDef={mapDef} />

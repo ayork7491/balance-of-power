@@ -66,6 +66,7 @@ export type BuildingType =
   | 'embassy'
   | 'council_chamber'
   | 'foreign_office'
+  | 'monument'
   // Economic
   | 'marketplace'
   | 'builders_guild'

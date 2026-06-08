@@ -164,8 +164,13 @@ function ActiveCampaignContent() {
     playerId: myPlayer?.id,
   });
 
-  // Influence state — all influence records for this campaign, indexed by territory_id
-  const { influenceByTerritory } = useInfluenceState({
+  // Influence state — all influence records for this campaign (Sprint 4G)
+  const {
+    influenceByTerritory,
+    influenceByRegion,
+    playerTotals: influencePlayerTotals,
+    spreadThreshold,
+  } = useInfluenceState({
     campaignId: id,
     enabled: !!id,
   });
@@ -247,6 +252,8 @@ function ActiveCampaignContent() {
       mapDef={mapDef}
       myPlayer={effectivePlayer}
       isAdmin={isAdmin}
+      influenceByRegion={influenceByRegion}
+      influencePlayerTotals={influencePlayerTotals}
     />
   );
 
@@ -451,6 +458,7 @@ function ActiveCampaignContent() {
                 hubData={hubsByTerritoryId[selectedTerritoryId] ?? null}
                 mapDef={mapDef}
                 influenceRecords={influenceByTerritory[selectedTerritoryId] ?? []}
+                spreadThreshold={spreadThreshold}
                 onClose={() => { setSelectedTerritoryId(null); setDraftClaimError(null); }}
                 isLocked={lockedIds?.has(selectedTerritoryId)}
                 phase={phase}

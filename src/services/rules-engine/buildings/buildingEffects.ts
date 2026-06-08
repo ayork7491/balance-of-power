@@ -119,6 +119,15 @@ export const BUILDING_EFFECT_DEFS: BuildingEffectDef[] = [
     stackable: true,
   },
 
+  // ── Monument — Sprint 4G ──────────────────────────────────────────────────
+  {
+    buildingType: 'monument',
+    effectType: 'monument_influence_generation',
+    scope: 'territory',
+    value: 1,
+    stackable: false,
+  },
+
   // ── Economic ──────────────────────────────────────────────────────────────
   {
     buildingType: 'marketplace',

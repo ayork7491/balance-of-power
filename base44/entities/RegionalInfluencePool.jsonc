@@ -1,0 +1,34 @@
+{
+  "name": "RegionalInfluencePool",
+  "type": "object",
+  "description": "Tracks spendable influence per player per region per campaign. Spendable influence is the diplomatic action currency \u2014 distinct from permanent influence stored on territories. One record per player per region per campaign. Sprint 4G.",
+  "properties": {
+    "campaign_id": {
+      "type": "string",
+      "description": "FK \u2192 Campaign.id"
+    },
+    "region_id": {
+      "type": "string",
+      "description": "Canonical region identifier matching SC territory region_id (e.g. 'northern_ruins', 'western_plains')."
+    },
+    "player_id": {
+      "type": "string",
+      "description": "FK \u2192 CampaignPlayer.id \u2014 the player who holds this spendable influence."
+    },
+    "spendable_influence": {
+      "type": "number",
+      "default": 0,
+      "description": "Current spendable influence this player holds in this region. Used as action currency for future diplomatic actions. Never goes below 0."
+    },
+    "last_updated_round": {
+      "type": "number",
+      "default": 0,
+      "description": "Round when this record was last modified."
+    }
+  },
+  "required": [
+    "campaign_id",
+    "region_id",
+    "player_id"
+  ]
+}

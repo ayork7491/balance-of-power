@@ -1,13 +1,13 @@
 /**
- * TerritoryInfluenceDisplay — Sprint 4F
+ * TerritoryInfluenceDisplay — Sprint 4G
  *
- * Shows influence present in a territory, grouped by player.
- * Highlights the highest-influence holder.
- * If no influence exists, shows "No influence present".
+ * Shows Permanent Influence per player in a territory.
+ * Displays threshold progress bar (spread triggers at threshold).
  *
  * Props:
- *   influenceRecords  — array of { player_id, influence_amount } for this territory
- *   players           — CampaignPlayer[] for name/color resolution
+ *   influenceRecords  — [{ player_id, influence_amount }] for this territory
+ *   players           — CampaignPlayer[]
+ *   spreadThreshold   — number (default 10)
  */
 import { PLAYER_COLORS } from '@/config/theme';
 
@@ -20,7 +20,7 @@ function getPlayerName(players, playerId) {
   return players?.find(p => p.id === playerId)?.display_name ?? 'Unknown';
 }
 
-export default function TerritoryInfluenceDisplay({ influenceRecords, players }) {
+export default function TerritoryInfluenceDisplay({ influenceRecords, players, spreadThreshold = 10 }) {
   const records = (influenceRecords ?? []).filter(r => (r.influence_amount ?? 0) > 0);
 
   if (records.length === 0) {
@@ -29,37 +29,58 @@ export default function TerritoryInfluenceDisplay({ influenceRecords, players })
     );
   }
 
-  // Sort descending by influence_amount to find leader
   const sorted = [...records].sort((a, b) => b.influence_amount - a.influence_amount);
   const leaderId = sorted[0].player_id;
+  const maxInfluence = sorted[0].influence_amount;
 
   return (
-    <div className="space-y-1">
+    <div className="space-y-1.5">
       {sorted.map(r => {
         const isLeader = r.player_id === leaderId;
         const color = getPlayerColor(players, r.player_id);
         const name = getPlayerName(players, r.player_id);
+        const pct = Math.min(100, Math.round((r.influence_amount / spreadThreshold) * 100));
+        const atThreshold = r.influence_amount >= spreadThreshold;
+
         return (
-          <div
-            key={r.player_id}
-            className={`flex items-center justify-between text-xs px-2 py-1 rounded border ${
-              isLeader
-                ? 'border-accent/40 bg-accent/10'
-                : 'border-border bg-muted/10'
-            }`}
-          >
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
-              <span className={isLeader ? 'text-accent font-medium' : 'text-muted-foreground'}>
-                {name}
-              </span>
-              {isLeader && (
-                <span className="text-[10px] text-accent/70 ml-0.5">★</span>
-              )}
+          <div key={r.player_id} className="space-y-0.5">
+            <div
+              className={`flex items-center justify-between text-xs px-2 py-1 rounded border ${
+                isLeader ? 'border-accent/40 bg-accent/10' : 'border-border bg-muted/10'
+              }`}
+            >
+              <div className="flex items-center gap-1.5">
+                <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                <span className={isLeader ? 'text-accent font-medium' : 'text-muted-foreground'}>
+                  {name}
+                </span>
+                {isLeader && <span className="text-[10px] text-accent/70">★</span>}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className={`font-mono font-bold text-xs ${isLeader ? 'text-accent' : 'text-foreground/70'}`}>
+                  {r.influence_amount}
+                </span>
+                {atThreshold && (
+                  <span className="text-[9px] text-status-locked font-bold px-1 py-0.5 rounded bg-status-locked/10 border border-status-locked/30">
+                    ↗ spread
+                  </span>
+                )}
+              </div>
             </div>
-            <span className={`font-mono font-bold ${isLeader ? 'text-accent' : 'text-foreground/70'}`}>
-              {r.influence_amount}
-            </span>
+
+            {/* Threshold progress bar */}
+            <div className="px-2">
+              <div className="w-full h-1 rounded-full bg-muted/30 overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${atThreshold ? 'bg-status-locked' : 'bg-accent/50'}`}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-[9px] text-muted-foreground/50 mt-0.5">
+                <span>Spread at {spreadThreshold}</span>
+                <span>{pct}%</span>
+              </div>
+            </div>
           </div>
         );
       })}

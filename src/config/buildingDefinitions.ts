@@ -94,6 +94,16 @@ const DIPLOMATIC_BUILDINGS: BuildingDefinition[] = [
     effect: '+1 trade action per fortify phase',
     max_per_territory: 1,
   },
+  {
+    type: 'monument',
+    label: 'Monument',
+    pillar: 'diplomatic',
+    cost: { gold: 3, stone: 3 },
+    rounds: 2,
+    effect: '+1 Permanent Influence in this territory and +1 Spendable Influence in this region each round',
+    max_per_territory: 1,
+    notes: 'Primary passive diplomatic building. Generates influence automatically at the start of each round.',
+  },
 ];
 
 // ─── Economic Buildings ───────────────────────────────────────────────────────

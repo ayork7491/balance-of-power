@@ -37,7 +37,8 @@ export default function TerritoryDetailPanel({
   territoryBuildings,   // TerritoryBuilding[] — Sprint 3B+ buildings for this territory
   hubData,              // Hub summary from usePlayerLogistics (if this territory has a hub) — Sprint 4E
   mapDef,               // MapDefinition — needed for TerritoryHubInfo territory name lookups
-  influenceRecords,     // { player_id, influence_amount }[] for this territory — Sprint 4F
+  influenceRecords,     // { player_id, influence_amount }[] for this territory — Sprint 4G
+  spreadThreshold,      // number — permanent influence threshold for spread — Sprint 4G
   onClose,
   // ── Lock state ──
   isLocked,             // boolean — territory is locked by a delayed battle
@@ -226,12 +227,13 @@ export default function TerritoryDetailPanel({
             </div>
           )}
 
-          {/* Influence — Sprint 4F */}
+          {/* Influence — Sprint 4G */}
           <div className="space-y-1 pt-1 border-t border-border">
             <span className="text-xs text-muted-foreground">🕊 Influence</span>
             <TerritoryInfluenceDisplay
               influenceRecords={influenceRecords ?? []}
               players={players}
+              spreadThreshold={spreadThreshold ?? 10}
             />
           </div>
 
