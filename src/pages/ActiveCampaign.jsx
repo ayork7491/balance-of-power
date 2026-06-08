@@ -254,6 +254,8 @@ function ActiveCampaignContent() {
       isAdmin={isAdmin}
       influenceByRegion={influenceByRegion}
       influencePlayerTotals={influencePlayerTotals}
+      actingAsPlayerId={actingAsCampaignPlayerId}
+      stateById={stateById}
     />
   );
 

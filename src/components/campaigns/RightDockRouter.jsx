@@ -29,6 +29,9 @@ import LogisticsPanel from '@/components/logistics/LogisticsPanel';
 // Influence panel (Sprint 4G)
 import RegionalInfluencePanel from '@/components/influence/RegionalInfluencePanel';
 
+// Diplomatic actions panel (Sprint 4H)
+import DiplomaticActionsPanel from '@/components/influence/DiplomaticActionsPanel';
+
 const SETUP_PHASES = new Set(['faction_selection', 'territory_draft', 'initial_deploy']);
 const GAMEPLAY_PHASES = new Set(['deploy', 'attack', 'battle', 'fortify']);
 
@@ -41,6 +44,8 @@ export default function RightDockRouter({
   isAdmin,
   influenceByRegion,
   influencePlayerTotals,
+  actingAsPlayerId,
+  stateById,
 }) {
   return useMemo(() => {
     const phase = campaign?.current_phase;
@@ -65,16 +70,28 @@ export default function RightDockRouter({
               )}
             </div>
           ) : activeTab === 'influence' ? (
-            <div className="p-3 h-full overflow-y-auto dock-scroll">
-              <p className="font-display text-xs tracking-widest uppercase text-status-info flex items-center gap-2 mb-3">
-                🕊 Regional Influence
-              </p>
-              <RegionalInfluencePanel
-                influenceByRegion={influenceByRegion ?? {}}
-                playerTotals={influencePlayerTotals ?? {}}
+            <div className="h-full overflow-y-auto dock-scroll">
+              {/* Diplomatic Actions — Sprint 4H */}
+              <DiplomaticActionsPanel
+                campaign={campaign}
+                myPlayer={myPlayer}
                 players={players}
-                loading={false}
+                mapDef={mapDef}
+                actingAsPlayerId={actingAsPlayerId}
+                stateById={stateById ?? {}}
               />
+              {/* Regional Influence summary — Sprint 4G */}
+              <div className="border-t border-border px-3 pt-3 pb-3">
+                <p className="font-display text-[10px] tracking-widest uppercase text-muted-foreground flex items-center gap-2 mb-2">
+                  🕊 Regional Influence Overview
+                </p>
+                <RegionalInfluencePanel
+                  influenceByRegion={influenceByRegion ?? {}}
+                  playerTotals={influencePlayerTotals ?? {}}
+                  players={players}
+                  loading={false}
+                />
+              </div>
             </div>
           ) : activeTab === 'logistics' ? (
             <LogisticsPanel campaign={campaign} myPlayer={myPlayer} mapDef={mapDef} />

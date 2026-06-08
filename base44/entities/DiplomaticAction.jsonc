@@ -1,0 +1,84 @@
+{
+  "name": "DiplomaticAction",
+  "type": "object",
+  "description": "Records a submitted diplomatic action for a round. Stores the action type, cost paid, region used, targets, and any effect metadata. One record per action submission. Sprint 4H.",
+  "properties": {
+    "campaign_id": {
+      "type": "string",
+      "description": "FK \u2192 Campaign.id"
+    },
+    "round": {
+      "type": "number",
+      "description": "Round this action was submitted in."
+    },
+    "player_id": {
+      "type": "string",
+      "description": "FK \u2192 CampaignPlayer.id \u2014 player who submitted this action."
+    },
+    "action_type": {
+      "type": "string",
+      "enum": [
+        "war_rations",
+        "influence_network",
+        "merchant_convoy",
+        "non_aggression_pact",
+        "broker_peace",
+        "coalition_warfare",
+        "power_broker"
+      ],
+      "description": "The type of diplomatic action submitted."
+    },
+    "region_id": {
+      "type": "string",
+      "description": "Region from which spendable influence was spent."
+    },
+    "influence_spent": {
+      "type": "number",
+      "default": 0,
+      "description": "Amount of spendable influence deducted from the region pool."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "active",
+        "expired",
+        "cancelled"
+      ],
+      "default": "active",
+      "description": "Current lifecycle status of the effect."
+    },
+    "expires_round": {
+      "type": "number",
+      "description": "Round this effect expires (inclusive). Null = lasts until end of current round."
+    },
+    "target_player_id": {
+      "type": "string",
+      "description": "Primary target player (for non-aggression pact, coalition warfare, power broker)."
+    },
+    "target_player_b_id": {
+      "type": "string",
+      "description": "Secondary target player (for power broker \u2014 creates pact between two other players)."
+    },
+    "target_territory_id": {
+      "type": "string",
+      "description": "Target territory (for influence network, broker peace, coalition warfare)."
+    },
+    "target_supply_route_id": {
+      "type": "string",
+      "description": "Target supply route (for merchant convoy)."
+    },
+    "effect_metadata": {
+      "type": "object",
+      "description": "Action-specific effect state. e.g. { territories_affected: [], protected: true, coalition_battle_id: null }",
+      "default": {}
+    }
+  },
+  "required": [
+    "campaign_id",
+    "round",
+    "player_id",
+    "action_type",
+    "region_id"
+  ]
+}
