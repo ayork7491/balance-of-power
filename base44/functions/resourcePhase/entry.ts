@@ -61,16 +61,22 @@ const V1_RESOURCE_TYPES = {
   sea_gate:'gold', crimson_shore:'gold', southern_reach:'food',
 };
 
+// ─── INLINE: Shattered Crown primary resources ────────────────────────────────
+// SOURCE OF TRUTH: src/shared/maps/shatteredCrownConfig.ts — SC_PRIMARY_RESOURCES_FLAT
+// This block is mechanically derived from that file. Do NOT edit manually.
+// To update: edit shatteredCrownConfig.ts (SC_PRIMARY_RESOURCES_FLAT), then propagate.
+// ─────────────────────────────────────────────────────────────────────────────
 const SC_RESOURCE_TYPES = {
-  I1:'iron', I2:'iron', I3:'stone', I4:'iron', I5:'iron', I6:'stone', I7:'iron', I8:'stone',
-  W1:'timber', W2:'timber', W3:'timber', W4:'food', W5:'timber', W6:'timber',
-  W7:'food', W8:'food', W9:'gold',
-  B1:'stone', B2:'stone', B3:'gold', B4:'iron', B5:'iron', B6:'gold',
-  B7:'stone', B8:'food', B9:'gold', B10:'gold',
-  S1:'food', S2:'food', S3:'food', S4:'food', S5:'food',
-  S6:'gold', S7:'food', S8:'gold', S9:'gold',
-  C1:'stone', C2:'gold', C3:'gold', C4:'iron', C5:'gold',
-  C6:'timber', C7:'food', C8:'stone',
+  I1:'iron',  I2:'iron',  I3:'stone', I4:'iron',  I5:'iron',
+  I6:'stone', I7:'iron',  I8:'stone',
+  W1:'timber',W2:'timber',W3:'timber',W4:'food',  W5:'timber',
+  W6:'timber',W7:'food',  W8:'food',  W9:'gold',
+  B1:'stone', B2:'stone', B3:'gold',  B4:'iron',  B5:'iron',
+  B6:'gold',  B7:'stone', B8:'food',  B9:'gold',  B10:'gold',
+  S1:'food',  S2:'food',  S3:'food',  S4:'food',  S5:'food',
+  S6:'gold',  S7:'food',  S8:'gold',  S9:'gold',
+  C1:'stone', C2:'gold',  C3:'gold',  C4:'iron',  C5:'gold',
+  C6:'timber',C7:'food',  C8:'stone',
 };
 
 function getResourceTypeForTerritory(mapId, territoryId) {

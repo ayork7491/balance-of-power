@@ -121,43 +121,75 @@ const V1_ADJACENCY_PAIRS = [
   ['verdant_basin','crimson_shore'],
 ];
 
-// Shattered Crown map (shattered_crown_v1) — sourced from mapData.shattered_crown.ts adjacency_ids
-const SHATTERED_CROWN_ADJACENCY_PAIRS = [
-  // Ironspine internal
-  ['I1','I2'],['I1','I4'],['I2','I3'],['I2','I5'],['I3','I6'],
-  ['I4','I5'],['I4','I7'],['I5','I6'],['I5','I7'],['I6','I8'],['I7','I8'],
-  // Ironspine ↔ Wild Frontier
-  ['I1','W1'],['I4','W2'],
-  // Ironspine ↔ Fracture Basin
-  ['I2','B1'],['I5','B2'],['I7','B3'],['I8','B4'],
-  // Ironspine ↔ Shattered Coast
-  ['I3','C1'],['I6','C2'],['I8','C3'],
-  // Wild Frontier internal
-  ['W1','W2'],['W1','W4'],['W2','W3'],['W2','W5'],['W3','W6'],
-  ['W4','W5'],['W4','W7'],['W5','W6'],['W5','W8'],['W6','W9'],
-  ['W7','W8'],['W8','W9'],
-  // Wild Frontier ↔ Fracture Basin
-  ['W3','B1'],['W5','B2'],['W6','B5'],['W9','B6'],
-  // Wild Frontier ↔ Sunfields
-  ['W7','S1'],['W8','S2'],['W9','S3'],
-  // Fracture Basin internal
-  ['B1','B2'],['B1','B5'],['B2','B3'],['B2','B5'],['B3','B4'],['B3','B6'],
-  ['B4','B7'],['B5','B6'],['B5','B8'],['B6','B7'],['B6','B9'],['B7','B10'],
-  ['B8','B9'],['B9','B10'],
-  // Fracture Basin ↔ Shattered Coast
-  ['B4','C3'],['B7','C4'],['B10','C6'],
+// ─── INLINE: Shattered Crown typed adjacency ──────────────────────────────────
+// SOURCE OF TRUTH: src/shared/maps/shatteredCrownConfig.ts — SC_ADJACENCY
+// This block is mechanically derived from that file. Do NOT edit manually.
+// To update: edit shatteredCrownConfig.ts, then regenerate this block.
+// Sprint 4A: all adjacency types (land, maritime, river_crossing) are traversable.
+// ─────────────────────────────────────────────────────────────────────────────
+const SC_ADJACENCY_TYPED = [
+  // Ironspine internal (land)
+  {from:'I1',to:'I2',type:'land'},{from:'I1',to:'I4',type:'land'},
+  {from:'I2',to:'I3',type:'land'},{from:'I2',to:'I5',type:'land'},
+  {from:'I3',to:'I6',type:'land'},{from:'I4',to:'I5',type:'land'},
+  {from:'I4',to:'I7',type:'land'},{from:'I5',to:'I6',type:'land'},
+  {from:'I5',to:'I7',type:'land'},{from:'I6',to:'I8',type:'land'},
+  {from:'I7',to:'I8',type:'land'},
+  // Ironspine ↔ Wild Frontier (land)
+  {from:'I1',to:'W1',type:'land'},{from:'I4',to:'W2',type:'land'},
+  // Ironspine ↔ Fracture Basin (land)
+  {from:'I2',to:'B1',type:'land'},{from:'I5',to:'B2',type:'land'},
+  {from:'I7',to:'B3',type:'land'},{from:'I8',to:'B4',type:'land'},
+  // Ironspine ↔ Shattered Coast (maritime)
+  {from:'I3',to:'C1',type:'maritime'},{from:'I6',to:'C2',type:'maritime'},
+  {from:'I8',to:'C3',type:'maritime'},
+  // Wild Frontier internal (land)
+  {from:'W1',to:'W2',type:'land'},{from:'W1',to:'W4',type:'land'},
+  {from:'W2',to:'W3',type:'land'},{from:'W2',to:'W5',type:'land'},
+  {from:'W3',to:'W6',type:'land'},{from:'W4',to:'W5',type:'land'},
+  {from:'W4',to:'W7',type:'land'},{from:'W5',to:'W6',type:'land'},
+  {from:'W5',to:'W8',type:'land'},{from:'W6',to:'W9',type:'land'},
+  {from:'W7',to:'W8',type:'land'},{from:'W8',to:'W9',type:'land'},
+  // Wild Frontier ↔ Fracture Basin (land)
+  {from:'W3',to:'B1',type:'land'},{from:'W5',to:'B2',type:'land'},
+  {from:'W6',to:'B5',type:'land'},{from:'W9',to:'B6',type:'land'},
+  // Wild Frontier ↔ Sunfields (land)
+  {from:'W7',to:'S1',type:'land'},{from:'W8',to:'S2',type:'land'},
+  {from:'W9',to:'S3',type:'land'},
+  // Fracture Basin internal (land)
+  {from:'B1',to:'B2',type:'land'},{from:'B1',to:'B5',type:'land'},
+  {from:'B2',to:'B3',type:'land'},{from:'B2',to:'B5',type:'land'},
+  {from:'B3',to:'B4',type:'land'},{from:'B3',to:'B6',type:'land'},
+  {from:'B4',to:'B7',type:'land'},{from:'B5',to:'B6',type:'land'},
+  {from:'B5',to:'B8',type:'land'},{from:'B6',to:'B7',type:'land'},
+  {from:'B6',to:'B9',type:'land'},{from:'B7',to:'B10',type:'land'},
+  {from:'B8',to:'B9',type:'land'},{from:'B9',to:'B10',type:'land'},
+  // Fracture Basin ↔ Shattered Coast (maritime)
+  {from:'B4',to:'C3',type:'maritime'},{from:'B7',to:'C4',type:'maritime'},
+  {from:'B10',to:'C6',type:'maritime'},
   // Fracture Basin ↔ Sunfields
-  ['B8','S3'],['B9','S5'],['B10','S6'],
-  // Sunfields internal
-  ['S1','S2'],['S1','S4'],['S2','S3'],['S2','S5'],['S3','S6'],
-  ['S4','S5'],['S4','S7'],['S5','S6'],['S5','S8'],['S6','S9'],
-  ['S7','S8'],['S8','S9'],
-  // Shattered Coast internal
-  ['C1','C2'],['C1','C4'],['C2','C3'],['C2','C5'],['C3','C6'],
-  ['C4','C5'],['C5','C6'],['C5','C7'],['C6','C8'],['C7','C8'],
-  // Shattered Coast ↔ Sunfields
-  ['C8','S9'],
+  {from:'B8',to:'S3',type:'river_crossing'}, // The single river crossing
+  {from:'B9',to:'S5',type:'land'},{from:'B10',to:'S6',type:'land'},
+  // Sunfields internal (land)
+  {from:'S1',to:'S2',type:'land'},{from:'S1',to:'S4',type:'land'},
+  {from:'S2',to:'S3',type:'land'},{from:'S2',to:'S5',type:'land'},
+  {from:'S3',to:'S6',type:'land'},{from:'S4',to:'S5',type:'land'},
+  {from:'S4',to:'S7',type:'land'},{from:'S5',to:'S6',type:'land'},
+  {from:'S5',to:'S8',type:'land'},{from:'S6',to:'S9',type:'land'},
+  {from:'S7',to:'S8',type:'land'},{from:'S8',to:'S9',type:'land'},
+  // Shattered Coast internal (maritime)
+  {from:'C1',to:'C2',type:'maritime'},{from:'C1',to:'C4',type:'maritime'},
+  {from:'C2',to:'C3',type:'maritime'},{from:'C2',to:'C5',type:'maritime'},
+  {from:'C3',to:'C5',type:'maritime'},{from:'C4',to:'C5',type:'maritime'},
+  {from:'C4',to:'C6',type:'maritime'},{from:'C5',to:'C6',type:'maritime'},
+  {from:'C5',to:'C7',type:'maritime'},{from:'C6',to:'C7',type:'maritime'},
+  {from:'C6',to:'C8',type:'maritime'},{from:'C7',to:'C8',type:'maritime'},
+  // Shattered Coast ↔ Sunfields (maritime)
+  {from:'C8',to:'S9',type:'maritime'},
 ];
+
+// Build flat pairs from typed adjacency (Sprint 4A: all types traversable)
+const SHATTERED_CROWN_ADJACENCY_PAIRS = SC_ADJACENCY_TYPED.map(({from,to}) => [from,to]);
 
 const ADJACENCY_BY_MAP_ID = {
   'map_v1_standard':   V1_ADJACENCY_PAIRS,

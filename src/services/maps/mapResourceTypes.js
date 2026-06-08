@@ -1,6 +1,19 @@
 /**
  * services/maps/mapResourceTypes.js
  *
+ * @deprecated Sprint 4A — Shattered Crown resource data has moved to the canonical config.
+ *   CANONICAL SOURCE: src/shared/maps/shatteredCrownConfig.ts
+ *     - SC_PRIMARY_RESOURCES_FLAT — territory_id → primary_resource
+ *     - SC_TERRITORY_BY_ID        — full territory config including all resource fields
+ *
+ * This file is RETAINED for:
+ *   - V1 Standard map (V1_TERRITORY_RESOURCE_TYPES and getResourceTypeForTerritory)
+ *   - Any callers not yet migrated to the canonical config
+ *
+ * DO NOT add new Shattered Crown resource entries here.
+ * DO NOT edit SHATTERED_CROWN_TERRITORY_RESOURCE_TYPES — it is read-only legacy data.
+ * Migrate callers to shatteredCrownConfig.ts, then this file can be deleted.
+ *
  * Sprint 3B canonical resource type assignments per territory.
  * Maps territory_id → primary resource type (gold | iron | timber | stone | food).
  *

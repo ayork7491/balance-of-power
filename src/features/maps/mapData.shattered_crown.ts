@@ -6,9 +6,26 @@
  * All polygon coordinates are NATIVE 10240×10240 space,
  * sourced directly from shattered_crown_territory_polygons_final.json.
  * No scaling is applied — polygons map 1:1 to the background PNG.
+ *
+ * ─── ARCHITECTURE (Sprint 4A) ─────────────────────────────────────────────────
+ * Territory metadata (names, continents, regions, resources, slots, food_bonus)
+ * and typed adjacency are imported from the canonical config file:
+ *   src/shared/maps/shatteredCrownConfig.ts
+ *
+ * This file is responsible ONLY for:
+ *   - Polygon rendering data (POLYS)
+ *   - UI label/troop anchor overrides (ANCHORS)
+ *   - Assembling the final MapDefinition for the renderer
+ *
+ * Do NOT add territory metadata or adjacency directly to this file.
+ * Edit shatteredCrownConfig.ts instead.
  */
 
 import type { MapDefinition } from './types';
+import {
+  SC_TERRITORIES,
+  SC_ADJACENCY,
+} from '@/shared/maps/shatteredCrownConfig';
 
 // Helper to convert [{x,y},...] array to SVG points string
 function pts(arr: {x:number,y:number}[]): string {
@@ -129,114 +146,34 @@ const ANCHORS: Record<string, { label_x:number, label_y:number, troop_x:number, 
   W9:  { label_x:4080,  label_y:5180,  troop_x:4110,  troop_y:5320  },
 };
 
-// ─── Territory metadata ────────────────────────────────────────────────────────
+// ─── Territory terrain overrides ─────────────────────────────────────────────
+// Terrain is visual-only data (not in canonical config). Keyed by territory_id.
 
-const TERRITORY_META: {
-  territory_id: string;
-  name: string;
-  continent_id: string;
-  region_id: string;
-  terrain: 'plains'|'mountains'|'coastal'|'forest'|'swamp';
-  resource_distribution: {brick:number,lumber:number,wool:number,grain:number,ore:number};
-}[] = [
-  // FRACTURE BASIN
-  { territory_id:'B1',  name:'North Ruin Gate', continent_id:'fracture_basin', region_id:'northern_ruins',     terrain:'plains',    resource_distribution:{brick:15,lumber:0,wool:0,grain:25,ore:60} },
-  { territory_id:'B2',  name:'Old Bastion',     continent_id:'fracture_basin', region_id:'northern_ruins',     terrain:'plains',    resource_distribution:{brick:15,lumber:0,wool:0,grain:25,ore:60} },
-  { territory_id:'B3',  name:'Highbridge',      continent_id:'fracture_basin', region_id:'northern_ruins',     terrain:'plains',    resource_distribution:{brick:15,lumber:0,wool:0,grain:25,ore:60} },
-  { territory_id:'B4',  name:'East Rupture',    continent_id:'fracture_basin', region_id:'central_crossroads', terrain:'mountains', resource_distribution:{brick:15,lumber:0,wool:0,grain:25,ore:60} },
-  { territory_id:'B5',  name:'West Crucible',   continent_id:'fracture_basin', region_id:'central_crossroads', terrain:'plains',    resource_distribution:{brick:15,lumber:0,wool:0,grain:25,ore:60} },
-  { territory_id:'B6',  name:'Crownbreak',      continent_id:'fracture_basin', region_id:'central_crossroads', terrain:'plains',    resource_distribution:{brick:15,lumber:0,wool:0,grain:25,ore:60} },
-  { territory_id:'B7',  name:'Glass Rift',      continent_id:'fracture_basin', region_id:'central_crossroads', terrain:'plains',    resource_distribution:{brick:15,lumber:0,wool:0,grain:25,ore:60} },
-  { territory_id:'B8',  name:'Southwatch Ruins',continent_id:'fracture_basin', region_id:'southern_ruins',     terrain:'plains',    resource_distribution:{brick:15,lumber:0,wool:0,grain:25,ore:60} },
-  { territory_id:'B9',  name:'Golden Causeway', continent_id:'fracture_basin', region_id:'southern_ruins',     terrain:'plains',    resource_distribution:{brick:15,lumber:0,wool:0,grain:25,ore:60} },
-  { territory_id:'B10', name:'Riftmarket',      continent_id:'fracture_basin', region_id:'southern_ruins',     terrain:'plains',    resource_distribution:{brick:15,lumber:0,wool:0,grain:25,ore:60} },
-  // SHATTERED COAST
-  { territory_id:'C1',  name:'Northcliff',      continent_id:'shattered_coast', region_id:'northern_isles',    terrain:'coastal',   resource_distribution:{brick:5,lumber:5,wool:35,grain:20,ore:35} },
-  { territory_id:'C2',  name:'Saltwind Pass',   continent_id:'shattered_coast', region_id:'northern_isles',    terrain:'coastal',   resource_distribution:{brick:5,lumber:5,wool:35,grain:20,ore:35} },
-  { territory_id:'C3',  name:'Broken Harbor',   continent_id:'shattered_coast', region_id:'northern_isles',    terrain:'coastal',   resource_distribution:{brick:5,lumber:5,wool:35,grain:20,ore:35} },
-  { territory_id:'C4',  name:'Blacktide Gate',  continent_id:'shattered_coast', region_id:'southern_fractures',terrain:'coastal',   resource_distribution:{brick:5,lumber:5,wool:35,grain:20,ore:35} },
-  { territory_id:'C5',  name:'Shardport',       continent_id:'shattered_coast', region_id:'southern_fractures',terrain:'coastal',   resource_distribution:{brick:5,lumber:5,wool:35,grain:20,ore:35} },
-  { territory_id:'C6',  name:'Mirror Cape',     continent_id:'shattered_coast', region_id:'southern_fractures',terrain:'coastal',   resource_distribution:{brick:5,lumber:5,wool:35,grain:20,ore:35} },
-  { territory_id:'C7',  name:'Tidebreak',       continent_id:'shattered_coast', region_id:'southern_fractures',terrain:'coastal',   resource_distribution:{brick:5,lumber:5,wool:35,grain:20,ore:35} },
-  { territory_id:'C8',  name:'Southwake',       continent_id:'shattered_coast', region_id:'southern_fractures',terrain:'coastal',   resource_distribution:{brick:5,lumber:5,wool:35,grain:20,ore:35} },
-  // IRONSPINE
-  { territory_id:'I1',  name:'Frostgate',       continent_id:'ironspine', region_id:'outer_passes', terrain:'mountains', resource_distribution:{brick:5,lumber:5,wool:5,grain:5,ore:80} },
-  { territory_id:'I2',  name:'Northpass',       continent_id:'ironspine', region_id:'outer_passes', terrain:'mountains', resource_distribution:{brick:5,lumber:5,wool:5,grain:5,ore:80} },
-  { territory_id:'I3',  name:'Cliffwatch',      continent_id:'ironspine', region_id:'outer_passes', terrain:'coastal',   resource_distribution:{brick:5,lumber:5,wool:5,grain:5,ore:80} },
-  { territory_id:'I4',  name:'Greyhold',        continent_id:'ironspine', region_id:'high_crown',   terrain:'mountains', resource_distribution:{brick:5,lumber:5,wool:5,grain:5,ore:80} },
-  { territory_id:'I5',  name:'Crownforge',      continent_id:'ironspine', region_id:'high_crown',   terrain:'mountains', resource_distribution:{brick:5,lumber:5,wool:5,grain:5,ore:80} },
-  { territory_id:'I6',  name:'Ridgefall',       continent_id:'ironspine', region_id:'outer_passes', terrain:'mountains', resource_distribution:{brick:5,lumber:5,wool:5,grain:5,ore:80} },
-  { territory_id:'I7',  name:'Basinwatch',      continent_id:'ironspine', region_id:'high_crown',   terrain:'mountains', resource_distribution:{brick:5,lumber:5,wool:5,grain:5,ore:80} },
-  { territory_id:'I8',  name:'Eastspire',       continent_id:'ironspine', region_id:'high_crown',   terrain:'mountains', resource_distribution:{brick:5,lumber:5,wool:5,grain:5,ore:80} },
-  // SUNFIELDS
-  { territory_id:'S1',  name:'Westmeadow',      continent_id:'sunfields', region_id:'western_plains',    terrain:'plains', resource_distribution:{brick:5,lumber:10,wool:25,grain:55,ore:5} },
-  { territory_id:'S2',  name:'Sunroad',         continent_id:'sunfields', region_id:'western_plains',    terrain:'plains', resource_distribution:{brick:5,lumber:10,wool:25,grain:55,ore:5} },
-  { territory_id:'S3',  name:'Harvest Ford',    continent_id:'sunfields', region_id:'western_plains',    terrain:'plains', resource_distribution:{brick:5,lumber:10,wool:25,grain:55,ore:5} },
-  { territory_id:'S4',  name:'Amberhold',       continent_id:'sunfields', region_id:'western_plains',    terrain:'plains', resource_distribution:{brick:5,lumber:10,wool:25,grain:55,ore:5} },
-  { territory_id:'S5',  name:'Granary Cross',   continent_id:'sunfields', region_id:'eastern_granaries', terrain:'plains', resource_distribution:{brick:5,lumber:10,wool:25,grain:55,ore:5} },
-  { territory_id:'S6',  name:'Dawnmarch',       continent_id:'sunfields', region_id:'eastern_granaries', terrain:'plains', resource_distribution:{brick:5,lumber:10,wool:25,grain:55,ore:5} },
-  { territory_id:'S7',  name:'South Orchard',   continent_id:'sunfields', region_id:'eastern_granaries', terrain:'plains', resource_distribution:{brick:5,lumber:10,wool:25,grain:55,ore:5} },
-  { territory_id:'S8',  name:'Lowgold',         continent_id:'sunfields', region_id:'eastern_granaries', terrain:'plains', resource_distribution:{brick:5,lumber:10,wool:25,grain:55,ore:5} },
-  { territory_id:'S9',  name:'Coastward Fields',continent_id:'sunfields', region_id:'eastern_granaries', terrain:'coastal',resource_distribution:{brick:5,lumber:10,wool:25,grain:55,ore:5} },
-  // WILD FRONTIER
-  { territory_id:'W1',  name:'Thornwood Edge',  continent_id:'wild_frontier', region_id:'northern_wilds', terrain:'forest', resource_distribution:{brick:5,lumber:55,wool:20,grain:15,ore:5} },
-  { territory_id:'W2',  name:'Greenmarch',      continent_id:'wild_frontier', region_id:'northern_wilds', terrain:'forest', resource_distribution:{brick:5,lumber:55,wool:20,grain:15,ore:5} },
-  { territory_id:'W3',  name:'Broken Pines',    continent_id:'wild_frontier', region_id:'northern_wilds', terrain:'forest', resource_distribution:{brick:5,lumber:55,wool:20,grain:15,ore:5} },
-  { territory_id:'W4',  name:'Mossfen',         continent_id:'wild_frontier', region_id:'deepwoods',      terrain:'swamp',  resource_distribution:{brick:5,lumber:55,wool:20,grain:15,ore:5} },
-  { territory_id:'W5',  name:'Wildcross',       continent_id:'wild_frontier', region_id:'deepwoods',      terrain:'forest', resource_distribution:{brick:5,lumber:55,wool:20,grain:15,ore:5} },
-  { territory_id:'W6',  name:'Emberwood',       continent_id:'wild_frontier', region_id:'northern_wilds', terrain:'forest', resource_distribution:{brick:5,lumber:55,wool:20,grain:15,ore:5} },
-  { territory_id:'W7',  name:'Lowbranch',       continent_id:'wild_frontier', region_id:'deepwoods',      terrain:'plains', resource_distribution:{brick:5,lumber:55,wool:20,grain:15,ore:5} },
-  { territory_id:'W8',  name:'Riverholt',       continent_id:'wild_frontier', region_id:'deepwoods',      terrain:'plains', resource_distribution:{brick:5,lumber:55,wool:20,grain:15,ore:5} },
-  { territory_id:'W9',  name:'Ashen Ford',      continent_id:'wild_frontier', region_id:'deepwoods',      terrain:'plains', resource_distribution:{brick:5,lumber:55,wool:20,grain:15,ore:5} },
-];
+const TERRAIN_BY_ID: Record<string, 'plains'|'mountains'|'coastal'|'forest'|'swamp'> = {
+  // Fracture Basin
+  B1:'plains', B2:'plains', B3:'plains', B4:'mountains', B5:'plains',
+  B6:'plains', B7:'plains', B8:'plains', B9:'plains', B10:'plains',
+  // Shattered Coast (all coastal)
+  C1:'coastal', C2:'coastal', C3:'coastal', C4:'coastal', C5:'coastal',
+  C6:'coastal', C7:'coastal', C8:'coastal',
+  // Ironspine
+  I1:'mountains', I2:'mountains', I3:'coastal', I4:'mountains', I5:'mountains',
+  I6:'mountains', I7:'mountains', I8:'mountains',
+  // Sunfields
+  S1:'plains', S2:'plains', S3:'plains', S4:'plains', S5:'plains',
+  S6:'plains', S7:'plains', S8:'plains', S9:'coastal',
+  // Wild Frontier
+  W1:'forest', W2:'forest', W3:'forest', W4:'swamp', W5:'forest',
+  W6:'forest', W7:'plains', W8:'plains', W9:'plains',
+};
 
-// ─── Adjacency ────────────────────────────────────────────────────────────────
+// Legacy V1 resource distribution placeholder (not used for resource generation —
+// resource_type is now read from shatteredCrownConfig.ts primary_resource).
+const LEGACY_RD = { brick:0, lumber:0, wool:0, grain:0, ore:0 };
 
-const ADJACENCY: [string, string][] = [
-  ['I1','I2'],['I1','I4'],['I1','W1'],
-  ['I2','I3'],['I2','I5'],['I2','B1'],
-  ['I3','I6'],['I3','C1'],
-  ['I4','I5'],['I4','I7'],['I4','W2'],
-  ['I5','I6'],['I5','I7'],['I5','B2'],
-  ['I6','I8'],['I6','C2'],
-  ['I7','I8'],['I7','B3'],
-  ['I8','B4'],['I8','C3'],
-  ['W1','W2'],['W1','W4'],
-  ['W2','W3'],['W2','W5'],
-  ['W3','W6'],['W3','B1'],
-  ['W4','W5'],['W4','W7'],
-  ['W5','W6'],['W5','W8'],['W5','B2'],
-  ['W6','W9'],['W6','B5'],
-  ['W7','W8'],['W7','S1'],
-  ['W8','W9'],['W8','S2'],
-  ['W9','B6'],['W9','S3'],
-  ['B1','B2'],['B1','B5'],
-  ['B2','B3'],['B2','B5'],
-  ['B3','B4'],['B3','B6'],
-  ['B4','C3'],['B4','B7'],
-  ['B5','B6'],['B5','B8'],
-  ['B6','B7'],['B6','B9'],
-  ['B7','C4'],['B7','B10'],
-  ['B8','S3'],['B8','B9'],
-  ['B9','S5'],['B9','B10'],
-  ['B10','C6'],['B10','S6'],
-  ['S1','S2'],['S1','S4'],
-  ['S2','S3'],['S2','S5'],
-  ['S3','S6'],
-  ['S4','S5'],['S4','S7'],
-  ['S5','S6'],['S5','S8'],
-  ['S6','S9'],
-  ['S7','S8'],
-  ['S8','S9'],
-  ['S9','C8'],
-  ['C1','C2'],['C1','C4'],
-  ['C2','C3'],['C2','C5'],
-  ['C3','C5'],
-  ['C4','C5'],['C4','C6'],
-  ['C5','C6'],['C5','C7'],
-  ['C6','C7'],['C6','C8'],
-  ['C7','C8'],
-];
+// Derived flat adjacency pairs for the legacy adjacency field (backward compat).
+// SOURCE: SC_ADJACENCY from shatteredCrownConfig.ts
+const ADJACENCY: [string, string][] = SC_ADJACENCY.map(({ from, to }) => [from, to] as [string, string]);
 
 // ─── Map definition ───────────────────────────────────────────────────────────
 
@@ -273,16 +210,17 @@ export const MAP_SHATTERED_CROWN: MapDefinition = {
     { id:'southern_fractures', name:'Southern Fractures', continent_id:'shattered_coast', control_bonus:3, color:'#0369a1' },
   ],
 
-  territories: TERRITORY_META.map(t => {
-    const poly = POLYS[t.territory_id] ?? [];
-    const {cx, cy} = centroid(poly);
+  // Territories: merge canonical config (SC_TERRITORIES) with polygon/anchor rendering data.
+  territories: SC_TERRITORIES.map(t => {
+    const poly    = POLYS[t.territory_id] ?? [];
+    const { cx, cy } = centroid(poly);
     const anchors = ANCHORS[t.territory_id];
     return {
       territory_id:          t.territory_id,
       name:                  t.name,
       continent_id:          t.continent_id,
       region_id:             t.region_id,
-      terrain:               t.terrain,
+      terrain:               TERRAIN_BY_ID[t.territory_id] ?? 'plains',
       points:                pts(poly),
       cx,
       cy,
@@ -290,9 +228,21 @@ export const MAP_SHATTERED_CROWN: MapDefinition = {
       troop_y:               anchors?.troop_y ?? cy,
       label_x:               anchors?.label_x ?? cx,
       label_y:               anchors?.label_y ?? cy,
-      resource_distribution: t.resource_distribution,
+      // Sprint 4A canonical fields (from shatteredCrownConfig.ts)
+      primary_resource:      t.primary_resource,
+      secondary_resource:    t.secondary_resource,
+      tertiary_resource:     t.tertiary_resource,
+      structure_slots:       t.structure_slots,
+      food_bonus:            t.food_bonus,
+      // Legacy V1 field retained for interface compat (not used for SC resource generation)
+      resource_distribution: LEGACY_RD,
     };
   }),
 
+  // Legacy flat adjacency (derived from SC_ADJACENCY — backward compat for existing callers).
   adjacency: ADJACENCY,
+
+  // Sprint 4A: Typed adjacency — canonical source of truth for combat/fortify queries.
+  // SOURCE OF TRUTH: src/shared/maps/shatteredCrownConfig.ts — SC_ADJACENCY
+  typed_adjacency: SC_ADJACENCY,
 };

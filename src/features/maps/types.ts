@@ -25,11 +25,45 @@ export type TerrainType =
 
 // ─── Resources ────────────────────────────────────────────────────────────────
 
-/** V1 canonical resources. Must stay in sync with types/Resources.ts and config/theme.ts */
-export type ResourceType = 'brick' | 'lumber' | 'wool' | 'grain' | 'ore';
+/** V1 legacy resources (brick/lumber/etc.) — kept for V1 Standard map backward compat. */
+export type LegacyResourceType = 'brick' | 'lumber' | 'wool' | 'grain' | 'ore';
 
 /**
- * Resource distribution for a territory.
+ * Canonical Sprint 3B+ resources — gold, iron, timber, stone, food.
+ * Used by Shattered Crown and all future maps.
+ * Re-exported here for convenience; canonical definition lives in shared/maps/shatteredCrownConfig.ts
+ */
+export type CanonicalResourceType = 'gold' | 'iron' | 'timber' | 'stone' | 'food';
+
+/** Union of both resource type sets — use when the map is unknown. */
+export type ResourceType = LegacyResourceType | CanonicalResourceType;
+
+/**
+ * Adjacency type for typed adjacency edges.
+ * land           — standard ground movement
+ * maritime       — coastal/sea crossing
+ * river_crossing — river ford (restricted crossing)
+ */
+export type AdjacencyType = 'land' | 'maritime' | 'river_crossing';
+
+/**
+ * TypedAdjacency — a directed adjacency edge with a terrain type.
+ * All edges are treated as bidirectional: A→B implies B→A.
+ */
+export interface TypedAdjacency {
+  from: string;
+  to:   string;
+  type: AdjacencyType;
+}
+
+/**
+ * Structure slot type — determines which pillar of buildings can go in this slot.
+ * omni — accepts any pillar type.
+ */
+export type SlotType = 'military' | 'economic' | 'diplomatic' | 'omni';
+
+/**
+ * Resource distribution for a territory (V1 Legacy format).
  * Weights are arbitrary relative numbers that must total exactly 100.
  * Used to determine which resource a territory produces each turn (future).
  */
@@ -73,6 +107,11 @@ export interface MapContinent {
  * This is NEVER mutated at runtime. Campaign-specific state lives in TerritoryState.
  *
  * Canonical identifier: territory_id
+ *
+ * Sprint 4A additions:
+ *   primary_resource / secondary_resource / tertiary_resource — canonical Sprint 3B+ resources
+ *   structure_slots — building slot types available in this territory
+ *   food_bonus      — extra food income (future mechanic, not active in Sprint 4A)
  */
 export interface TerritoryDefinition {
   /** Stable snake_case string — canonical foreign key for TerritoryState.territory_id */
@@ -95,12 +134,24 @@ export interface TerritoryDefinition {
   /** Label anchor Y (defaults to cy if not specified) */
   label_y?: number;
   terrain: TerrainType;
+  /** V1 legacy resource distribution weights (V1 Standard map only). */
   resource_distribution: ResourceDistribution;
+  /** Sprint 3B+ canonical primary resource. Present on all Shattered Crown territories. */
+  primary_resource?:    CanonicalResourceType;
+  /** Secondary resource (future — not generated in Sprint 4A). */
+  secondary_resource?:  CanonicalResourceType;
+  /** Tertiary resource (future — not generated in Sprint 4A). */
+  tertiary_resource?:   CanonicalResourceType;
+  /** Building slot types. Capacity rule: resources + slots === 4 (Shattered Crown). */
+  structure_slots?:     SlotType[];
+  /** Extra food income bonus (future — not active in Sprint 4A). */
+  food_bonus?:          number;
 }
 
 /**
- * TerritoryConnection — bidirectional adjacency edge.
+ * TerritoryConnection — bidirectional adjacency edge (legacy flat format).
  * A single record represents an undirected connection between two territories.
+ * @deprecated Use TypedAdjacency for new maps. Retained for V1 Standard map.
  */
 export interface TerritoryConnection {
   territory_a_id: string;
@@ -125,8 +176,17 @@ export interface MapDefinition {
   continents: MapContinent[];
   regions: MapRegion[];
   territories: TerritoryDefinition[];
-  /** Adjacency edges as [territory_id_a, territory_id_b] pairs — bidirectional */
+  /**
+   * Legacy flat adjacency edges as [territory_id_a, territory_id_b] pairs — bidirectional.
+   * Used by V1 Standard map. Shattered Crown uses typed_adjacency instead.
+   */
   adjacency: [string, string][];
+  /**
+   * Typed adjacency edges with terrain classification.
+   * SOURCE OF TRUTH for Shattered Crown: shared/maps/shatteredCrownConfig.ts
+   * Sprint 4A: all types (land, maritime, river_crossing) are traversable for combat.
+   */
+  typed_adjacency?: TypedAdjacency[];
   min_players: number;
   max_players: number;
   /** Single background image URL (PNG/SVG). Rendered at full width×height. */
