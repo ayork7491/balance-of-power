@@ -8,7 +8,8 @@
  */
 import { X, Shield, Swords, MapPin, Check, Loader2, Lock } from 'lucide-react';
 import { PLAYER_COLORS } from '@/config/theme';
-import { getResourceConfig, getResourceIcon } from '@/config/resourceConfig';
+import { getResourceConfig } from '@/config/resourceConfig';
+import { SC_TERRITORY_BY_ID } from '@/shared/maps/shatteredCrownConfig';
 
 const TERRAIN_LABELS = {
   mountains: '⛰ Mountains',
@@ -47,10 +48,16 @@ export default function TerritoryDetailPanel({
     ? PLAYER_COLORS.find(c => c.id === owner.color)
     : null;
 
-  // Resource type: prefer TerritoryState.resource_type (stamped at game start),
-  // fall back to territory definition metadata.
-  const resourceType = tState?.resource_type ?? territory?.resource_type ?? null;
-  const resourceCfg = resourceType ? getResourceConfig(resourceType) : null;
+  // Canonical SC territory config (for multi-resource, slots, food_bonus display).
+  const scConfig = SC_TERRITORY_BY_ID[territory?.territory_id] ?? null;
+
+  // Primary resource: prefer canonical SC config, fall back to tState/territory legacy field.
+  const primaryResource = scConfig?.primary_resource ?? tState?.resource_type ?? territory?.resource_type ?? null;
+  const primaryCfg = primaryResource ? getResourceConfig(primaryResource) : null;
+  const secondaryResource = scConfig?.secondary_resource ?? null;
+  const secondaryCfg = secondaryResource ? getResourceConfig(secondaryResource) : null;
+  const tertiaryResource = scConfig?.tertiary_resource ?? null;
+  const tertiaryCfg = tertiaryResource ? getResourceConfig(tertiaryResource) : null;
 
   const isDraftPhase = phase === 'territory_draft';
   const isClaimed    = !!tState?.owner_player_id;
@@ -126,13 +133,45 @@ export default function TerritoryDetailPanel({
             )}
           </div>
 
-          {/* Primary resource */}
-          {resourceCfg && (
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-muted-foreground">Resource</span>
-              <span className={`${resourceCfg.color}`}>
-                {resourceCfg.icon} {resourceCfg.label}
-              </span>
+          {/* Resources — primary / secondary / tertiary / food bonus / structure slots */}
+          {(primaryCfg || scConfig) && (
+            <div className="space-y-1.5 text-xs">
+              {primaryCfg && (
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Primary <span className="text-[10px] text-muted-foreground/60">(100%)</span></span>
+                  <span className={primaryCfg.color}>{primaryCfg.icon} {primaryCfg.label}</span>
+                </div>
+              )}
+              {secondaryCfg && (
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Secondary <span className="text-[10px] text-muted-foreground/60">(40%)</span></span>
+                  <span className={secondaryCfg.color}>{secondaryCfg.icon} {secondaryCfg.label}</span>
+                </div>
+              )}
+              {tertiaryCfg && (
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Tertiary <span className="text-[10px] text-muted-foreground/60">(10%)</span></span>
+                  <span className={tertiaryCfg.color}>{tertiaryCfg.icon} {tertiaryCfg.label}</span>
+                </div>
+              )}
+              {scConfig?.food_bonus > 0 && (
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Food Bonus</span>
+                  <span className="text-green-400">🌾 +{scConfig.food_bonus}/activation</span>
+                </div>
+              )}
+              {scConfig?.structure_slots?.length > 0 && (
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Slots</span>
+                  <div className="flex gap-1 flex-wrap justify-end">
+                    {scConfig.structure_slots.map((slot, i) => (
+                      <span key={i} className="px-1.5 py-0.5 rounded border border-border bg-muted/20 text-muted-foreground capitalize text-[10px]">
+                        {slot}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

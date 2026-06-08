@@ -13,6 +13,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { base44 } from '@/api/base44Client';
 import { Loader2, RefreshCw, Lock, Package } from 'lucide-react';
 import { RESOURCE_KEYS, RESOURCE_CONFIG, calcActivationLimit, sumStorage } from '@/config/resourceConfig';
+import { SC_TERRITORY_BY_ID } from '@/shared/maps/shatteredCrownConfig';
 
 function ResourceBadge({ type, amount }) {
   const cfg = RESOURCE_CONFIG[type] ?? { label: type, icon: '?', color: 'text-foreground', bg: 'bg-muted/20', border: 'border-border' };
@@ -205,7 +206,17 @@ export default function ResourcePhasePanel({ campaign, myPlayer, mapDef }) {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-2">
                           <p className="text-xs font-medium text-foreground truncate">{name}</p>
-                          <span className={`text-[10px] shrink-0 ${cfg.color}`}>{cfg.icon} {cfg.label}</span>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <span className={`text-[10px] ${cfg.color}`} title="Primary (100%)">{cfg.icon}</span>
+                            {SC_TERRITORY_BY_ID[t.territory_id]?.secondary_resource && (() => {
+                              const c2 = RESOURCE_CONFIG[SC_TERRITORY_BY_ID[t.territory_id].secondary_resource];
+                              return c2 ? <span className={`text-[10px] opacity-60 ${c2.color}`} title="Secondary (40%)">{c2.icon}</span> : null;
+                            })()}
+                            {SC_TERRITORY_BY_ID[t.territory_id]?.tertiary_resource && (() => {
+                              const c3 = RESOURCE_CONFIG[SC_TERRITORY_BY_ID[t.territory_id].tertiary_resource];
+                              return c3 ? <span className={`text-[10px] opacity-30 ${c3.color}`} title="Tertiary (10%)">{c3.icon}</span> : null;
+                            })()}
+                          </div>
                         </div>
                         {sumStorage(t.resource_storage) > 0 && (
                           <div className="mt-1">

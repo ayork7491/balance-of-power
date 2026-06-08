@@ -61,11 +61,12 @@ const V1_RESOURCE_TYPES = {
   sea_gate:'gold', crimson_shore:'gold', southern_reach:'food',
 };
 
-// ─── INLINE: Shattered Crown primary resources ────────────────────────────────
-// SOURCE OF TRUTH: src/shared/maps/shatteredCrownConfig.ts — SC_PRIMARY_RESOURCES_FLAT
-// This block is mechanically derived from that file. Do NOT edit manually.
-// To update: edit shatteredCrownConfig.ts (SC_PRIMARY_RESOURCES_FLAT), then propagate.
+// ─── INLINE: Shattered Crown territory resource data (Sprint 4B v2) ──────────
+// SOURCE OF TRUTH: src/shared/maps/shatteredCrownConfig.ts
+// Do NOT edit these blocks manually. Update shatteredCrownConfig.ts, then propagate.
+// Generation chances: primary=100%, secondary=40%, tertiary=10%, food_bonus=always.
 // ─────────────────────────────────────────────────────────────────────────────
+
 const SC_RESOURCE_TYPES = {
   I1:'iron',  I2:'iron',  I3:'stone', I4:'iron',  I5:'stone',
   I6:'timber',I7:'timber',I8:'iron',
@@ -78,6 +79,80 @@ const SC_RESOURCE_TYPES = {
   C1:'iron',  C2:'gold',  C3:'iron',  C4:'gold',  C5:'gold',
   C6:'gold',  C7:'stone', C8:'gold',
 };
+
+// Secondary resources (40% generation chance). Territories without secondary are omitted.
+const SC_SECONDARY_RESOURCES = {
+  I8:'iron',  I4:'gold',  I6:'stone', I7:'gold',
+  I1:'iron',  I2:'stone', I3:'stone', I5:'iron',
+  W1:'timber',W2:'timber',W3:'timber',W4:'stone', W5:'timber',
+  W6:'stone', W7:'timber',W8:'timber',W9:'timber',
+  B1:'iron',  B3:'gold',  B4:'gold',  B5:'stone',
+  B7:'iron',  B8:'gold',  B9:'gold',  B10:'gold',
+  S1:'gold',  S2:'stone', S3:'iron',  S4:'timber',S5:'gold',
+  S6:'gold',  S7:'gold',  S8:'gold',  S9:'iron',
+  C1:'gold',  C2:'stone', C3:'iron',  C4:'gold',  C5:'timber',
+  C6:'gold',  C7:'gold',  C8:'timber',
+  // B2, B6 intentionally omitted (no secondary resource)
+};
+
+// Tertiary resources (10% generation chance). Territories without tertiary are omitted.
+const SC_TERTIARY_RESOURCES = {
+  I8:'iron',  I1:'stone',
+  W3:'gold',  W5:'timber',
+  B10:'stone',
+  S5:'gold',
+  C4:'timber',C6:'gold',
+};
+
+// Food bonus per territory (flat food generated each activation, in addition to primary/secondary/tertiary).
+const SC_FOOD_BONUS = {
+  S1:1, S2:1, S4:1, S7:1,
+  S3:2, S5:2, S6:2, S8:2, S9:2,
+};
+
+/**
+ * generateResourcesForTerritory
+ * Returns an emptyStorage-shaped object of all resources to generate for one activation.
+ * For SC map: primary always; secondary 40%; tertiary 10%; food_bonus always.
+ * For V1 map: primary only (legacy behaviour preserved).
+ */
+function generateResourcesForTerritory(mapId, territoryId) {
+  const generated = emptyStorage();
+  if (mapId === 'shattered_crown_v1') {
+    const primary = SC_RESOURCE_TYPES[territoryId];
+    if (primary) generated[primary] = (generated[primary] || 0) + 1;
+
+    const secondary = SC_SECONDARY_RESOURCES[territoryId];
+    if (secondary && Math.random() < 0.4) {
+      generated[secondary] = (generated[secondary] || 0) + 1;
+    }
+
+    const tertiary = SC_TERTIARY_RESOURCES[territoryId];
+    if (tertiary && Math.random() < 0.1) {
+      generated[tertiary] = (generated[tertiary] || 0) + 1;
+    }
+
+    const foodBonus = SC_FOOD_BONUS[territoryId] ?? 0;
+    if (foodBonus > 0) {
+      generated['food'] = (generated['food'] || 0) + foodBonus;
+    }
+  } else {
+    // V1 map: primary resource only (legacy)
+    const primary = V1_RESOURCE_TYPES[territoryId] ?? 'food';
+    generated[primary] = (generated[primary] || 0) + 1;
+  }
+  return generated;
+}
+
+function addMultipleToStorage(storage, generated) {
+  const s = { ...emptyStorage(), ...(storage ?? {}) };
+  for (const [r, amount] of Object.entries(generated)) {
+    if (VALID_RESOURCES.includes(r) && amount > 0) {
+      s[r] = (s[r] || 0) + amount;
+    }
+  }
+  return s;
+}
 
 function getResourceTypeForTerritory(mapId, territoryId) {
   if (mapId === 'shattered_crown_v1') return SC_RESOURCE_TYPES[territoryId] ?? 'food';
@@ -256,16 +331,17 @@ Deno.serve(async (req) => {
     for (const territory_id of territory_ids) {
       const ts = myStates.find(s => s.territory_id === territory_id);
       if (!ts) continue; // silently skip territories not owned by this player
-      const resourceType = ts.resource_type ?? getResourceTypeForTerritory(mapId, territory_id);
+      const primaryResource = SC_RESOURCE_TYPES[territory_id] ?? getResourceTypeForTerritory(mapId, territory_id);
+      const generated = generateResourcesForTerritory(mapId, territory_id);
       const storageBefore = { ...emptyStorage(), ...(ts.resource_storage ?? {}) };
-      const storageAfter = addToStorage(storageBefore, resourceType, 1);
+      const storageAfter = addMultipleToStorage(storageBefore, generated);
 
       await base44.asServiceRole.entities.TerritoryState.update(ts.id, {
         resource_storage: storageAfter,
-        resource_type: resourceType,
+        resource_type: primaryResource,
       });
 
-      results.push({ territory_id, resource_type: resourceType, storage_after: storageAfter });
+      results.push({ territory_id, primary_resource: primaryResource, generated, storage_after: storageAfter });
     }
 
     await log(base44, campaign_id, round, 'resource_activations_locked', actingPlayer.id, {
@@ -302,20 +378,21 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'You do not own this territory' }, { status: 403 });
     }
 
-    const resourceType = ts.resource_type ?? getResourceTypeForTerritory(mapId, territory_id);
+    const primaryResource = SC_RESOURCE_TYPES[territory_id] ?? getResourceTypeForTerritory(mapId, territory_id);
+    const generated = generateResourcesForTerritory(mapId, territory_id);
     const storageBefore = { ...emptyStorage(), ...(ts.resource_storage ?? {}) };
-    const storageAfter = addToStorage(storageBefore, resourceType, 1);
+    const storageAfter = addMultipleToStorage(storageBefore, generated);
 
     await base44.asServiceRole.entities.TerritoryState.update(ts.id, {
       resource_storage: storageAfter,
-      resource_type: resourceType,
+      resource_type: primaryResource,
     });
 
     await log(base44, campaign_id, round, 'resource_generated', actingPlayer.id, {
-      territory_id, resource_type: resourceType, amount: 1,
+      territory_id, primary_resource: primaryResource, generated,
     }, false);
 
-    return Response.json({ success: true, territory_id, resource_type: resourceType, storage_after: storageAfter });
+    return Response.json({ success: true, territory_id, primary_resource: primaryResource, generated, storage_after: storageAfter });
   }
 
   // ── ACTION: generateAll ────────────────────────────────────────────────────
@@ -327,19 +404,21 @@ Deno.serve(async (req) => {
 
     const results = [];
     for (const ts of ownedStates) {
-      const resourceType = ts.resource_type ?? getResourceTypeForTerritory(mapId, ts.territory_id);
+      const primaryResource = SC_RESOURCE_TYPES[ts.territory_id] ?? getResourceTypeForTerritory(mapId, ts.territory_id);
+      const generated = generateResourcesForTerritory(mapId, ts.territory_id);
       const storageBefore = { ...emptyStorage(), ...(ts.resource_storage ?? {}) };
-      const storageAfter = addToStorage(storageBefore, resourceType, 1);
+      const storageAfter = addMultipleToStorage(storageBefore, generated);
 
       await base44.asServiceRole.entities.TerritoryState.update(ts.id, {
         resource_storage: storageAfter,
-        resource_type: resourceType,
+        resource_type: primaryResource,
       });
 
       results.push({
         territory_id: ts.territory_id,
         owner_player_id: ts.owner_player_id,
-        resource_type: resourceType,
+        primary_resource: primaryResource,
+        generated,
         storage_before: storageBefore,
         storage_after: storageAfter,
       });
