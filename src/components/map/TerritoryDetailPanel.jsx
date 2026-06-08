@@ -12,6 +12,7 @@ import { getResourceConfig } from '@/config/resourceConfig';
 import { SC_TERRITORY_BY_ID } from '@/shared/maps/shatteredCrownConfig';
 import { getBuildingPillar } from '@/config/buildingDefinitions';
 import TerritorySlotDisplay from './TerritorySlotDisplay';
+import TerritoryBuildingsDisplay from '@/components/buildings/TerritoryBuildingsDisplay';
 
 const TERRAIN_LABELS = {
   mountains: '⛰ Mountains',
@@ -201,15 +202,14 @@ export default function TerritoryDetailPanel({
             </div>
           )}
 
-          {/* Structures */}
-          {tState?.structures?.length > 0 && (
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-muted-foreground">Structures</span>
-              <div className="flex gap-1 flex-wrap justify-end">
-                {tState.structures.map(s => (
-                  <span key={s} className="badge-info capitalize">{s}</span>
-                ))}
-              </div>
+          {/* Buildings — Sprint 4D: show buildings with effects */}
+          {(territoryBuildings?.length > 0 || tState?.structures?.length > 0) && (
+            <div className="space-y-1">
+              <span className="text-xs text-muted-foreground">Buildings</span>
+              <TerritoryBuildingsDisplay
+                territoryBuildings={territoryBuildings ?? []}
+                legacyStructures={tState?.structures ?? []}
+              />
             </div>
           )}
 

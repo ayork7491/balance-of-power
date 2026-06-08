@@ -94,13 +94,13 @@ export default function RightDockRouter({
               <SetupInfoPanel campaign={campaign} players={players} />
             ) : GAMEPLAY_PHASES.has(phase) ? (
               phase === 'deploy' ? (
-                <DeployInfoPanel campaign={campaign} players={players} />
+                <DeployInfoPanel campaign={campaign} players={players} myPlayer={myPlayer} />
               ) : phase === 'attack' ? (
                 <AttackInfoPanel campaign={campaign} players={players} mapDef={mapDef} />
               ) : phase === 'battle' ? (
                 <BattleInfoPanel campaign={campaign} players={players} />
               ) : phase === 'fortify' ? (
-                <FortifyInfoPanel campaign={campaign} players={players} />
+                <FortifyInfoPanel campaign={campaign} players={players} myPlayer={myPlayer} />
               ) : (
                 <InfoPanelPlaceholder activeTab="phase" />
               )
@@ -113,13 +113,13 @@ export default function RightDockRouter({
               <SetupInfoPanel campaign={campaign} players={players} />
             ) : GAMEPLAY_PHASES.has(phase) ? (
               phase === 'deploy' ? (
-                <DeployInfoPanel campaign={campaign} players={players} />
+                <DeployInfoPanel campaign={campaign} players={players} myPlayer={myPlayer} />
               ) : phase === 'attack' ? (
                 <AttackInfoPanel campaign={campaign} players={players} mapDef={mapDef} />
               ) : phase === 'battle' ? (
                 <BattleInfoPanel campaign={campaign} players={players} />
               ) : phase === 'fortify' ? (
-                <FortifyInfoPanel campaign={campaign} players={players} />
+                <FortifyInfoPanel campaign={campaign} players={players} myPlayer={myPlayer} />
               ) : (
                 <InfoPanelPlaceholder activeTab={activeTab} />
               )

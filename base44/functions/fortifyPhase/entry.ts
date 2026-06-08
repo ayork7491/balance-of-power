@@ -349,7 +349,32 @@ Deno.serve(async (req) => {
   const round = campaign.current_round ?? 1;
   const phase = 'fortify';
   const maxFortifications = campaign.settings?.max_fortifications_per_phase ?? DEFAULT_MAX_FORTIFICATIONS;
-  const maxDistance = campaign.settings?.max_fortification_distance ?? DEFAULT_MAX_DISTANCE;
+  const baseMaxDistance = campaign.settings?.max_fortification_distance ?? DEFAULT_MAX_DISTANCE;
+
+  // Sprint 4D: Compute per-player building bonuses (Logistics Corps, Builders Guild).
+  // Called lazily — only fetches when the relevant actions need them.
+  async function getPlayerBuildingBonuses(playerId) {
+    const allStatesForPlayer = await base44.asServiceRole.entities.TerritoryState.filter({
+      campaign_id, owner_player_id: playerId,
+    });
+    const playerBuildings = await base44.asServiceRole.entities.TerritoryBuilding.filter({
+      campaign_id, player_id: playerId,
+    });
+    const activeBuildings = playerBuildings.filter(b => b.status === 'active');
+
+    // Logistics Corps: +1 fortification distance per active Logistics Corps
+    const logisticsCorpsCount = activeBuildings.filter(b => b.building_type === 'logistics_corps').length;
+
+    // Builders Guild: +1 concurrent construction slot per active Builders Guild
+    const buildersGuildCount = activeBuildings.filter(b => b.building_type === 'builders_guild').length;
+
+    return {
+      extraFortificationDistance: logisticsCorpsCount,
+      extraConstructionSlots: buildersGuildCount,
+    };
+  }
+
+  const maxDistance = baseMaxDistance; // default; may be overridden per-player below
 
   // ── ACTION: startFortify ───────────────────────────────────────────────────────
   if (action === 'startFortify') {
@@ -426,6 +451,10 @@ Deno.serve(async (req) => {
     }
 
     // Validate adjacency/distance with path finding
+    // Sprint 4D: Logistics Corps increases max distance per player
+    const playerBonuses = await getPlayerBuildingBonuses(actingPlayer.id);
+    const effectiveMaxDistance = baseMaxDistance + playerBonuses.extraFortificationDistance;
+
     const adj = buildAdjacency(campaign.map_id ?? 'map_v1_standard');
 
     // Get all territories owned by acting player for path validation
@@ -434,9 +463,9 @@ Deno.serve(async (req) => {
     );
     
     const pathResult = findPath(origin_territory_id, destination_territory_id, adj, ownedTerritoryIds);
-    if (pathResult.distance > maxDistance) {
+    if (pathResult.distance > effectiveMaxDistance) {
       return Response.json({ 
-        error: `Distance ${pathResult.distance} exceeds maximum ${maxDistance}. Path must travel through owned territories only.`,
+        error: `Distance ${pathResult.distance} exceeds maximum ${effectiveMaxDistance}. Path must travel through owned territories only.`,
       }, { status: 400 });
     }
     if (pathResult.path.length === 0) {
@@ -577,8 +606,27 @@ Deno.serve(async (req) => {
     const decision = decisions[0];
     if (!decision) return Response.json({ error: `No fortify decision found for player ${actingPlayer.display_name}. Phase may not have started yet.` }, { status: 404 });
     if (decision.is_locked) return Response.json({ error: 'You have already locked your fortifications' }, { status: 400 });
-    if (decision.data?.construction) {
-      return Response.json({ error: 'Construction project already started this phase' }, { status: 400 });
+    // Sprint 4D: Builders Guild increases max concurrent construction slots
+    const constructionBonuses = await getPlayerBuildingBonuses(actingPlayer.id);
+    const baseConstructionSlots = 1;
+    const effectiveConstructionSlots = baseConstructionSlots + constructionBonuses.extraConstructionSlots;
+
+    // Count how many construction projects are already staged this phase
+    // (PhaseDecision.data.construction is a single slot in V1; with Builders Guild it expands)
+    // For simplicity, check against active ConstructionProjects from previous rounds too
+    const activeProjects = await base44.asServiceRole.entities.ConstructionProject.filter({
+      campaign_id,
+      player_id: actingPlayer.id,
+      status: 'in_progress',
+    });
+    // Current phase staged construction also counts
+    const stagedThisPhase = decision.data?.construction ? 1 : 0;
+    const totalActive = activeProjects.length + stagedThisPhase;
+
+    if (totalActive >= effectiveConstructionSlots) {
+      return Response.json({
+        error: `You already have ${totalActive} active construction project${totalActive !== 1 ? 's' : ''}. Max allowed: ${effectiveConstructionSlots}${constructionBonuses.extraConstructionSlots > 0 ? ` (base 1 + ${constructionBonuses.extraConstructionSlots} from Builders Guild)` : ''}.`,
+      }, { status: 400 });
     }
 
     // Store construction choice privately in PhaseDecision (revealed at processPhaseEnd)

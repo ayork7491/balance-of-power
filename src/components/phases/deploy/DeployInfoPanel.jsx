@@ -7,6 +7,8 @@ import { TrendingUp, RefreshCw, Loader2 } from 'lucide-react';
 import { useDeployIncome } from '@/features/campaigns/deploy';
 import { useSetupLogs } from '@/features/campaigns/setup';
 import { PLAYER_COLORS } from '@/config/theme';
+import { usePlayerBuildingModifiers } from '@/features/campaigns/buildings/usePlayerBuildingModifiers';
+import PlayerModifiersCard from '@/components/buildings/PlayerModifiersCard';
 
 function getPlayerHex(players, playerId) {
   const p = players?.find(pl => pl.id === playerId);
@@ -21,8 +23,13 @@ const EVENT_LABELS = {
   phase_advanced: 'Reveal → Attack phase begins',
 };
 
-export default function DeployInfoPanel({ campaign, players }) {
+export default function DeployInfoPanel({ campaign, players, myPlayer }) {
   const round = campaign?.current_round ?? 1;
+
+  const { modifiers, loading: loadingMods } = usePlayerBuildingModifiers({
+    campaignId: campaign?.id,
+    playerId: myPlayer?.id,
+  });
 
   const { incomes, loading: loadingIncome, reload: reloadIncome } = useDeployIncome({
     campaignId: campaign?.id,
@@ -52,6 +59,14 @@ export default function DeployInfoPanel({ campaign, players }) {
           <RefreshCw className="w-3 h-3" />
         </button>
       </div>
+
+      {/* My Active Modifiers — shown if player has any building effects */}
+      {myPlayer && (
+        <div className="space-y-1.5 pb-3 border-b border-border">
+          <p className="text-xs font-display tracking-wider uppercase text-muted-foreground">Building Modifiers</p>
+          <PlayerModifiersCard modifiers={modifiers} loading={loadingMods} />
+        </div>
+      )}
 
       {/* Public income */}
       <div className="space-y-1.5">

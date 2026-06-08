@@ -319,7 +319,19 @@ Deno.serve(async (req) => {
 
   const round = campaign.current_round ?? 1;
   const phase = 'attack';
-  const maxAttacks = campaign.settings?.max_attacks_per_phase ?? 3;
+  const baseMaxAttacks = campaign.settings?.max_attacks_per_phase ?? 3;
+
+  // Sprint 4D: War Council — +1 attack declaration per active War Council owned by acting player.
+  // Computed lazily inside stageAttack where it's needed.
+  async function getEffectiveMaxAttacksForPlayer(playerId) {
+    const playerBuildings = await base44.asServiceRole.entities.TerritoryBuilding.filter({
+      campaign_id,
+      player_id: playerId,
+      building_type: 'war_council',
+    });
+    const activeWarCouncils = playerBuildings.filter(b => b.status === 'active').length;
+    return baseMaxAttacks + activeWarCouncils;
+  }
 
   // ── ACTION: stageAttack ───────────────────────────────────────────────────────
   if (action === 'stageAttack') {
@@ -396,7 +408,8 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'You have already locked your attacks' }, { status: 400 });
     }
 
-    // Check max attacks
+    // Check max attacks (War Council may increase this per-player)
+    const maxAttacks = await getEffectiveMaxAttacksForPlayer(actingPlayer.id);
     if (currentAttacks.length >= maxAttacks) {
       return Response.json({ error: `Max ${maxAttacks} attacks per round` }, { status: 400 });
     }

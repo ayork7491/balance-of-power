@@ -471,6 +471,9 @@ Deno.serve(async (req) => {
     const deployIncomes = {};
     const incomeBreakdownLog = [];
 
+    // Load all TerritoryBuilding records once for building bonus calculations
+    const allTerritoryBuildings = await base44.asServiceRole.entities.TerritoryBuilding.filter({ campaign_id });
+
     for (const p of activePlayers) {
       const ownedStates      = allTerritoryStates.filter(s => s.owner_player_id === p.id);
       const territoriesOwned = ownedStates.length;
@@ -485,7 +488,17 @@ Deno.serve(async (req) => {
       const continentResult   = calcContinentBonusScaled(p.id, allTerritoryStates, mapTerritories, mapMeta.continents, avgBattleSize);
       const region_bonus      = regionResult.bonus;
       const continent_bonus   = continentResult.bonus;
-      const total             = territory_bonus + troop_bonus + region_bonus + continent_bonus;
+
+      // Sprint 4D: Barracks bonus — +1 troop per active Barracks owned by this player
+      // Counts both Sprint 3B+ TerritoryBuilding records AND legacy TerritoryState.structures
+      const playerBuildings = allTerritoryBuildings.filter(b => b.player_id === p.id && b.status === 'active');
+      const newBarracksCount = playerBuildings.filter(b => b.building_type === 'barracks').length;
+      const legacyBarracksCount = ownedStates.reduce((sum, ts) => {
+        return sum + (ts.structures ?? []).filter(s => s === 'barracks').length;
+      }, 0);
+      const building_bonus = newBarracksCount + legacyBarracksCount;
+
+      const total = territory_bonus + troop_bonus + region_bonus + continent_bonus + building_bonus;
 
       // Diagnostics log for Issue 2 & 3
       const breakdown = {
@@ -500,11 +513,11 @@ Deno.serve(async (req) => {
       console.log('[startDeploy] Income breakdown:', JSON.stringify(breakdown));
 
       const resources_generated = generateResourcesForPlayer(p.id, round, allTerritoryStates, mapTerritories, campaign_id);
-      deployIncomes[p.id] = { territory_bonus, troop_bonus, region_bonus, continent_bonus, total };
+      deployIncomes[p.id] = { territory_bonus, troop_bonus, region_bonus, continent_bonus, building_bonus, total };
 
       await base44.asServiceRole.entities.DeployIncome.create({
         campaign_id, round, player_id: p.id,
-        territory_bonus, troop_bonus, region_bonus, continent_bonus, total, resources_generated,
+        territory_bonus, troop_bonus, region_bonus, continent_bonus, building_bonus, total, resources_generated,
       });
 
       await base44.asServiceRole.entities.PhaseDecision.create({
