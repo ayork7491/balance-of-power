@@ -611,5 +611,54 @@ Deno.serve(async (req) => {
     return Response.json({ success: true, card_id, target_player: targetPlayer.display_name });
   }
 
+  // ── ACTION: seedCatalog (admin only) ──────────────────────────────────────
+  // Bulk-upserts the objective catalog into SecretObjectiveCard records.
+  // Idempotent: updates existing records by card_id, creates missing ones.
+  if (action === 'seedCatalog') {
+    if (!isAdmin) return Response.json({ error: 'Admin only' }, { status: 403 });
+
+    const { catalog } = body;
+    if (!Array.isArray(catalog) || catalog.length === 0) {
+      return Response.json({ error: 'catalog array is required' }, { status: 400 });
+    }
+
+    const existing = await base44.asServiceRole.entities.SecretObjectiveCard.list();
+    const existingByCardId = {};
+    for (const c of existing) existingByCardId[c.card_id] = c;
+
+    let created = 0;
+    let updated = 0;
+
+    for (const obj of catalog) {
+      const record = existingByCardId[obj.card_id];
+      const payload = {
+        card_id: obj.card_id,
+        category: obj.category,
+        tier: obj.tier,
+        title: obj.title,
+        description: obj.description,
+        completion_condition: obj.completion_condition ?? null,
+        condition_params: obj.condition_params ?? {},
+        placement_rule: obj.placement_rule ?? 'chosen_territory',
+        auto_completable: obj.automation_level === 'automatic',
+      };
+      if (record) {
+        await base44.asServiceRole.entities.SecretObjectiveCard.update(record.id, payload);
+        updated++;
+      } else {
+        await base44.asServiceRole.entities.SecretObjectiveCard.create(payload);
+        created++;
+      }
+    }
+
+    return Response.json({
+      success: true,
+      created,
+      updated,
+      total: catalog.length,
+      message: `Catalog seeded: ${created} created, ${updated} updated.`,
+    });
+  }
+
   return Response.json({ error: `Unknown action: ${action}` }, { status: 400 });
 });

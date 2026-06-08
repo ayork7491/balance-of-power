@@ -43,6 +43,7 @@ import MapExport              from './pages/MapExport';
 import MapValidation          from './pages/MapValidation';
 import MapGeometryAudit       from './pages/MapGeometryAudit';
 import Sprint4AValidation    from './pages/Sprint4AValidation';
+import ObjectiveCatalog      from './pages/ObjectiveCatalog';
 
 function App() {
   return (
@@ -91,6 +92,7 @@ function App() {
               <Route path="/map-validation"                         element={<MapValidation />} />
               <Route path="/map-geometry-audit"                    element={<MapGeometryAudit />} />
               <Route path="/sprint4a-validation"                  element={<Sprint4AValidation />} />
+              <Route path="/objective-catalog"                    element={<ObjectiveCatalog />} />
             </Route>
 
             {/* 404 */}
