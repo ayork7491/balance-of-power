@@ -23,47 +23,23 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
 // ─── Adjacency data (inline — no local imports in Deno) ───────────────────────
-
-const V1_ADJACENCY_PAIRS = [
-  ['frost_peak','irongate'],['irongate','tundra_flats'],['tundra_flats','glacier_pass'],
-  ['glacier_pass','stormwatch'],['stormwatch','crow_harbor'],['irongate','pale_cliffs'],
-  ['glacier_pass','veil_crossing'],['stormwatch','veil_crossing'],
-  ['frost_peak','ashwood'],['pale_cliffs','redstone_ridge'],
-  ['tundra_flats','heartlands'],['glacier_pass','golden_citadel'],
-  ['veil_crossing','deepstone'],['veil_crossing','the_crossing'],
-  ['stormwatch','blackstone'],['crow_harbor','ember_coast'],['veil_crossing','ashfen_coast'],
-  ['ashwood','redstone_ridge'],['ashwood','dustmarsh'],['redstone_ridge','saltfen'],
-  ['redstone_ridge','greywood'],['dustmarsh','saltfen'],['dustmarsh','verdant_vale'],
-  ['saltfen','greywood'],['saltfen','verdant_vale'],['greywood','verdant_vale'],
-  ['pale_cliffs','heartlands'],['redstone_ridge','heartlands'],['greywood','ember_vale'],
-  ['saltfen','stonefield'],
-  ['verdant_vale','sunken_delta'],['verdant_vale','dustplains'],
-  ['heartlands','golden_citadel'],['heartlands','iron_ridge'],['heartlands','stonefield'],
-  ['heartlands','ember_vale'],['golden_citadel','iron_ridge'],['golden_citadel','the_crossing'],
-  ['golden_citadel','deepstone'],['iron_ridge','stonefield'],['iron_ridge','the_crossing'],
-  ['ember_vale','stonefield'],
-  ['deepstone','blackstone'],['the_crossing','ashfen_coast'],['the_crossing','ridgeline'],
-  ['stonefield','sunspire'],['iron_ridge','verdant_basin'],['the_crossing','sea_gate'],
-  ['ember_coast','blackstone'],['ember_coast','iron_coast'],['blackstone','scalewood'],
-  ['blackstone','ashfen_coast'],['iron_coast','scalewood'],['iron_coast','the_bastion'],
-  ['scalewood','the_bastion'],['scalewood','ridgeline'],['ashfen_coast','ridgeline'],
-  ['ridgeline','the_bastion'],
-  ['the_bastion','crimson_shore'],['the_bastion','southern_reach'],['ridgeline','sea_gate'],
-  ['sunken_delta','dustplains'],['dustplains','amber_fields'],['amber_fields','sunspire'],
-  ['sunspire','verdant_basin'],['verdant_basin','sea_gate'],
-  ['sea_gate','crimson_shore'],['crimson_shore','southern_reach'],
-  ['verdant_basin','crimson_shore'],
-];
+// SOURCE OF TRUTH: src/shared/maps/shatteredCrownConfig.ts — SC_ADJACENCY
+// Do not edit this block manually. Update shatteredCrownConfig.ts first, then propagate.
+// Covers: land, maritime, river_crossing edges (all traversable for supply routes).
 
 const SC_ADJACENCY_TYPED = [
+  // ── IRONSPINE internal ───────────────────────────────────────────────────
   {from:'I8',to:'I4',type:'land'},{from:'I4',to:'I3',type:'land'},
   {from:'I4',to:'I7',type:'land'},{from:'I6',to:'I3',type:'land'},
   {from:'I6',to:'I5',type:'land'},{from:'I6',to:'I7',type:'land'},
   {from:'I1',to:'I2',type:'land'},{from:'I1',to:'I5',type:'land'},
   {from:'I2',to:'I3',type:'land'},{from:'I2',to:'I5',type:'land'},
+  // ── IRONSPINE ↔ FRACTURE BASIN ────────────────────────────────────────
   {from:'I6',to:'B1',type:'land'},{from:'I7',to:'B1',type:'land'},
   {from:'I7',to:'B3',type:'land'},
+  // ── IRONSPINE ↔ SHATTERED COAST ───────────────────────────────────────
   {from:'I8',to:'C1',type:'maritime'},
+  // ── WILD FRONTIER internal ────────────────────────────────────────────
   {from:'W1',to:'W2',type:'land'},{from:'W2',to:'W3',type:'land'},
   {from:'W2',to:'W4',type:'land'},{from:'W2',to:'W5',type:'land'},
   {from:'W3',to:'W5',type:'land'},{from:'W3',to:'W6',type:'land'},
@@ -71,7 +47,9 @@ const SC_ADJACENCY_TYPED = [
   {from:'W5',to:'W6',type:'land'},{from:'W5',to:'W7',type:'land'},
   {from:'W5',to:'W8',type:'land'},{from:'W6',to:'W9',type:'land'},
   {from:'W7',to:'W8',type:'land'},{from:'W8',to:'W9',type:'land'},
+  // ── WILD FRONTIER ↔ SUNFIELDS ─────────────────────────────────────────
   {from:'W7',to:'S1',type:'land'},{from:'W9',to:'S2',type:'land'},
+  // ── FRACTURE BASIN internal ───────────────────────────────────────────
   {from:'B1',to:'B3',type:'land'},{from:'B1',to:'B2',type:'land'},
   {from:'B3',to:'B2',type:'land'},{from:'B3',to:'B4',type:'land'},
   {from:'B2',to:'B4',type:'land'},{from:'B2',to:'B5',type:'land'},
@@ -80,15 +58,20 @@ const SC_ADJACENCY_TYPED = [
   {from:'B6',to:'B7',type:'land'},{from:'B6',to:'B8',type:'land'},
   {from:'B6',to:'B9',type:'land'},{from:'B7',to:'B10',type:'land'},
   {from:'B8',to:'B9',type:'land'},{from:'B9',to:'B10',type:'land'},
+  // ── FRACTURE BASIN ↔ SHATTERED COAST ──────────────────────────────────
   {from:'B10',to:'C6',type:'maritime'},{from:'B10',to:'C4',type:'maritime'},
+  // ── FRACTURE BASIN ↔ SUNFIELDS ────────────────────────────────────────
   {from:'B10',to:'S3',type:'river_crossing'},
+  // ── SUNFIELDS internal ────────────────────────────────────────────────
   {from:'S1',to:'S2',type:'land'},{from:'S1',to:'S4',type:'land'},
   {from:'S4',to:'S5',type:'land'},{from:'S4',to:'S7',type:'land'},
   {from:'S7',to:'S5',type:'land'},{from:'S7',to:'S8',type:'land'},
   {from:'S2',to:'S3',type:'land'},{from:'S2',to:'S5',type:'land'},
   {from:'S5',to:'S8',type:'land'},{from:'S5',to:'S6',type:'land'},
   {from:'S3',to:'S6',type:'land'},{from:'S6',to:'S9',type:'land'},
+  // ── SUNFIELDS ↔ SHATTERED COAST ───────────────────────────────────────
   {from:'S6',to:'C8',type:'maritime'},{from:'S9',to:'C8',type:'maritime'},
+  // ── SHATTERED COAST internal ──────────────────────────────────────────
   {from:'C1',to:'C2',type:'maritime'},{from:'C2',to:'C3',type:'land'},
   {from:'C3',to:'C4',type:'maritime'},{from:'C3',to:'C5',type:'maritime'},
   {from:'C4',to:'C5',type:'maritime'},{from:'C4',to:'C6',type:'maritime'},
@@ -97,16 +80,15 @@ const SC_ADJACENCY_TYPED = [
   {from:'C7',to:'C8',type:'maritime'},
 ];
 
-const SC_ADJACENCY_PAIRS = SC_ADJACENCY_TYPED.map(({ from, to }) => [from, to]);
-
-function buildAdjacency(mapId) {
-  const pairs = mapId === 'shattered_crown_v1' ? SC_ADJACENCY_PAIRS : V1_ADJACENCY_PAIRS;
+// Build bidirectional adjacency map from Shattered Crown canonical data.
+// All edge types (land, maritime, river_crossing) are traversable for supply routes.
+function buildAdjacency() {
   const adj = {};
-  for (const [a, b] of pairs) {
-    if (!adj[a]) adj[a] = new Set();
-    if (!adj[b]) adj[b] = new Set();
-    adj[a].add(b);
-    adj[b].add(a);
+  for (const { from, to } of SC_ADJACENCY_TYPED) {
+    if (!adj[from]) adj[from] = new Set();
+    if (!adj[to])   adj[to]   = new Set();
+    adj[from].add(to);
+    adj[to].add(from);
   }
   return adj;
 }
@@ -186,8 +168,7 @@ Deno.serve(async (req) => {
 
   const isAdmin = campaign.admin_user_id === user.id;
   const round = campaign.current_round ?? 1;
-  const mapId = campaign.map_id ?? 'map_v1_standard';
-  const adj = buildAdjacency(mapId);
+  const adj = buildAdjacency();
 
   // Acting-as support
   const { acting_as_player_id } = body;
