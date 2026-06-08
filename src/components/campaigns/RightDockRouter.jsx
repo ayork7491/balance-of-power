@@ -32,6 +32,9 @@ import RegionalInfluencePanel from '@/components/influence/RegionalInfluencePane
 // Diplomatic actions panel (Sprint 4H)
 import DiplomaticActionsPanel from '@/components/influence/DiplomaticActionsPanel';
 
+// Objectives panel (Sprint 4I)
+import ObjectivesPanel from '@/components/objectives/ObjectivesPanel';
+
 const SETUP_PHASES = new Set(['faction_selection', 'territory_draft', 'initial_deploy']);
 const GAMEPLAY_PHASES = new Set(['deploy', 'attack', 'battle', 'fortify']);
 
@@ -71,15 +74,26 @@ export default function RightDockRouter({
             </div>
           ) : activeTab === 'influence' ? (
             <div className="h-full overflow-y-auto dock-scroll">
-              {/* Diplomatic Actions — Sprint 4H */}
-              <DiplomaticActionsPanel
+              {/* Secret Objectives — Sprint 4I */}
+              <ObjectivesPanel
                 campaign={campaign}
                 myPlayer={myPlayer}
-                players={players}
-                mapDef={mapDef}
+                isAdmin={isAdmin}
                 actingAsPlayerId={actingAsPlayerId}
                 stateById={stateById ?? {}}
+                players={players}
               />
+              {/* Diplomatic Actions — Sprint 4H */}
+              <div className="border-t border-border">
+                <DiplomaticActionsPanel
+                  campaign={campaign}
+                  myPlayer={myPlayer}
+                  players={players}
+                  mapDef={mapDef}
+                  actingAsPlayerId={actingAsPlayerId}
+                  stateById={stateById ?? {}}
+                />
+              </div>
               {/* Regional Influence summary — Sprint 4G */}
               <div className="border-t border-border px-3 pt-3 pb-3">
                 <p className="font-display text-[10px] tracking-widest uppercase text-muted-foreground flex items-center gap-2 mb-2">
@@ -169,5 +183,5 @@ export default function RightDockRouter({
         </div>
       </div>
     );
-  }, [activeTab, campaign, players, mapDef, myPlayer, isAdmin]);
+  }, [activeTab, campaign, players, mapDef, myPlayer, isAdmin, influenceByRegion, influencePlayerTotals, actingAsPlayerId, stateById]);
 }

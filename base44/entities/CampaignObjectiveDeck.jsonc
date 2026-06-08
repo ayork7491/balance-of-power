@@ -1,0 +1,69 @@
+{
+  "name": "CampaignObjectiveDeck",
+  "type": "object",
+  "description": "Per-campaign objective deck state. Tracks the draw pile and discard pile as ordered arrays of card_ids. One record per campaign. Sprint 4I.",
+  "properties": {
+    "campaign_id": {
+      "type": "string",
+      "description": "FK \u2192 Campaign.id. One record per campaign."
+    },
+    "draw_pile": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Ordered array of card_ids available to draw. Top of deck = index 0."
+    },
+    "discard_pile": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "All card_ids that have been discarded or completed this campaign. Reshuffled into draw_pile when draw_pile is empty."
+    },
+    "opportunity_log": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "round": {
+            "type": "number"
+          },
+          "player_id": {
+            "type": "string"
+          },
+          "drawn": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "kept": {
+            "type": "string"
+          },
+          "discarded": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "timestamp": {
+            "type": "string"
+          }
+        }
+      },
+      "default": [],
+      "description": "Log of all draw/keep/discard events for audit. Appended on each opportunity resolution."
+    },
+    "initialized_at_round": {
+      "type": "number",
+      "default": 0,
+      "description": "Round when the deck was first initialized."
+    }
+  },
+  "required": [
+    "campaign_id"
+  ]
+}
