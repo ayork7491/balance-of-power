@@ -1,0 +1,39 @@
+{
+  "name": "TerritoryInfluence",
+  "type": "object",
+  "description": "Tracks diplomatic influence per player per territory. Influence is a separate power layer \u2014 it does not affect ownership or troop count. One record per player per territory per campaign. Sprint 4F: foundation layer only.",
+  "properties": {
+    "campaign_id": {
+      "type": "string",
+      "description": "FK \u2192 Campaign.id"
+    },
+    "territory_id": {
+      "type": "string",
+      "description": "Canonical territory_id (e.g. 'B2', 'S5'). FK \u2192 TerritoryDefinition."
+    },
+    "player_id": {
+      "type": "string",
+      "description": "FK \u2192 CampaignPlayer.id \u2014 the player who holds this influence."
+    },
+    "influence_amount": {
+      "type": "number",
+      "default": 0,
+      "description": "Current influence this player holds in this territory. Never goes below 0."
+    },
+    "last_updated_round": {
+      "type": "number",
+      "default": 0,
+      "description": "Round when this record was last modified."
+    },
+    "source": {
+      "type": "string",
+      "description": "How this influence was gained (e.g. 'manual', 'spread', 'council_action'). For audit/future use.",
+      "default": "manual"
+    }
+  },
+  "required": [
+    "campaign_id",
+    "territory_id",
+    "player_id"
+  ]
+}

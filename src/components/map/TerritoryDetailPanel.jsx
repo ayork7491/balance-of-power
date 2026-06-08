@@ -14,6 +14,7 @@ import { getBuildingPillar } from '@/config/buildingDefinitions';
 import TerritorySlotDisplay from './TerritorySlotDisplay';
 import TerritoryBuildingsDisplay from '@/components/buildings/TerritoryBuildingsDisplay';
 import TerritoryHubInfo from '@/components/logistics/TerritoryHubInfo';
+import TerritoryInfluenceDisplay from '@/components/influence/TerritoryInfluenceDisplay';
 
 const TERRAIN_LABELS = {
   mountains: '⛰ Mountains',
@@ -36,6 +37,7 @@ export default function TerritoryDetailPanel({
   territoryBuildings,   // TerritoryBuilding[] — Sprint 3B+ buildings for this territory
   hubData,              // Hub summary from usePlayerLogistics (if this territory has a hub) — Sprint 4E
   mapDef,               // MapDefinition — needed for TerritoryHubInfo territory name lookups
+  influenceRecords,     // { player_id, influence_amount }[] for this territory — Sprint 4F
   onClose,
   // ── Lock state ──
   isLocked,             // boolean — territory is locked by a delayed battle
@@ -223,6 +225,15 @@ export default function TerritoryDetailPanel({
               <TerritoryHubInfo hubData={hubData} mapDef={mapDef} />
             </div>
           )}
+
+          {/* Influence — Sprint 4F */}
+          <div className="space-y-1 pt-1 border-t border-border">
+            <span className="text-xs text-muted-foreground">🕊 Influence</span>
+            <TerritoryInfluenceDisplay
+              influenceRecords={influenceRecords ?? []}
+              players={players}
+            />
+          </div>
 
           {/* Adjacent territories */}
           {adjacentTerritories.length > 0 && (

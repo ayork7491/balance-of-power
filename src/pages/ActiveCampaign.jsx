@@ -26,6 +26,7 @@ import { useCampaign } from '@/features/campaigns';
 import { useTerritoryState, getMap, buildAdjacencyMap } from '@/features/maps';
 import { CampaignTestModeProvider, useCampaignTestContext } from '@/features/adminTestMode/CampaignTestContext';
 import { usePlayerLogistics } from '@/features/campaigns/logistics/usePlayerLogistics';
+import { useInfluenceState } from '@/features/campaigns/influence/useInfluenceState';
 import { base44 } from '@/api/base44Client';
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
@@ -213,6 +214,12 @@ function ActiveCampaignContent() {
   const { hubs: logisticsHubs, reload: reloadLogistics } = usePlayerLogistics({
     campaignId: id,
     playerId: myPlayer?.id,
+  });
+
+  // Influence state — all influence records for this campaign, indexed by territory_id
+  const { influenceByTerritory } = useInfluenceState({
+    campaignId: id,
+    enabled: !!id,
   });
 
   // Index hubs by territory_id for O(1) lookup in TerritoryDetailPanel
@@ -443,6 +450,7 @@ function ActiveCampaignContent() {
                 territoryBuildings={territoryBuildingsById[selectedTerritoryId] ?? []}
                 hubData={hubsByTerritoryId[selectedTerritoryId] ?? null}
                 mapDef={mapDef}
+                influenceRecords={influenceByTerritory[selectedTerritoryId] ?? []}
                 onClose={() => { setSelectedTerritoryId(null); setDraftClaimError(null); }}
                 isLocked={lockedIds?.has(selectedTerritoryId)}
                 phase={phase}
