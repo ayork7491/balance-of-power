@@ -180,3 +180,19 @@ export const BUILDINGS_BY_PILLAR: Record<PillarType, BuildingDefinition[]> = {
 export function getBuildingDefinition(type: BuildingType): BuildingDefinition | undefined {
   return BUILDING_DEFINITIONS_BY_TYPE[type];
 }
+
+/**
+ * getBuildingPillar — returns the pillar for any building type string.
+ *
+ * Handles:
+ *   - Sprint 3B+ building types (from ALL_BUILDING_DEFINITIONS)
+ *   - Legacy V1 structures: castle, barracks, stables → always 'military'
+ *   - Unknown types → 'military' as safe fallback
+ */
+export function getBuildingPillar(type: string): 'military' | 'economic' | 'diplomatic' {
+  const def = BUILDING_DEFINITIONS_BY_TYPE[type as BuildingType];
+  if (def) return def.pillar;
+  // Legacy V1 structures are all military
+  if (type === 'castle' || type === 'barracks' || type === 'stables') return 'military';
+  return 'military'; // safe fallback
+}

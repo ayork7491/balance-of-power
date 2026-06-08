@@ -16,18 +16,32 @@
 import { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { X } from 'lucide-react';
-import { ALL_BUILDING_DEFINITIONS } from '@/config/buildingDefinitions';
+import { ALL_BUILDING_DEFINITIONS, getBuildingPillar } from '@/config/buildingDefinitions';
 import { getSlotStatus, canPlaceBuilding, getSlotBlockedReason, SLOT_LABELS, SLOT_COLORS } from '@/services/maps/structureSlots';
 import TerritorySlotDisplay from '@/components/map/TerritorySlotDisplay';
 
 const PILLAR_ICONS = { military: '⚔', economic: '💰', diplomatic: '🕊' };
 
-/** Extract building pillars from a TerritoryState's structures array + TerritoryBuilding records. */
-function getExistingPillars(ts) {
+/**
+ * Extract building pillars from:
+ *   - TerritoryState.structures (completed legacy V1 buildings)
+ *   - TerritoryBuilding records (Sprint 3B+ completed AND in-progress)
+ *
+ * In-progress construction reserves a slot immediately to prevent
+ * double-booking the same slot in the same round.
+ */
+function getExistingPillars(ts, territoryBuildings = []) {
   const pillars = [];
-  // Legacy V1 structures — map to pillars (castle/barracks/stables are all military)
+  // Completed legacy V1 structures — use getBuildingPillar for correct classification
   for (const s of ts?.structures ?? []) {
-    pillars.push('military');
+    pillars.push(getBuildingPillar(s));
+  }
+  // Sprint 3B+ TerritoryBuilding records (all statuses except destroyed)
+  for (const b of territoryBuildings) {
+    if (b.status !== 'destroyed') {
+      // pillar_type is stored on the record; fall back to getBuildingPillar for safety
+      pillars.push(b.pillar_type ?? getBuildingPillar(b.building_type));
+    }
   }
   return pillars;
 }
@@ -38,6 +52,7 @@ export default function ConstructionSelector({
   stateById,
   mapDef,
   selectedTerritoryId,
+  territoryBuildings,   // TerritoryBuilding[] for the selected territory (active + in-progress)
   onStartConstruction,
   onClearSelection,
 }) {
@@ -47,7 +62,10 @@ export default function ConstructionSelector({
   const isOwned = ts?.owner_player_id === myPlayer?.id;
   const territoryName = mapDef?.territories?.find(t => t.territory_id === selectedTerritoryId)?.name ?? selectedTerritoryId;
 
-  const existingPillars = useMemo(() => getExistingPillars(ts), [ts]);
+  const existingPillars = useMemo(
+    () => getExistingPillars(ts, territoryBuildings ?? []),
+    [ts, territoryBuildings]
+  );
 
   const slotStatus = useMemo(
     () => selectedTerritoryId ? getSlotStatus(selectedTerritoryId, existingPillars) : null,

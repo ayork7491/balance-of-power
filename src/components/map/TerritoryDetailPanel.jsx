@@ -10,6 +10,7 @@ import { X, Shield, Swords, MapPin, Check, Loader2, Lock } from 'lucide-react';
 import { PLAYER_COLORS } from '@/config/theme';
 import { getResourceConfig } from '@/config/resourceConfig';
 import { SC_TERRITORY_BY_ID } from '@/shared/maps/shatteredCrownConfig';
+import { getBuildingPillar } from '@/config/buildingDefinitions';
 import TerritorySlotDisplay from './TerritorySlotDisplay';
 
 const TERRAIN_LABELS = {
@@ -30,6 +31,7 @@ export default function TerritoryDetailPanel({
   regionDef,            // MapRegion | null
   continentDef,         // MapContinent | null
   adjacentTerritories,  // TerritoryDefinition[]
+  territoryBuildings,   // TerritoryBuilding[] — Sprint 3B+ buildings for this territory
   onClose,
   // ── Lock state ──
   isLocked,             // boolean — territory is locked by a delayed battle
@@ -166,7 +168,14 @@ export default function TerritoryDetailPanel({
                   <span className="text-muted-foreground text-xs">Slots</span>
                   <TerritorySlotDisplay
                     territoryId={territory.territory_id}
-                    existingBuildingPillars={(tState?.structures ?? []).map(() => 'military')}
+                    existingBuildingPillars={[
+                      // Completed legacy V1 structures — correct pillar per type
+                      ...(tState?.structures ?? []).map(s => getBuildingPillar(s)),
+                      // Sprint 3B+ buildings (active + in-progress — reserves the slot)
+                      ...(territoryBuildings ?? [])
+                        .filter(b => b.status !== 'destroyed')
+                        .map(b => b.pillar_type ?? getBuildingPillar(b.building_type)),
+                    ]}
                   />
                 </div>
               )}

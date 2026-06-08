@@ -9,7 +9,7 @@
  *  - AdminAdvancePhase appears when all players are locked and user is admin.
  *  - Debug panel shows payload details in test mode.
  */
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { base44 } from '@/api/base44Client';
 import { Loader2, Check, X, ArrowRight, TestTube, User } from 'lucide-react';
 import { useFortifyPhase } from '@/features/campaigns/fortify/useFortifyPhase';
@@ -46,6 +46,27 @@ export default function FortifyPanel({
   const [construction, setConstruction] = useState(null);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+
+  // TerritoryBuilding records for the selected territory — used for accurate slot occupancy.
+  // Includes in-progress construction so slots are correctly reserved.
+  const [selectedTerritoryBuildings, setSelectedTerritoryBuildings] = useState([]);
+
+  const loadTerritoryBuildings = useCallback(async (territoryId) => {
+    if (!territoryId || !campaign?.id) { setSelectedTerritoryBuildings([]); return; }
+    try {
+      const buildings = await base44.entities.TerritoryBuilding.filter({
+        campaign_id: campaign.id,
+        territory_id: territoryId,
+      });
+      setSelectedTerritoryBuildings(buildings);
+    } catch {
+      setSelectedTerritoryBuildings([]);
+    }
+  }, [campaign?.id]);
+
+  useEffect(() => {
+    loadTerritoryBuildings(selectedTerritoryId);
+  }, [selectedTerritoryId, loadTerritoryBuildings]);
 
   const { stagedMovements, stagedConstruction, isLoading, reload } = useFortifyPhase({
     campaign,
@@ -149,6 +170,7 @@ export default function FortifyPanel({
         setConstruction({ territory_id: territoryId, structure_type: structureType });
         setSuccess('Construction staged');
         reload();
+        loadTerritoryBuildings(territoryId);
       }
     } catch (err) {
       setError(`startConstruction error (fn: fortifyPhase): ${err.message}`);
@@ -272,6 +294,7 @@ export default function FortifyPanel({
               stateById={stateById}
               mapDef={mapDef}
               selectedTerritoryId={selectedTerritoryId}
+              territoryBuildings={selectedTerritoryBuildings}
               onStartConstruction={handleStartConstruction}
               onClearSelection={onClearSelection}
             />
