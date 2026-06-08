@@ -13,6 +13,7 @@ import { SC_TERRITORY_BY_ID } from '@/shared/maps/shatteredCrownConfig';
 import { getBuildingPillar } from '@/config/buildingDefinitions';
 import TerritorySlotDisplay from './TerritorySlotDisplay';
 import TerritoryBuildingsDisplay from '@/components/buildings/TerritoryBuildingsDisplay';
+import TerritoryHubInfo from '@/components/logistics/TerritoryHubInfo';
 
 const TERRAIN_LABELS = {
   mountains: '⛰ Mountains',
@@ -33,6 +34,8 @@ export default function TerritoryDetailPanel({
   continentDef,         // MapContinent | null
   adjacentTerritories,  // TerritoryDefinition[]
   territoryBuildings,   // TerritoryBuilding[] — Sprint 3B+ buildings for this territory
+  hubData,              // Hub summary from usePlayerLogistics (if this territory has a hub) — Sprint 4E
+  mapDef,               // MapDefinition — needed for TerritoryHubInfo territory name lookups
   onClose,
   // ── Lock state ──
   isLocked,             // boolean — territory is locked by a delayed battle
@@ -210,6 +213,14 @@ export default function TerritoryDetailPanel({
                 territoryBuildings={territoryBuildings ?? []}
                 legacyStructures={tState?.structures ?? []}
               />
+            </div>
+          )}
+
+          {/* Resource Hub logistics info — Sprint 4E */}
+          {hubData && (
+            <div className="space-y-1 pt-1 border-t border-border">
+              <span className="text-xs text-muted-foreground">Resource Hub</span>
+              <TerritoryHubInfo hubData={hubData} mapDef={mapDef} />
             </div>
           )}
 

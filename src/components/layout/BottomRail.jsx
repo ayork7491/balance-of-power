@@ -3,7 +3,7 @@
  * Tabs: Map, Phase, Battles, Leaderboard, Territories, History.
  */
 import { motion } from 'framer-motion';
-import { Map, Swords, Shield, Trophy, Grid3x3, ScrollText, Package } from 'lucide-react';
+import { Map, Swords, Shield, Trophy, ScrollText, Package, GitBranch } from 'lucide-react';
 
 // Icon component wrapper
 function IconComponent({ Icon, isActive }) {
@@ -21,6 +21,7 @@ const TABS = [
   { id: 'map',          label: 'Map',          icon: Map       },
   { id: 'phase',        label: 'Phase',        icon: Shield    },
   { id: 'resources',    label: 'Resources',    icon: Package   },
+  { id: 'logistics',    label: 'Logistics',    icon: GitBranch },
   { id: 'battles',      label: 'Battles',      icon: Swords    },
   { id: 'leaderboard',  label: 'Standings',    icon: Trophy    },
   { id: 'history',      label: 'History',      icon: ScrollText},

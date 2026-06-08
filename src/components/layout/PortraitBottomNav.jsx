@@ -6,12 +6,13 @@
  * Labels always visible (portrait has more horizontal space per icon than compact landscape).
  */
 import { motion } from 'framer-motion';
-import { Map, Shield, Swords, Trophy, Grid3x3, ScrollText, Package } from 'lucide-react';
+import { Map, Shield, Swords, Trophy, ScrollText, Package, GitBranch } from 'lucide-react';
 
 const TABS = [
   { id: 'map',         label: 'Map',       icon: Map       },
   { id: 'phase',       label: 'Phase',     icon: Shield    },
   { id: 'resources',   label: 'Resources', icon: Package   },
+  { id: 'logistics',   label: 'Logistics', icon: GitBranch },
   { id: 'battles',     label: 'Battles',   icon: Swords    },
   { id: 'leaderboard', label: 'Standings', icon: Trophy    },
   { id: 'history',     label: 'History',   icon: ScrollText},

@@ -25,6 +25,7 @@ import { useAttackArrows } from '@/features/campaigns/attack/useAttackArrows.js'
 import { useCampaign } from '@/features/campaigns';
 import { useTerritoryState, getMap, buildAdjacencyMap } from '@/features/maps';
 import { CampaignTestModeProvider, useCampaignTestContext } from '@/features/adminTestMode/CampaignTestContext';
+import { usePlayerLogistics } from '@/features/campaigns/logistics/usePlayerLogistics';
 import { base44 } from '@/api/base44Client';
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
@@ -122,7 +123,8 @@ function ActiveCampaignContent() {
     reloadCampaign();
     reloadState();
     loadTerritoryBuildings();
-  }, [reloadCampaign, reloadState, loadTerritoryBuildings]);
+    reloadLogistics();
+  }, [reloadCampaign, reloadState, loadTerritoryBuildings, reloadLogistics]);
 
   // Selected territory details (using centralized selectedTerritoryId)
   const selectedTerritory   = useMemo(
@@ -206,6 +208,19 @@ function ActiveCampaignContent() {
     campaign: phase === 'attack' ? campaign : null,
     myPlayer,
   });
+
+  // Logistics state — hubs, routes, warehouses for myPlayer
+  const { hubs: logisticsHubs, reload: reloadLogistics } = usePlayerLogistics({
+    campaignId: id,
+    playerId: myPlayer?.id,
+  });
+
+  // Index hubs by territory_id for O(1) lookup in TerritoryDetailPanel
+  const hubsByTerritoryId = useMemo(() => {
+    const m = {};
+    for (const h of logisticsHubs) m[h.territory_id] = h;
+    return m;
+  }, [logisticsHubs]);
 
   // Attack reveals — loaded after attack phase ends (post-reveal)
   const { reveals: attackReveals } = useAttackReveals({
@@ -426,6 +441,8 @@ function ActiveCampaignContent() {
                 continentDef={selectedContinent}
                 adjacentTerritories={adjacentTerritories}
                 territoryBuildings={territoryBuildingsById[selectedTerritoryId] ?? []}
+                hubData={hubsByTerritoryId[selectedTerritoryId] ?? null}
+                mapDef={mapDef}
                 onClose={() => { setSelectedTerritoryId(null); setDraftClaimError(null); }}
                 isLocked={lockedIds?.has(selectedTerritoryId)}
                 phase={phase}

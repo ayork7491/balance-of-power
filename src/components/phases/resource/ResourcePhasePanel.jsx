@@ -224,7 +224,7 @@ export default function ResourcePhasePanel({ campaign, myPlayer, mapDef }) {
                           </div>
                         )}
                         {t.has_resource_hub && (
-                          <p className="text-[10px] text-status-info mt-0.5">🏭 Resource Hub — future supply routes will connect here</p>
+                          <p className="text-[10px] text-accent mt-0.5">🏭 Resource Hub — supply routes connect here (see Logistics tab)</p>
                         )}
                       </div>
                     </label>

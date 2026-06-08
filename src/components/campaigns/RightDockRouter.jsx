@@ -23,6 +23,9 @@ import RegionLegend from '@/components/map/RegionLegend';
 import ResourcePhasePanel from '@/components/phases/resource/ResourcePhasePanel';
 import ResourceDebugPanel from '@/components/phases/resource/ResourceDebugPanel';
 
+// Logistics panel (Sprint 4E)
+import LogisticsPanel from '@/components/logistics/LogisticsPanel';
+
 const SETUP_PHASES = new Set(['faction_selection', 'territory_draft', 'initial_deploy']);
 const GAMEPLAY_PHASES = new Set(['deploy', 'attack', 'battle', 'fortify']);
 
@@ -56,6 +59,8 @@ export default function RightDockRouter({
                 </div>
               )}
             </div>
+          ) : activeTab === 'logistics' ? (
+            <LogisticsPanel campaign={campaign} myPlayer={myPlayer} mapDef={mapDef} />
           ) : activeTab === 'leaderboard' ? (
             <>
               <LeaderboardPanel campaign={campaign} players={players} />
