@@ -62,23 +62,94 @@ function resolveActingCampaignPlayer({ user, campaign_id, acting_as_player_id, c
 const DEFAULT_MAX_FORTIFICATIONS = 3;
 const DEFAULT_MAX_DISTANCE = 4;
 
-const STRUCTURE_CONFIG = {
-  castle: {
-    cost: { brick: 2, lumber: 1, wool: 0, grain: 0, ore: 1 },
-    rounds: 2,
-    effect: 'Defensive bonus in battles',
-  },
-  barracks: {
-    cost: { brick: 1, lumber: 2, wool: 1, grain: 0, ore: 0 },
-    rounds: 1,
-    effect: '+1 troop income per turn',
-  },
-  stables: {
-    cost: { brick: 0, lumber: 2, wool: 2, grain: 1, ore: 0 },
-    rounds: 1,
-    effect: 'Increased fortification range',
-  },
+// ─── INLINE: Building definitions (Sprint 4C) ──────────────────────────────────
+// SOURCE OF TRUTH: src/config/buildingDefinitions.ts
+// Each entry includes pillar (for slot enforcement), cost, rounds.
+// ─────────────────────────────────────────────────────────────────────────────
+const BUILDING_DEFS = {
+  // Military
+  barracks:        { pillar: 'military',   cost: { gold: 2, iron: 1 },                    rounds: 1 },
+  war_council:     { pillar: 'military',   cost: { gold: 3, iron: 2 },                    rounds: 2 },
+  logistics_corps: { pillar: 'military',   cost: { gold: 2, iron: 1, timber: 1 },         rounds: 1 },
+  // Diplomatic
+  embassy:         { pillar: 'diplomatic', cost: { gold: 2, stone: 2 },                   rounds: 2 },
+  council_chamber: { pillar: 'diplomatic', cost: { gold: 3, stone: 2 },                   rounds: 2 },
+  foreign_office:  { pillar: 'diplomatic', cost: { gold: 2, stone: 1, timber: 1 },        rounds: 1 },
+  // Economic
+  marketplace:     { pillar: 'economic',   cost: { gold: 2, timber: 1 },                  rounds: 1 },
+  builders_guild:  { pillar: 'economic',   cost: { gold: 3, timber: 2 },                  rounds: 2 },
+  trade_network:   { pillar: 'economic',   cost: { gold: 2, timber: 2 },                  rounds: 2 },
+  resource_hub:    { pillar: 'economic',   cost: { gold: 3, timber: 1, stone: 1 },        rounds: 2 },
+  supply_route:    { pillar: 'economic',   cost: { gold: 1, timber: 1 },                  rounds: 1 },
+  warehouse:       { pillar: 'economic',   cost: { gold: 2, stone: 1 },                   rounds: 1 },
 };
+
+// Legacy V1 structure config kept for processPhaseEnd backward compat only.
+// New construction always uses BUILDING_DEFS.
+const LEGACY_STRUCTURE_CONFIG = {
+  castle:   { pillar: 'military', cost: { brick: 2, lumber: 1, ore: 1 }, rounds: 2 },
+  barracks: { pillar: 'military', cost: { brick: 1, lumber: 2, wool: 1 }, rounds: 1 },
+  stables:  { pillar: 'military', cost: { lumber: 2, wool: 2, grain: 1 }, rounds: 1 },
+};
+
+// Get building config from either registry (new buildings first, then legacy).
+function getBuildingConfig(structureType) {
+  return BUILDING_DEFS[structureType] ?? LEGACY_STRUCTURE_CONFIG[structureType] ?? null;
+}
+
+// ─── INLINE: Shattered Crown structure slots (Sprint 4C) ──────────────────────
+// SOURCE OF TRUTH: src/shared/maps/shatteredCrownConfig.ts — structure_slots per territory.
+// Do NOT edit manually. Update shatteredCrownConfig.ts, then propagate.
+// ─────────────────────────────────────────────────────────────────────────────
+const SC_STRUCTURE_SLOTS = {
+  I8:['military'],I4:['military','economic'],I6:['economic','military'],I7:['military','diplomatic'],
+  I1:['military'],I2:['military','omni'],I3:['diplomatic','diplomatic'],I5:['diplomatic','military'],
+  W1:['military','military'],W2:['diplomatic','economic'],W3:['economic'],W4:['military','diplomatic'],
+  W5:['omni'],W6:['economic','economic'],W7:['economic','omni'],W8:['military','diplomatic'],
+  W9:['military','economic'],
+  B1:['military','diplomatic'],B3:['diplomatic','omni'],B2:['diplomatic','diplomatic','omni'],
+  B4:['military','diplomatic'],B5:['military','military'],B6:['diplomatic','diplomatic','omni'],
+  B7:['military','economic'],B8:['diplomatic','military'],B9:['military','economic'],B10:['omni'],
+  S1:['military','diplomatic'],S4:['economic','economic'],S7:['economic','diplomatic'],
+  S2:['diplomatic','omni'],S5:['omni'],S8:['economic','economic'],S3:['military','economic'],
+  S6:['diplomatic','diplomatic'],S9:['military','omni'],
+  C1:['military','diplomatic'],C2:['military','economic'],C3:['military','omni'],C4:['omni'],
+  C5:['economic','diplomatic'],C6:['omni'],C7:['diplomatic','diplomatic'],C8:['military','diplomatic'],
+};
+
+/**
+ * canPlaceBuildingBackend
+ * Returns { allowed: true } or { allowed: false, reason: string }.
+ * Uses greedy slot matching: exact pillar first, then omni.
+ * existingPillars: string[] of 'military'|'economic'|'diplomatic' for already-placed buildings.
+ */
+function canPlaceBuildingBackend(territoryId, pillar, existingPillars) {
+  const slots = SC_STRUCTURE_SLOTS[territoryId];
+  if (!slots) return { allowed: true }; // V1 territory — no slot restriction
+
+  // Build a mutable pool of available slots
+  const pool = [...slots];
+
+  // Greedily consume existing pillars
+  for (const ep of existingPillars) {
+    const exactIdx = pool.findIndex(s => s === ep);
+    if (exactIdx >= 0) { pool.splice(exactIdx, 1); continue; }
+    const omniIdx = pool.findIndex(s => s === 'omni');
+    if (omniIdx >= 0) { pool.splice(omniIdx, 1); }
+    // else tolerate orphaned building
+  }
+
+  // Check if the new pillar fits
+  const exactFits = pool.includes(pillar);
+  const omniFits  = pool.includes('omni');
+
+  if (exactFits || omniFits) return { allowed: true };
+
+  if (pool.length === 0) {
+    return { allowed: false, reason: 'All structure slots in this territory are occupied.' };
+  }
+  return { allowed: false, reason: `This territory does not have an available ${pillar} slot.` };
+}
 
 // ─── Inline: Map Adjacency by map_id ─────────────────────────────────────────
 
@@ -457,8 +528,10 @@ Deno.serve(async (req) => {
     if (!territory_id || !structure_type) {
       return Response.json({ error: 'territory_id and structure_type are required' }, { status: 400 });
     }
-    if (!STRUCTURE_CONFIG[structure_type]) {
-      return Response.json({ error: `Invalid structure type: ${structure_type}` }, { status: 400 });
+
+    const buildingConfig = getBuildingConfig(structure_type);
+    if (!buildingConfig) {
+      return Response.json({ error: `Unknown building type: ${structure_type}` }, { status: 400 });
     }
 
     // ── Territory lock check ───────────────────────────────────────────────────
@@ -476,49 +549,58 @@ Deno.serve(async (req) => {
       return Response.json({ error: `You do not own ${territory_id}` }, { status: 400 });
     }
 
-    // Check for existing structure
-    if ((ts.structures ?? []).includes(structure_type)) {
-      return Response.json({ error: `Structure ${structure_type} already exists in ${territory_id}` }, { status: 400 });
-    }
+    // ── Sprint 4C: Structure slot enforcement ──────────────────────────────────
+    // Determine existing building pillars for this territory.
+    // Sources: TerritoryState.structures (legacy) + TerritoryBuilding (new Sprint 3B+)
+    const legacyPillars = (ts.structures ?? []).map(s => {
+      const cfg = getBuildingConfig(s);
+      return cfg?.pillar ?? 'military'; // legacy structures default to military
+    });
+    const existingBuildings = await base44.asServiceRole.entities.TerritoryBuilding.filter({
+      campaign_id, territory_id,
+    });
+    const newBuildingPillars = existingBuildings
+      .filter(b => b.status !== 'destroyed')
+      .map(b => b.pillar_type ?? 'military');
+    const allExistingPillars = [...legacyPillars, ...newBuildingPillars];
 
-    // Check for any existing structure (one per territory limit)
-    if ((ts.structures ?? []).length > 0) {
-      return Response.json({ error: `Territory ${territory_id} already has a structure` }, { status: 400 });
+    const slotCheck = canPlaceBuildingBackend(territory_id, buildingConfig.pillar, allExistingPillars);
+    if (!slotCheck.allowed) {
+      return Response.json({ error: slotCheck.reason }, { status: 400 });
     }
+    // ── End slot enforcement ───────────────────────────────────────────────────
 
-    // Load acting player's decision (use asServiceRole to work for both self and test players)
+    // Load acting player's decision
     const decisions = await base44.asServiceRole.entities.PhaseDecision.filter({
       campaign_id, player_id: actingPlayer.id, phase: 'fortify', round,
     });
-    let decision = decisions[0];
+    const decision = decisions[0];
     if (!decision) return Response.json({ error: `No fortify decision found for player ${actingPlayer.display_name}. Phase may not have started yet.` }, { status: 404 });
     if (decision.is_locked) return Response.json({ error: 'You have already locked your fortifications' }, { status: 400 });
     if (decision.data?.construction) {
       return Response.json({ error: 'Construction project already started this phase' }, { status: 400 });
     }
 
-    // Check resource availability (V1: use persistent resource inventory)
-    // For V1, we'll validate resources at phase reveal, not at staging time
-    // This allows players to stage construction privately without revealing resources
-    
-    // Store construction choice privately in PhaseDecision (no ConstructionProject yet)
+    // Store construction choice privately in PhaseDecision (revealed at processPhaseEnd)
     await base44.asServiceRole.entities.PhaseDecision.update(decision.id, {
-      data: { 
-        movements: decision.data?.movements ?? [], 
-        construction: { 
-          territory_id, 
+      data: {
+        movements: decision.data?.movements ?? [],
+        construction: {
+          territory_id,
           structure_type,
+          pillar: buildingConfig.pillar,
           staged_at: new Date().toISOString(),
         },
       },
     });
 
-    await log(base44, campaign_id, round, phase, 'construction_started', actingPlayer.id, {
+    await log(base44, campaign_id, round, phase, 'construction_staged', actingPlayer.id, {
       structure_type,
       territory_id,
+      pillar: buildingConfig.pillar,
     }, false);
 
-    return Response.json({ success: true, construction_staged: true });
+    return Response.json({ success: true, construction_staged: true, pillar: buildingConfig.pillar });
   }
 
   // ── ACTION: lockFortify ───────────────────────────────────────────────────────
@@ -645,7 +727,8 @@ Deno.serve(async (req) => {
         campaign_id, player_id: dec.player_id, round,
       });
       const income = incomeRecords[0];
-      const config = STRUCTURE_CONFIG[construction.structure_type];
+      const config = getBuildingConfig(construction.structure_type);
+      if (!config) continue; // Unknown type — skip gracefully
       const resourcesGenerated = income?.resources_generated ?? {};
       
       const canAfford = Object.entries(config.cost).every(([res, amount]) => {

@@ -10,6 +10,7 @@ import { X, Shield, Swords, MapPin, Check, Loader2, Lock } from 'lucide-react';
 import { PLAYER_COLORS } from '@/config/theme';
 import { getResourceConfig } from '@/config/resourceConfig';
 import { SC_TERRITORY_BY_ID } from '@/shared/maps/shatteredCrownConfig';
+import TerritorySlotDisplay from './TerritorySlotDisplay';
 
 const TERRAIN_LABELS = {
   mountains: '⛰ Mountains',
@@ -161,15 +162,12 @@ export default function TerritoryDetailPanel({
                 </div>
               )}
               {scConfig?.structure_slots?.length > 0 && (
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Slots</span>
-                  <div className="flex gap-1 flex-wrap justify-end">
-                    {scConfig.structure_slots.map((slot, i) => (
-                      <span key={i} className="px-1.5 py-0.5 rounded border border-border bg-muted/20 text-muted-foreground capitalize text-[10px]">
-                        {slot}
-                      </span>
-                    ))}
-                  </div>
+                <div className="space-y-1">
+                  <span className="text-muted-foreground text-xs">Slots</span>
+                  <TerritorySlotDisplay
+                    territoryId={territory.territory_id}
+                    existingBuildingPillars={(tState?.structures ?? []).map(() => 'military')}
+                  />
                 </div>
               )}
             </div>

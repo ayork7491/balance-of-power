@@ -1,54 +1,63 @@
 /**
- * ConstructionSelector — UI for selecting territory and structure type.
+ * ConstructionSelector — Sprint 4C.
+ *
+ * Replaced legacy V1 structure picker with the three-pillar building definitions.
+ * Enforces structure slot rules from the canonical shatteredCrownConfig.ts.
+ *
+ * Slot rules:
+ *   military   building → needs military or omni slot
+ *   economic   building → needs economic or omni slot
+ *   diplomatic building → needs diplomatic or omni slot
+ *
+ * A building option is disabled (with a clear reason) when:
+ *   - The territory has no available slot of the correct type.
+ *   - The territory already has a building of that type.
  */
 import { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
-import { Castle, Hammer, X } from 'lucide-react';
+import { X } from 'lucide-react';
+import { ALL_BUILDING_DEFINITIONS } from '@/config/buildingDefinitions';
+import { getSlotStatus, canPlaceBuilding, getSlotBlockedReason, SLOT_LABELS, SLOT_COLORS } from '@/services/maps/structureSlots';
+import TerritorySlotDisplay from '@/components/map/TerritorySlotDisplay';
 
-// ⚠ SPRINT 3B: These legacy V1 structures (castle/barracks/stables) with old
-// resource costs (brick/lumber/wool/grain/ore) are retained for backward
-// compatibility with existing ConstructionProject records. Replace with
-// TerritoryBuilding + new BuildingDefinitions when Sprint 3B construction
-// gameplay is implemented.
-const STRUCTURE_CONFIG = {
-  castle: {
-    cost: { brick: 2, lumber: 1, ore: 1 },
-    rounds: 2,
-    effect: 'Defensive bonus',
-    icon: Castle,
-  },
-  barracks: {
-    cost: { brick: 1, lumber: 2, wool: 1 },
-    rounds: 1,
-    effect: '+1 troop income',
-    icon: Hammer,
-  },
-  stables: {
-    cost: { lumber: 2, wool: 2, grain: 1 },
-    rounds: 1,
-    effect: 'Increased range',
-    icon: Castle,
-  },
-};
+const PILLAR_ICONS = { military: '⚔', economic: '💰', diplomatic: '🕊' };
+
+/** Extract building pillars from a TerritoryState's structures array + TerritoryBuilding records. */
+function getExistingPillars(ts) {
+  const pillars = [];
+  // Legacy V1 structures — map to pillars (castle/barracks/stables are all military)
+  for (const s of ts?.structures ?? []) {
+    pillars.push('military');
+  }
+  return pillars;
+}
 
 export default function ConstructionSelector({
-  campaign, myPlayer, stateById, mapDef, selectedTerritoryId, onStartConstruction, onClearSelection
+  campaign,
+  myPlayer,
+  stateById,
+  mapDef,
+  selectedTerritoryId,
+  onStartConstruction,
+  onClearSelection,
 }) {
-  const [selectedStructure, setSelectedStructure] = useState(null);
+  const [selectedBuilding, setSelectedBuilding] = useState(null);
 
-  // Check if selected territory is valid for construction
-  const isValidTerritory = useMemo(() => {
-    if (!selectedTerritoryId || !myPlayer) return false;
-    const ts = stateById[selectedTerritoryId];
-    if (!ts || ts.owner_player_id !== myPlayer.id) return false;
-    if ((ts.structures ?? []).length > 0) return false; // Already has structure
-    return true;
-  }, [selectedTerritoryId, myPlayer, stateById]);
+  const ts = selectedTerritoryId ? stateById[selectedTerritoryId] : null;
+  const isOwned = ts?.owner_player_id === myPlayer?.id;
+  const territoryName = mapDef?.territories?.find(t => t.territory_id === selectedTerritoryId)?.name ?? selectedTerritoryId;
+
+  const existingPillars = useMemo(() => getExistingPillars(ts), [ts]);
+
+  const slotStatus = useMemo(
+    () => selectedTerritoryId ? getSlotStatus(selectedTerritoryId, existingPillars) : null,
+    [selectedTerritoryId, existingPillars]
+  );
 
   const handleStart = () => {
-    if (selectedStructure && isValidTerritory) {
-      onStartConstruction(selectedTerritoryId, selectedStructure);
-      setSelectedStructure(null);
+    if (selectedBuilding && selectedTerritoryId) {
+      onStartConstruction(selectedTerritoryId, selectedBuilding.type);
+      setSelectedBuilding(null);
       onClearSelection();
     }
   };
@@ -61,18 +70,27 @@ export default function ConstructionSelector({
     );
   }
 
-  const territoryName = mapDef?.territories.find(t => t.territory_id === selectedTerritoryId)?.name ?? selectedTerritoryId;
-
-  if (!isValidTerritory) {
+  if (!isOwned) {
     return (
       <div className="p-3 rounded border border-border bg-muted/10 text-xs text-muted-foreground">
         <div className="flex items-center justify-between">
           <span>{territoryName}</span>
-          <button onClick={onClearSelection}>
-            <X className="w-3 h-3" />
-          </button>
+          <button onClick={onClearSelection}><X className="w-3 h-3" /></button>
         </div>
-        <p className="mt-1 text-destructive">Cannot build here (already has structure)</p>
+        <p className="mt-1 text-destructive">You do not own this territory.</p>
+      </div>
+    );
+  }
+
+  if (slotStatus && slotStatus.isSCTerritory && slotStatus.freeCount === 0) {
+    return (
+      <div className="p-3 rounded border border-border bg-muted/10 text-xs space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="font-medium text-foreground">{territoryName}</span>
+          <button onClick={onClearSelection} className="text-muted-foreground hover:text-foreground"><X className="w-3 h-3" /></button>
+        </div>
+        <TerritorySlotDisplay territoryId={selectedTerritoryId} existingBuildingPillars={existingPillars} />
+        <p className="text-destructive">All structure slots in this territory are occupied.</p>
       </div>
     );
   }
@@ -86,29 +104,57 @@ export default function ConstructionSelector({
         </button>
       </div>
 
-      <div className="space-y-1.5">
-        {Object.entries(STRUCTURE_CONFIG).map(([type, config]) => {
-          const Icon = config.icon;
-          const isSelected = selectedStructure === type;
+      {/* Slot availability */}
+      {slotStatus?.isSCTerritory && (
+        <div className="space-y-1">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Available Slots</p>
+          <TerritorySlotDisplay territoryId={selectedTerritoryId} existingBuildingPillars={existingPillars} />
+        </div>
+      )}
+
+      {/* Building options grouped by pillar */}
+      <div className="space-y-1.5 mt-2">
+        {ALL_BUILDING_DEFINITIONS.map((def) => {
+          const blocked = slotStatus?.isSCTerritory
+            ? !canPlaceBuilding(selectedTerritoryId, def.pillar, existingPillars)
+            : false;
+          const blockedReason = blocked
+            ? getSlotBlockedReason(selectedTerritoryId, def.pillar, existingPillars)
+            : null;
+          const isSelected = selectedBuilding?.type === def.type;
+          const pillarColors = SLOT_COLORS[def.pillar] ?? SLOT_COLORS.omni;
+
           return (
             <button
-              key={type}
-              onClick={() => setSelectedStructure(type)}
-              className={`w-full flex items-center gap-3 p-2 rounded border text-left transition-colors ${
-                isSelected 
-                  ? 'border-primary/40 bg-primary/10' 
+              key={def.type}
+              onClick={() => !blocked && setSelectedBuilding(def)}
+              disabled={blocked}
+              title={blocked ? blockedReason : undefined}
+              className={`w-full flex items-start gap-3 p-2 rounded border text-left transition-colors ${
+                blocked
+                  ? 'border-border bg-muted/5 opacity-40 cursor-not-allowed'
+                  : isSelected
+                  ? `${pillarColors.border} ${pillarColors.bg}`
                   : 'border-border bg-muted/20 hover:bg-muted/30'
               }`}
             >
-              <Icon className="w-4 h-4 text-muted-foreground" />
-              <div className="flex-1">
-                <p className="text-xs font-medium text-foreground capitalize">{type}</p>
-                <p className="text-xs text-muted-foreground">{config.effect}</p>
+              <span className="text-sm mt-0.5 shrink-0">{PILLAR_ICONS[def.pillar]}</span>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className={`text-xs font-medium ${blocked ? 'text-muted-foreground' : 'text-foreground'}`}>{def.label}</p>
+                  <span className={`text-[10px] px-1 py-0 rounded border ${pillarColors.border} ${pillarColors.bg} ${pillarColors.text}`}>
+                    {SLOT_LABELS[def.pillar]}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5">{def.effect}</p>
+                {blocked && blockedReason && (
+                  <p className="text-[10px] text-destructive mt-0.5">{blockedReason}</p>
+                )}
               </div>
-              <div className="text-right">
-                <p className="text-xs text-muted-foreground">{config.rounds} round{config.rounds > 1 ? 's' : ''}</p>
-                <p className="text-xs text-muted-foreground">
-                  {Object.entries(config.cost).filter(([, v]) => v > 0).map(([k, v]) => `${v} ${k}`).join(', ')}
+              <div className="text-right shrink-0">
+                <p className="text-xs text-muted-foreground">{def.rounds}r</p>
+                <p className="text-[10px] text-muted-foreground">
+                  {Object.entries(def.cost).filter(([, v]) => v > 0).map(([k, v]) => `${v} ${k}`).join(', ')}
                 </p>
               </div>
             </button>
@@ -118,10 +164,10 @@ export default function ConstructionSelector({
 
       <Button
         onClick={handleStart}
-        disabled={!selectedStructure}
-        className="w-full h-8 text-xs"
+        disabled={!selectedBuilding}
+        className="w-full h-8 text-xs mt-1"
       >
-        Start Construction
+        Stage Construction
       </Button>
     </div>
   );
