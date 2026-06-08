@@ -6,6 +6,7 @@ import { ChevronRight, Hourglass } from 'lucide-react';
 import BattleTypeTag from './BattleTypeTag';
 import BattleStatusTag from './BattleStatusTag';
 import { PLAYER_COLORS } from '@/config/theme';
+import OperationSourceBadge from '@/components/operations/OperationSourceBadge';
 
 function getPlayerHex(players, playerId) {
   const p = players?.find(pl => pl.id === playerId);
@@ -48,10 +49,13 @@ export default function BattleCardRow({ card, players, mapDef, campaignId }) {
             </>
           )}
         </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 flex-wrap text-xs text-muted-foreground">
           <span>{card.tabletop_size} pts</span>
           <span className="text-border">·</span>
           <span>×{card.scale_factor?.toFixed(1)} scale</span>
+          {card.battle_card_source && card.battle_card_source !== 'military_attack' && (
+            <OperationSourceBadge source={card.battle_card_source} size="xs" />
+          )}
         </div>
       </div>
       <div className="flex items-center gap-2 shrink-0">

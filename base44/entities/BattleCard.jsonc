@@ -120,8 +120,7 @@
     },
     "voting_closed": {
       "type": "boolean",
-      "default": false,
-      "description": "True once admin closes voting (or cutoff passed). Preferences are tallied at this point."
+      "default": false
     },
     "tally_result": {
       "type": "object",
@@ -145,6 +144,58 @@
       "type": "object",
       "description": "Legacy field \u2014 kept for backward compat. Use battle_preferences instead.",
       "default": {}
+    },
+    "battle_card_source": {
+      "type": "string",
+      "enum": [
+        "military_attack",
+        "incite_rebellion",
+        "manufactured_crisis",
+        "assassination",
+        "mercenary_action",
+        "supply_raid",
+        "resource_interdiction"
+      ],
+      "description": "Sprint 4K: Which operation generated this battle card. Null = legacy attack-generated card.",
+      "default": "military_attack"
+    },
+    "source_player_id": {
+      "type": "string",
+      "description": "Sprint 4K: CampaignPlayer.id of the player who initiated the operation. May differ from attacker (e.g. diplomatic ops)."
+    },
+    "source_operation_metadata": {
+      "type": "object",
+      "description": "Sprint 4K: Operation-specific metadata. Fields vary by source type. See operationsPhase for full field list.",
+      "default": {},
+      "properties": {
+        "diplomatic_operation_type": {
+          "type": "string"
+        },
+        "target_structure": {
+          "type": "string"
+        },
+        "target_supply_route_id": {
+          "type": "string"
+        },
+        "target_resource_hub_territory": {
+          "type": "string"
+        },
+        "target_region": {
+          "type": "string"
+        },
+        "mercenary_flag": {
+          "type": "boolean"
+        },
+        "influence_spent": {
+          "type": "number"
+        },
+        "region_id": {
+          "type": "string"
+        },
+        "objective_hook": {
+          "type": "string"
+        }
+      }
     }
   },
   "required": [

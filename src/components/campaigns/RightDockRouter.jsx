@@ -35,6 +35,9 @@ import DiplomaticActionsPanel from '@/components/influence/DiplomaticActionsPane
 // Objectives panel (Sprint 4I)
 import ObjectivesPanel from '@/components/objectives/ObjectivesPanel';
 
+// Operations panel (Sprint 4K)
+import OperationsPanel from '@/components/operations/OperationsPanel';
+
 const SETUP_PHASES = new Set(['faction_selection', 'territory_draft', 'initial_deploy']);
 const GAMEPLAY_PHASES = new Set(['deploy', 'attack', 'battle', 'fortify']);
 
@@ -136,11 +139,17 @@ export default function RightDockRouter({
               )}
             </>
           ) : activeTab === 'battles' ? (
-            <InfoPanelPlaceholder 
-              title="Battles"
-              description="Battle history coming soon"
-              icon="Swords"
-            />
+            <div className="h-full overflow-y-auto dock-scroll">
+              <OperationsPanel
+                campaign={campaign}
+                myPlayer={myPlayer}
+                isAdmin={isAdmin}
+                actingAsPlayerId={actingAsPlayerId}
+                stateById={stateById ?? {}}
+                mapDef={mapDef}
+                players={players}
+              />
+            </div>
           ) : activeTab === 'phase' ? (
             // Phase info based on current phase
             isSetupPhase ? (
