@@ -67,16 +67,16 @@ const V1_RESOURCE_TYPES = {
 // To update: edit shatteredCrownConfig.ts (SC_PRIMARY_RESOURCES_FLAT), then propagate.
 // ─────────────────────────────────────────────────────────────────────────────
 const SC_RESOURCE_TYPES = {
-  I1:'iron',  I2:'iron',  I3:'stone', I4:'iron',  I5:'iron',
-  I6:'stone', I7:'iron',  I8:'stone',
-  W1:'timber',W2:'timber',W3:'timber',W4:'food',  W5:'timber',
-  W6:'timber',W7:'food',  W8:'food',  W9:'gold',
-  B1:'stone', B2:'stone', B3:'gold',  B4:'iron',  B5:'iron',
-  B6:'gold',  B7:'stone', B8:'food',  B9:'gold',  B10:'gold',
-  S1:'food',  S2:'food',  S3:'food',  S4:'food',  S5:'food',
-  S6:'gold',  S7:'food',  S8:'gold',  S9:'gold',
-  C1:'stone', C2:'gold',  C3:'gold',  C4:'iron',  C5:'gold',
-  C6:'timber',C7:'food',  C8:'stone',
+  I1:'iron',  I2:'iron',  I3:'stone', I4:'iron',  I5:'stone',
+  I6:'timber',I7:'timber',I8:'iron',
+  W1:'timber',W2:'stone', W3:'timber',W4:'timber',W5:'timber',
+  W6:'timber',W7:'gold',  W8:'gold',  W9:'iron',
+  B1:'stone', B2:'stone', B3:'stone', B4:'stone', B5:'iron',
+  B6:'stone', B7:'stone', B8:'stone', B9:'iron',  B10:'gold',
+  S1:'timber',S2:'gold',  S3:'iron',  S4:'gold',  S5:'gold',
+  S6:'stone', S7:'timber',S8:'gold',  S9:'iron',
+  C1:'iron',  C2:'gold',  C3:'iron',  C4:'gold',  C5:'gold',
+  C6:'gold',  C7:'stone', C8:'gold',
 };
 
 function getResourceTypeForTerritory(mapId, territoryId) {
