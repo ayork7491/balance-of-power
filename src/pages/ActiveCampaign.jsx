@@ -119,14 +119,6 @@ function ActiveCampaignContent() {
       .catch(() => {});
   }, [campaign?.game_profile_id]);
 
-  // Re-fetch campaign + territory state when a setup action completes
-  const handlePhaseChanged = useCallback(() => {
-    reloadCampaign();
-    reloadState();
-    loadTerritoryBuildings();
-    reloadLogistics();
-  }, [reloadCampaign, reloadState, loadTerritoryBuildings, reloadLogistics]);
-
   // Selected territory details (using centralized selectedTerritoryId)
   const selectedTerritory   = useMemo(
     () => mapDef?.territories.find(t => t.territory_id === selectedTerritoryId) ?? null,
@@ -221,6 +213,15 @@ function ActiveCampaignContent() {
     campaignId: id,
     enabled: !!id,
   });
+
+  // Re-fetch campaign + territory state when a setup action completes
+  // Defined after all reload fns are in scope
+  const handlePhaseChanged = useCallback(() => {
+    reloadCampaign();
+    reloadState();
+    loadTerritoryBuildings();
+    reloadLogistics();
+  }, [reloadCampaign, reloadState, loadTerritoryBuildings, reloadLogistics]);
 
   // Index hubs by territory_id for O(1) lookup in TerritoryDetailPanel
   const hubsByTerritoryId = useMemo(() => {
