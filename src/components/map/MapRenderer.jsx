@@ -162,14 +162,25 @@ export default function MapRenderer({
     onDeployTerritorySelect,
   });
 
-  // Fit on mount
+  // Fit whenever the container is sized or mapDef changes — uses ResizeObserver
+  // so it fires even when the container goes from 0 → real size after layout settles
   useEffect(() => {
     const el = containerRef.current;
     if (!el || !mapDef) return;
-    const { width: cw, height: ch } = el.getBoundingClientRect();
-    const fit = computeFitTransform(cw, ch, mapDef);
-    fitScaleRef.current = fit.scale;
-    setTransform(fit);
+
+    const applyFit = () => {
+      const { width: cw, height: ch } = el.getBoundingClientRect();
+      if (cw === 0 || ch === 0) return; // container not sized yet — wait for next resize event
+      const fit = computeFitTransform(cw, ch, mapDef);
+      fitScaleRef.current = fit.scale;
+      setTransform(fit);
+    };
+
+    applyFit(); // attempt immediately
+
+    const ro = new ResizeObserver(applyFit);
+    ro.observe(el);
+    return () => ro.disconnect();
   }, [mapDef]);
 
   // ── Wheel zoom (mouse) ─────────────────────────────────────────────────────
