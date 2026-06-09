@@ -117,11 +117,65 @@ export const OPERATION_BY_TYPE = Object.fromEntries(
 );
 
 export const BATTLE_SOURCE_LABELS = {
-  military_attack:      { label: 'Military Attack',       icon: '⚔️',  color: 'text-red-400' },
-  incite_rebellion:     { label: 'Incite Rebellion',      icon: '🔥',  color: 'text-orange-400' },
-  manufactured_crisis:  { label: 'Manufactured Crisis',   icon: '⚡',  color: 'text-yellow-400' },
-  assassination:        { label: 'Assassination',         icon: '🗡',  color: 'text-purple-400' },
-  mercenary_action:     { label: 'Mercenary Action',      icon: '⚔️',  color: 'text-purple-300' },
-  supply_raid:          { label: 'Supply Raid',           icon: '🚛',  color: 'text-amber-400' },
-  resource_interdiction:{ label: 'Resource Interdiction', icon: '🏭',  color: 'text-amber-300' },
+  military_attack:              { label: 'Military Attack',          icon: '⚔️',  color: 'text-red-400' },
+  incite_rebellion:             { label: 'Incite Rebellion',         icon: '🔥',  color: 'text-orange-400' },
+  uprising:                     { label: 'Uprising',                 icon: '✊',  color: 'text-orange-400' },
+  manufactured_crisis:          { label: 'Manufactured Crisis',      icon: '⚡',  color: 'text-purple-400' },
+  labor_strike:                 { label: 'Labor Strike',             icon: '🪧',  color: 'text-blue-400' },
+  tax_protest:                  { label: 'Tax Protest',              icon: '💸',  color: 'text-blue-300' },
+  supply_raid:                  { label: 'Supply Raid',              icon: '🚛',  color: 'text-amber-400' },
+  supply_route_establishment:   { label: 'Route Establishment',      icon: '🛤️', color: 'text-amber-300' },
+  supply_route_race:            { label: 'Route Race',               icon: '🏁',  color: 'text-amber-300' },
+  supply_caravan_escort:        { label: 'Caravan Escort',           icon: '🐪',  color: 'text-amber-200' },
+};
+
+export const BATTLE_CONSEQUENCE_TEXT = {
+  siege: {
+    attacker_wins: 'Attacker captures the territory with surviving troops.',
+    defender_wins: 'Defender holds. Attacker troops are lost.',
+  },
+  double_siege: {
+    attacker_wins: 'Winning attacker captures the territory. Other attacker returns home.',
+    defender_wins: 'Defender holds against both attackers.',
+  },
+  bloodbath: {
+    winner: 'Winner captures loser\'s origin territory (if vacated) or returns home with survivors.',
+    loser: 'Loser\'s committed troops are lost.',
+  },
+  capture_objectives: {
+    winner: 'Winner captures the territory with survivors. Losers return reduced forces home.',
+    losers: 'Losing forces return to origin with partial survivors.',
+  },
+  supply_route_establishment: {
+    attacker_wins: 'Supply route is activated between the hub and source territory.',
+    defender_wins: 'Route establishment fails. Cooldown applied before retry.',
+  },
+  supply_route_race: {
+    attacker_wins: 'Challenger takes ownership of the contested supply route.',
+    defender_wins: 'Defender retains the supply route. Challenger fails.',
+  },
+  supply_raid: {
+    attacker_wins: 'Raider steals all [declared resource] stored in the target territory.',
+    defender_wins: 'Raid repelled. No resources stolen.',
+  },
+  supply_caravan_escort: {
+    defender_wins: 'Caravan delivered safely. Shipment added to destination territory storage.',
+    attacker_wins: 'Caravan intercepted. 20% of shipment stolen; 80% destroyed.',
+  },
+  uprising: {
+    attacker_wins: 'Garrison reduced. Diplomat gains influence in territory and region.',
+    defender_wins: 'Uprising suppressed. Minor garrison loss. Diplomat influence spent.',
+  },
+  labor_strike: {
+    attacker_wins: '50% of hub territory resources destroyed. Diplomat gains influence.',
+    defender_wins: '10% resource loss. Strike suppressed.',
+  },
+  tax_protest: {
+    attacker_wins: 'Diplomat seizes declared gold. Gains influence in territory and region.',
+    defender_wins: 'Protest fails. No gold transferred.',
+  },
+  manufactured_crisis: {
+    diplomat_wins: 'Diplomat gains 3 influence in both contested territories and 2 regional influence.',
+    player_wins: 'Winning player resolves the crisis. Diplomat gains no reward.',
+  },
 };

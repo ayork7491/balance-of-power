@@ -3,13 +3,13 @@
  * for a single BattleCard. Shown in BattleCardDetail for non-military cards.
  */
 import { BATTLE_SOURCE_LABELS, BATTLE_CONSEQUENCE_TEXT } from '@/config/operationsConfig';
+import OperationSourceBadge from '@/components/operations/OperationSourceBadge';
 
 const BATTLE_TYPE_PILLAR = {
   siege: 'military', double_siege: 'military', bloodbath: 'military', capture_objectives: 'military', skirmish: 'military',
   supply_route_establishment: 'economic', supply_route_race: 'economic', supply_raid: 'economic', supply_caravan_escort: 'economic',
   uprising: 'diplomatic', labor_strike: 'diplomatic', tax_protest: 'diplomatic', manufactured_crisis: 'diplomatic',
 };
-import OperationSourceBadge from '@/components/operations/OperationSourceBadge';
 
 const RESOURCE_ICONS = { gold: '💰', iron: '⚙️', timber: '🌲', stone: '🪨', food: '🌾' };
 
