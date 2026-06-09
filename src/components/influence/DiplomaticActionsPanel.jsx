@@ -13,6 +13,7 @@ import { useDiplomaticActions } from '@/features/campaigns/influence/useDiplomat
 import DiplomaticActionForm from './DiplomaticActionForm';
 import ActiveDiplomaticEffects from './ActiveDiplomaticEffects';
 import { PLAYER_COLORS } from '@/config/theme';
+import { DIPLOMATIC_ACTIONS, INFLUENCE_ACTION_BY_ID } from '@/config/influenceActionFramework';
 
 const REGION_LABELS = {
   outer_passes:       'Outer Passes',
@@ -27,16 +28,6 @@ const REGION_LABELS = {
   northern_isles:     'Northern Isles',
   southern_fractures: 'Southern Fractures',
 };
-
-const ACTION_DEFS = [
-  { type: 'war_rations',         label: 'War Rations',         cost: 2, desc: 'Reduce food upkeep this round.' },
-  { type: 'influence_network',   label: 'Influence Network',   cost: 2, desc: '+1 Permanent Influence to all adjacent territories.' },
-  { type: 'merchant_convoy',     label: 'Merchant Convoy',     cost: 2, desc: 'Protect a supply route from disruption.' },
-  { type: 'non_aggression_pact', label: 'Non-Aggression Pact', cost: 4, desc: 'Target player cannot attack you for 1 round.' },
-  { type: 'broker_peace',        label: 'Broker Peace',        cost: 4, desc: 'Negate battle generation at a target territory.' },
-  { type: 'coalition_warfare',   label: 'Coalition Warfare',   cost: 6, desc: 'Force another player to contribute to your battle.' },
-  { type: 'power_broker',        label: 'Power Broker',        cost: 6, desc: 'Create a Non-Aggression Pact between two other players.' },
-];
 
 export default function DiplomaticActionsPanel({
   campaign,
@@ -142,21 +133,20 @@ export default function DiplomaticActionsPanel({
       {/* Regional influence summary */}
       <RegionPoolSummary regionPools={regionPools} actionCosts={actionCosts} />
 
-      {/* Action list */}
+      {/* Action list — driven from unified Influence Action Framework */}
       <div className="space-y-1.5">
         <p className="text-[10px] font-display tracking-wider uppercase text-muted-foreground">Available Actions</p>
-        {ACTION_DEFS.map(def => {
-          const cost = actionCosts[def.type] ?? def.cost;
-          const isSelected = selectedAction === def.type;
-          // Check if player has enough influence anywhere for this action
+        {DIPLOMATIC_ACTIONS.map(def => {
+          const cost = actionCosts[def.action_id] ?? def.cost;
+          const isSelected = selectedAction === def.action_id;
           const maxRegionInfluence = Math.max(0, ...Object.values(regionPools));
           const canAfford = maxRegionInfluence >= cost;
 
           return (
-            <div key={def.type} className="rounded border border-border overflow-hidden">
+            <div key={def.action_id} className="rounded border border-border overflow-hidden">
               <button
                 onClick={() => {
-                  setSelectedAction(isSelected ? null : def.type);
+                  setSelectedAction(isSelected ? null : def.action_id);
                   setSubmitError(null);
                   setSubmitSuccess(null);
                 }}
@@ -173,12 +163,13 @@ export default function DiplomaticActionsPanel({
               >
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-foreground">{def.label}</span>
+                    <span className="text-sm">{def.icon}</span>
+                    <span className="text-xs font-medium text-foreground">{def.name}</span>
                     {!canAfford && !noActions && (
                       <span className="text-[9px] text-muted-foreground">(low influence)</span>
                     )}
                   </div>
-                  <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight">{def.desc}</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight">{def.effect_summary}</p>
                 </div>
                 <div className="shrink-0 flex items-center gap-1.5">
                   <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${
@@ -192,7 +183,7 @@ export default function DiplomaticActionsPanel({
 
               {isSelected && (
                 <DiplomaticActionForm
-                  actionType={def.type}
+                  actionType={def.action_id}
                   cost={cost}
                   regionPools={regionPools}
                   players={players}

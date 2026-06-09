@@ -6,7 +6,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Loader2, RefreshCw, ChevronRight, ChevronDown, Eye } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
-import { INTELLIGENCE_ACTIONS } from '@/config/influenceActionFramework';
+import { INTELLIGENCE_ACTIONS, CATEGORY_CONFIG } from '@/config/influenceActionFramework';
 import IntelligenceActionForm from './IntelligenceActionForm';
 import IntelligenceReportCard from './IntelligenceReportCard';
 
@@ -101,14 +101,14 @@ export default function IntelligencePanel({
             ))}
           </div>
 
-          {/* Intelligence Actions */}
-          <div className="rounded border border-cyan-500/30 bg-cyan-500/5">
+          {/* Intelligence Actions — from unified Influence Action Framework */}
+          <div className={`rounded border ${CATEGORY_CONFIG.intelligence.border} ${CATEGORY_CONFIG.intelligence.bg}`}>
             <button
               onClick={() => setActionsExpanded(v => !v)}
               className="w-full flex items-center justify-between px-3 py-2 text-left"
             >
-              <span className="font-display text-xs tracking-wider uppercase font-semibold text-cyan-400 flex items-center gap-1.5">
-                🔭 Intel Actions
+              <span className={`font-display text-xs tracking-wider uppercase font-semibold ${CATEGORY_CONFIG.intelligence.color} flex items-center gap-1.5`}>
+                {CATEGORY_CONFIG.intelligence.icon} Intel Actions
               </span>
               {actionsExpanded
                 ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
