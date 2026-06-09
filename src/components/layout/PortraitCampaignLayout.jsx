@@ -1,28 +1,25 @@
 /**
- * PortraitCampaignLayout — Map-dominant layout for portrait / mobile portrait mode.
+ * PortraitCampaignLayout — Sprint 5B
  *
- * Hierarchy (spec-compliant):
- *   App root:      fixed inset-0, flex flex-col, overflow-hidden
- *   PortraitTopBar: shrink-0, z-[1000], pointer-events-auto, NO transforms
- *   Content area:  flex-1, min-h-0, relative, overflow-hidden (map lives here)
- *   Bottom nav:    shrink-0, z-[900], pointer-events-auto
- *   Bottom sheet:  fixed overlay, z-[800] — never inside map container
- *
- * The top bar is a direct flex child — never inside the map container,
- * never inside a gesture handler, never inside an overflow-clipped panel.
+ * Map-dominant layout for portrait/mobile.
+ * Three-tab navigation: World Status | Command Center | History
+ * Map is always the base screen. Tabs open bottom sheets over it.
  */
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import PortraitTopBar from './PortraitTopBar';
-import PortraitBottomNav from './PortraitBottomNav';
+import PortraitBottomNav from './PortraitBottomNav.jsx';
 import PortraitBottomSheet from './PortraitBottomSheet';
 
 const TAB_TITLES = {
-  phase:       'Phase Actions',
-  resources:   'Resources',
-  battles:     'Battles',
-  leaderboard: 'Standings',
-  territories: 'Territories',
-  history:     'History',
+  command: 'Command Center',
+  world:   'World Status',
+  history: 'History',
+};
+
+const TAB_HEIGHTS = {
+  command: '88vh',
+  world:   '80vh',
+  history: '85vh',
 };
 
 export default function PortraitCampaignLayout({
@@ -36,21 +33,32 @@ export default function PortraitCampaignLayout({
   defaultTab = 'map',
   onTabChange,
 }) {
-  const [activeTab, setActiveTab] = useState(defaultTab);
+  const [activeTab, setActiveTab] = useState(null);
   const [sheetOpen, setSheetOpen] = useState(false);
 
   const handleTabChange = (tab) => {
+    if (tab === activeTab && sheetOpen) {
+      setSheetOpen(false);
+      setActiveTab(null);
+      onTabChange?.('map');
+      return;
+    }
     setActiveTab(tab);
+    setSheetOpen(true);
     onTabChange?.(tab);
-    setSheetOpen(tab !== 'map');
   };
 
-  useEffect(() => {
-    if (activeTab === 'map') setSheetOpen(false);
-  }, [activeTab]);
+  const handleClose = () => {
+    setSheetOpen(false);
+    setActiveTab(null);
+    onTabChange?.('map');
+  };
 
-  const sheetTitle = TAB_TITLES[activeTab] ?? 'Info';
-  const sheetContent = activeTab === 'phase' ? leftDockContent : rightDockContent;
+  // command tab uses leftDockContent (CommandCenterPanel)
+  // world/history use rightDockContent (WorldStatusPanel or CampaignHistoryPanel)
+  const sheetContent = activeTab === 'command' ? leftDockContent : rightDockContent;
+  const sheetTitle = TAB_TITLES[activeTab] ?? '';
+  const sheetMaxHeight = TAB_HEIGHTS[activeTab] ?? '80vh';
 
   return (
     <div
@@ -63,10 +71,8 @@ export default function PortraitCampaignLayout({
         background: 'hsl(var(--background))',
       }}
     >
-      {/* ── Top bar — direct flex child, isolated from map gestures ── */}
       <PortraitTopBar campaign={campaign} isAdmin={isAdmin} />
 
-      {/* ── Map content area — pan/gesture handlers live ONLY here ── */}
       <main
         style={{
           flex: 1,
@@ -80,19 +86,14 @@ export default function PortraitCampaignLayout({
         {children}
       </main>
 
-      {/* ── Bottom nav — direct flex child, isolated from map ── */}
-      <PortraitBottomNav activeTab={activeTab} onTabChange={handleTabChange} />
+      <PortraitBottomNav activeTab={activeTab ?? 'map'} onTabChange={handleTabChange} />
 
-      {/* ── Bottom sheet — fixed overlay, outside all containers ── */}
       <PortraitBottomSheet
         isOpen={sheetOpen}
-        onClose={() => {
-          setSheetOpen(false);
-          setActiveTab('map');
-          onTabChange?.('map');
-        }}
+        onClose={handleClose}
         title={sheetTitle}
-        maxHeight="75vh"
+        maxHeight={sheetMaxHeight}
+        activeTab={activeTab}
       >
         {sheetContent}
       </PortraitBottomSheet>

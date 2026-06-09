@@ -18,6 +18,11 @@ import AttackStagingOverlay from '@/components/phases/attack/AttackStagingOverla
 import PhasePanelRouter from '@/components/campaigns/PhasePanelRouter';
 import RightDockRouter from '@/components/campaigns/RightDockRouter';
 
+// Sprint 5B: new gameplay-first panels
+import CommandCenterPanel from '@/components/command/CommandCenterPanel';
+import WorldStatusPanel from '@/components/command/WorldStatusPanel';
+import CampaignHistoryPanel from '@/components/command/CampaignHistoryPanel';
+
 // Hooks
 import { useAttackReveals, useAttackPhase } from '@/features/campaigns/attack';
 import { useBattleCards } from '@/features/campaigns/battle';
@@ -213,51 +218,53 @@ function ActiveCampaignContent() {
     return m;
   }, [logisticsHubs]);
 
-  // ── Panel routing (extracted) ──────────────────────────────────────────────
+  // ── Panel routing (Sprint 5B) ─────────────────────────────────────────────
 
-  const leftDockContent = (
-    isArchived ? (
-      <div className="p-4 text-center">
-        <p className="text-sm text-muted-foreground">This campaign is archived. Phase controls are disabled.</p>
-      </div>
+  const clearSelection = () => {
+    setSelectedTerritoryId(null);
+    setAttackOriginId(null);
+    setAttackPreselectedTargetId(null);
+  };
+
+  // Command Center — primary gameplay interface
+  const leftDockContent = isArchived ? (
+    <div className="p-4 text-center">
+      <p className="text-sm text-muted-foreground">This campaign is archived. Phase controls are disabled.</p>
+    </div>
+  ) : (
+    <CommandCenterPanel
+      campaign={campaign}
+      players={players}
+      myPlayer={effectivePlayer}
+      actionPlayer={actionPlayer}
+      gameProfile={gameProfile}
+      stateById={stateById}
+      mapDef={mapDef}
+      adjacencyMap={adjacencyMap}
+      selectedTerritoryId={selectedTerritoryId}
+      attackPreselectedTargetId={attackPreselectedTargetId}
+      onClearSelection={clearSelection}
+      onPhaseChanged={handlePhaseChanged}
+      actingAsPlayerId={actingAsCampaignPlayerId}
+      isAdmin={isAdmin}
+    />
+  );
+
+  // World Status / History — driven by the active tab passed from layout
+  const rightDockContent = (
+    activeTab === 'history' ? (
+      <CampaignHistoryPanel campaign={campaign} players={players} />
     ) : (
-      <PhasePanelRouter
+      <WorldStatusPanel
         campaign={campaign}
         players={players}
-        myPlayer={effectivePlayer}
-        actionPlayer={actionPlayer}
-        gameProfile={gameProfile}
-        stateById={stateById}
         mapDef={mapDef}
-        adjacencyMap={adjacencyMap}
-        selectedTerritoryId={selectedTerritoryId}
-        attackPreselectedTargetId={attackPreselectedTargetId}
-        onClearSelection={() => {
-          setSelectedTerritoryId(null);
-          setAttackOriginId(null);
-          setAttackPreselectedTargetId(null);
-        }}
-        onPhaseChanged={handlePhaseChanged}
-        currentPerspective={viewingAsPlayer}
-        actingAsPlayerId={actingAsCampaignPlayerId}
+        stateById={stateById}
       />
     )
   );
 
-  const rightDockContent = (
-    <RightDockRouter
-      activeTab={activeTab}
-      campaign={campaign}
-      players={players}
-      mapDef={mapDef}
-      myPlayer={effectivePlayer}
-      isAdmin={isAdmin}
-      influenceByRegion={influenceByRegion}
-      influencePlayerTotals={influencePlayerTotals}
-      actingAsPlayerId={actingAsCampaignPlayerId}
-      stateById={stateById}
-    />
-  );
+
 
   const displayCampaign = campaign ?? { name: 'Loading…', current_round: 0, current_phase: 'faction_selection', phase_deadline: null };
 

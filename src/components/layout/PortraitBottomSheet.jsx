@@ -23,6 +23,7 @@ export default function PortraitBottomSheet({
   title,
   children,
   maxHeight = '75vh',
+  activeTab = null,
 }) {
   return (
     <AnimatePresence>
@@ -66,19 +67,26 @@ export default function PortraitBottomSheet({
               </button>
             </div>
 
-            {/* Scrollable content */}
+            {/* Content — no extra wrapper padding for new-style panels that manage their own */}
             <div
-              className="flex-1 overflow-y-auto dock-scroll"
+              className="flex-1 overflow-hidden"
               style={{
                 overscrollBehavior: 'contain',
                 WebkitOverflowScrolling: 'touch',
-                touchAction: 'pan-y',
                 paddingBottom: 'env(safe-area-inset-bottom, 16px)',
               }}
             >
-              <div className="p-3">
-                {children}
-              </div>
+              {activeTab ? (
+                // New panels (command/world/history) handle their own scroll + padding
+                <div className="h-full overflow-hidden">
+                  {children}
+                </div>
+              ) : (
+                // Legacy usage — wrapped with padding
+                <div className="overflow-y-auto dock-scroll h-full" style={{ touchAction: 'pan-y' }}>
+                  <div className="p-3">{children}</div>
+                </div>
+              )}
             </div>
           </motion.div>
         </>
