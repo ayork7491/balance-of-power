@@ -16,11 +16,6 @@ const TAB_TITLES = {
   history: 'History',
 };
 
-const TAB_HEIGHTS = {
-  command: '88vh',
-  world:   '80vh',
-  history: '85vh',
-};
 
 export default function PortraitCampaignLayout({
   campaign = null,
@@ -58,7 +53,6 @@ export default function PortraitCampaignLayout({
   // world/history use rightDockContent (WorldStatusPanel or CampaignHistoryPanel)
   const sheetContent = activeTab === 'command' ? leftDockContent : rightDockContent;
   const sheetTitle = TAB_TITLES[activeTab] ?? '';
-  const sheetMaxHeight = TAB_HEIGHTS[activeTab] ?? '80vh';
 
   return (
     <div
@@ -92,8 +86,6 @@ export default function PortraitCampaignLayout({
         isOpen={sheetOpen}
         onClose={handleClose}
         title={sheetTitle}
-        maxHeight={sheetMaxHeight}
-        activeTab={activeTab}
       >
         {sheetContent}
       </PortraitBottomSheet>

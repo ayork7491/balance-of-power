@@ -23,9 +23,9 @@ export default function WorldStatusPanel({ campaign, players, mapDef, stateById 
   const [activeSection, setActiveSection] = useState('standings');
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      {/* Section tabs */}
-      <div className="shrink-0 flex border-b border-border bg-panel-header">
+    <div className="flex flex-col">
+      {/* Section tabs — sticky inside the outer scroll container */}
+      <div className="sticky top-0 z-10 flex border-b border-border bg-panel-header">
         {SECTION_TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
@@ -42,36 +42,29 @@ export default function WorldStatusPanel({ campaign, players, mapDef, stateById 
         ))}
       </div>
 
-      <div className="flex-1 overflow-y-auto dock-scroll">
-        {activeSection === 'standings' && (
-          <div>
-            <LeaderboardPanel campaign={campaign} players={players} />
-          </div>
-        )}
+      {activeSection === 'standings' && (
+        <LeaderboardPanel campaign={campaign} players={players} />
+      )}
 
-        {activeSection === 'victory' && (
-          <div className="space-y-0">
-            {/* Summary leaders */}
-            <VictorySummaryPanel players={players} />
-            <div className="border-t border-border">
-              <VictoryProgressPanel campaign={campaign} players={players} />
-            </div>
+      {activeSection === 'victory' && (
+        <div className="space-y-0">
+          <VictorySummaryPanel players={players} />
+          <div className="border-t border-border">
+            <VictoryProgressPanel campaign={campaign} players={players} />
           </div>
-        )}
+        </div>
+      )}
 
-        {activeSection === 'regions' && (
-          <div className="p-3 space-y-3">
-            {mapDef?.regions?.length > 0 ? (
-              <RegionLegend regions={mapDef.regions} />
-            ) : (
-              <p className="text-xs text-muted-foreground">No region data available.</p>
-            )}
-
-            {/* Territory ownership summary */}
-            <TerritoryOwnershipSummary players={players} stateById={stateById} />
-          </div>
-        )}
-      </div>
+      {activeSection === 'regions' && (
+        <div className="p-3 space-y-3">
+          {mapDef?.regions?.length > 0 ? (
+            <RegionLegend regions={mapDef.regions} />
+          ) : (
+            <p className="text-xs text-muted-foreground">No region data available.</p>
+          )}
+          <TerritoryOwnershipSummary players={players} stateById={stateById} />
+        </div>
+      )}
     </div>
   );
 }

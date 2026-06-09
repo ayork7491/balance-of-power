@@ -135,9 +135,9 @@ export default function CampaignHistoryPanel({ campaign, players }) {
   const rounds = Object.keys(byRound).map(Number).sort((a, b) => b - a);
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      {/* Header */}
-      <div className="shrink-0 flex items-center justify-between px-3 py-2 border-b border-border bg-panel-header">
+    <div className="flex flex-col">
+      {/* Header — sticky inside the outer scroll container */}
+      <div className="sticky top-0 z-10 flex items-center justify-between px-3 py-2 border-b border-border bg-panel-header">
         <span className="font-display text-[10px] tracking-widest uppercase text-muted-foreground">
           Campaign Archive
         </span>
@@ -146,27 +146,25 @@ export default function CampaignHistoryPanel({ campaign, players }) {
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto dock-scroll">
-        {isLoading && logs.length === 0 ? (
-          <div className="p-4 space-y-2">
-            {[1,2,3,4].map(i => <div key={i} className="h-10 bg-muted/30 rounded animate-pulse" />)}
-          </div>
-        ) : rounds.length === 0 ? (
-          <div className="p-4 text-center text-xs text-muted-foreground">
-            No campaign history yet. Events will appear here as the campaign progresses.
-          </div>
-        ) : (
-          rounds.map(round => (
-            <RoundGroup
-              key={round}
-              round={round}
-              logs={byRound[round]}
-              players={players}
-              onOpenBattle={openBattle}
-            />
-          ))
-        )}
-      </div>
+      {isLoading && logs.length === 0 ? (
+        <div className="p-4 space-y-2">
+          {[1,2,3,4].map(i => <div key={i} className="h-10 bg-muted/30 rounded animate-pulse" />)}
+        </div>
+      ) : rounds.length === 0 ? (
+        <div className="p-4 text-center text-xs text-muted-foreground">
+          No campaign history yet. Events will appear here as the campaign progresses.
+        </div>
+      ) : (
+        rounds.map(round => (
+          <RoundGroup
+            key={round}
+            round={round}
+            logs={byRound[round]}
+            players={players}
+            onOpenBattle={openBattle}
+          />
+        ))
+      )}
     </div>
   );
 }

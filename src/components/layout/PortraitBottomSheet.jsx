@@ -17,13 +17,14 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { X } from 'lucide-react';
 
+// Fixed height — never grows with content. Map always remains visible above.
+const SHEET_HEIGHT = '70vh';
+
 export default function PortraitBottomSheet({
   isOpen,
   onClose,
   title,
   children,
-  maxHeight = '75vh',
-  activeTab = null,
 }) {
   return (
     <AnimatePresence>
@@ -39,10 +40,10 @@ export default function PortraitBottomSheet({
             onClick={onClose}
           />
 
-          {/* Sheet */}
+          {/* Sheet — fixed height, never grows */}
           <motion.div
-            className="fixed bottom-0 left-0 right-0 z-50 flex flex-col bg-panel-bg border-t border-panel-border rounded-t-2xl overflow-hidden"
-            style={{ maxHeight }}
+            className="fixed bottom-0 left-0 right-0 z-50 flex flex-col bg-panel-bg border-t border-panel-border rounded-t-2xl"
+            style={{ height: SHEET_HEIGHT }}
             initial={{ y: '100%' }}
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
@@ -67,26 +68,17 @@ export default function PortraitBottomSheet({
               </button>
             </div>
 
-            {/* Content — no extra wrapper padding for new-style panels that manage their own */}
+            {/* Scrollable content area — fills remaining height, scrolls internally */}
             <div
-              className="flex-1 overflow-hidden"
+              className="flex-1 min-h-0 overflow-y-auto dock-scroll"
               style={{
+                touchAction: 'pan-y',
                 overscrollBehavior: 'contain',
                 WebkitOverflowScrolling: 'touch',
-                paddingBottom: 'env(safe-area-inset-bottom, 16px)',
+                paddingBottom: 'env(safe-area-inset-bottom, 12px)',
               }}
             >
-              {activeTab ? (
-                // New panels (command/world/history) handle their own scroll + padding
-                <div className="h-full overflow-hidden">
-                  {children}
-                </div>
-              ) : (
-                // Legacy usage — wrapped with padding
-                <div className="overflow-y-auto dock-scroll h-full" style={{ touchAction: 'pan-y' }}>
-                  <div className="p-3">{children}</div>
-                </div>
-              )}
+              {children}
             </div>
           </motion.div>
         </>

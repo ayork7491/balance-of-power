@@ -80,34 +80,28 @@ export default function CommandCenterPanel({
   if (isSetup) {
     if (phase === 'faction_selection') {
       return (
-        <div className="overflow-y-auto">
-          <FactionSelectionPanel
-            campaign={campaign} players={players} myPlayer={myPlayer}
-            gameProfile={gameProfile} onPhaseChanged={onPhaseChanged}
-          />
-        </div>
+        <FactionSelectionPanel
+          campaign={campaign} players={players} myPlayer={myPlayer}
+          gameProfile={gameProfile} onPhaseChanged={onPhaseChanged}
+        />
       );
     }
     if (phase === 'territory_draft') {
       return (
-        <div className="overflow-y-auto">
-          <TerritoryDraftPanel
-            campaign={campaign} players={players} myPlayer={myPlayer}
-            stateById={stateById} mapDef={mapDef}
-            selectedTerritoryId={selectedTerritoryId}
-            onClearSelection={onClearSelection} onPhaseChanged={onPhaseChanged}
-          />
-        </div>
+        <TerritoryDraftPanel
+          campaign={campaign} players={players} myPlayer={myPlayer}
+          stateById={stateById} mapDef={mapDef}
+          selectedTerritoryId={selectedTerritoryId}
+          onClearSelection={onClearSelection} onPhaseChanged={onPhaseChanged}
+        />
       );
     }
     if (phase === 'initial_deploy') {
       return (
-        <div className="overflow-y-auto">
-          <InitialDeployPanel
-            campaign={campaign} players={players} myPlayer={myPlayer}
-            stateById={stateById} mapDef={mapDef} onPhaseChanged={onPhaseChanged}
-          />
-        </div>
+        <InitialDeployPanel
+          campaign={campaign} players={players} myPlayer={myPlayer}
+          stateById={stateById} mapDef={mapDef} onPhaseChanged={onPhaseChanged}
+        />
       );
     }
   }
@@ -115,33 +109,31 @@ export default function CommandCenterPanel({
   // ── Battle phase: unified conflict queue ─────────────────────────────────
   if (isBattle) {
     return (
-      <div className="flex flex-col h-full overflow-hidden">
+      <div className="flex flex-col">
         <PhaseSummaryBar campaign={campaign} players={players} myPlayer={myPlayer} />
-        <div className="flex-1 overflow-y-auto">
-          <ConflictQueuePanel
-            campaign={campaign} players={players} myPlayer={myPlayer}
-            mapDef={mapDef} onPhaseChanged={onPhaseChanged}
-            actingAsPlayerId={actingAsPlayerId} isAdmin={isAdmin}
-          />
-        </div>
+        <ConflictQueuePanel
+          campaign={campaign} players={players} myPlayer={myPlayer}
+          mapDef={mapDef} onPhaseChanged={onPhaseChanged}
+          actingAsPlayerId={actingAsPlayerId} isAdmin={isAdmin}
+        />
       </div>
     );
   }
 
   // ── Gameplay phases: pillar tabs ─────────────────────────────────────────
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="flex flex-col">
       <PhaseSummaryBar campaign={campaign} players={players} myPlayer={myPlayer} />
 
-      {/* Pillar tabs */}
-      <div className="shrink-0 flex border-b border-border bg-panel-header">
+      {/* Pillar tabs — sticky inside the outer scroll container */}
+      <div className="sticky top-0 z-10 flex border-b border-border bg-panel-header">
         {PILLAR_TABS.map(t => (
           <PillarTab key={t.id} {...t} isActive={pillarTab === t.id} onClick={setPillarTab} />
         ))}
       </div>
 
-      {/* Pillar content */}
-      <div className="flex-1 overflow-y-auto dock-scroll">
+      {/* Pillar content — flows naturally, outer sheet scrolls */}
+      <div>
         {pillarTab === 'military' && <MilitaryContent
           campaign={campaign} players={players} myPlayer={myPlayer}
           actionPlayer={actionPlayer} stateById={stateById} mapDef={mapDef}
