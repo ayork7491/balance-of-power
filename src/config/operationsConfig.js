@@ -117,16 +117,16 @@ export const OPERATION_BY_TYPE = Object.fromEntries(
 );
 
 export const BATTLE_SOURCE_LABELS = {
-  military_attack:              { label: 'Military Attack',          icon: '⚔️',  color: 'text-red-400' },
-  incite_rebellion:             { label: 'Incite Rebellion',         icon: '🔥',  color: 'text-orange-400' },
-  uprising:                     { label: 'Uprising',                 icon: '✊',  color: 'text-orange-400' },
-  manufactured_crisis:          { label: 'Manufactured Crisis',      icon: '⚡',  color: 'text-purple-400' },
-  labor_strike:                 { label: 'Labor Strike',             icon: '🪧',  color: 'text-blue-400' },
-  tax_protest:                  { label: 'Tax Protest',              icon: '💸',  color: 'text-blue-300' },
-  supply_raid:                  { label: 'Supply Raid',              icon: '🚛',  color: 'text-amber-400' },
-  supply_route_establishment:   { label: 'Route Establishment',      icon: '🛤️', color: 'text-amber-300' },
-  supply_route_race:            { label: 'Route Race',               icon: '🏁',  color: 'text-amber-300' },
-  supply_caravan_escort:        { label: 'Caravan Escort',           icon: '🐪',  color: 'text-amber-200' },
+  military_attack:              { label: 'Military Attack',          icon: '⚔️',  color: 'text-red-400',    pillar: 'military' },
+  incite_rebellion:             { label: 'Uprising (Legacy)',        icon: '🔥',  color: 'text-orange-400', pillar: 'diplomatic' },
+  uprising:                     { label: 'Uprising',                 icon: '✊',  color: 'text-orange-400', pillar: 'diplomatic' },
+  manufactured_crisis:          { label: 'Manufactured Crisis',      icon: '⚡',  color: 'text-purple-400', pillar: 'diplomatic' },
+  labor_strike:                 { label: 'Labor Strike',             icon: '🪧',  color: 'text-blue-400',   pillar: 'diplomatic' },
+  tax_protest:                  { label: 'Tax Protest',              icon: '💸',  color: 'text-blue-300',   pillar: 'diplomatic' },
+  supply_raid:                  { label: 'Supply Raid',              icon: '🚛',  color: 'text-amber-400',  pillar: 'economic' },
+  supply_route_establishment:   { label: 'Route Establishment',      icon: '🛤️', color: 'text-amber-300',  pillar: 'economic' },
+  supply_route_race:            { label: 'Route Race',               icon: '🏁',  color: 'text-amber-300',  pillar: 'economic' },
+  supply_caravan_escort:        { label: 'Caravan Escort',           icon: '🐪',  color: 'text-amber-200',  pillar: 'economic' },
 };
 
 export const BATTLE_CONSEQUENCE_TEXT = {
@@ -135,8 +135,8 @@ export const BATTLE_CONSEQUENCE_TEXT = {
     defender_wins: 'Defender holds. Attacker troops are lost.',
   },
   double_siege: {
-    attacker_wins: 'Winning attacker captures the territory. Other attacker returns home.',
-    defender_wins: 'Defender holds against both attackers.',
+    attacker_wins: 'Defender eliminated. Territory becomes unoccupied — no attacker claims it. All surviving attacker troops return to their origin territories.',
+    defender_wins: 'Defender holds. All attacking troops are removed.',
   },
   bloodbath: {
     winner: 'Winner captures loser\'s origin territory (if vacated) or returns home with survivors.',

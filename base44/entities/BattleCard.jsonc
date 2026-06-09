@@ -18,9 +18,26 @@
         "siege",
         "double_siege",
         "capture_objectives",
-        "bloodbath"
+        "bloodbath",
+        "supply_route_establishment",
+        "supply_route_race",
+        "supply_raid",
+        "supply_caravan_escort",
+        "uprising",
+        "labor_strike",
+        "tax_protest",
+        "manufactured_crisis"
       ],
-      "description": "Canonical battle type."
+      "description": "Canonical v1 battle type. Military: siege/double_siege/capture_objectives/bloodbath. Economic: supply_route_establishment/supply_route_race/supply_raid/supply_caravan_escort. Diplomatic: uprising/labor_strike/tax_protest/manufactured_crisis."
+    },
+    "battle_pillar": {
+      "type": "string",
+      "enum": [
+        "military",
+        "economic",
+        "diplomatic"
+      ],
+      "description": "Which pillar generated this card. Derived from battle_type for display and consequence routing."
     },
     "target_territory_id": {
       "type": "string",
@@ -84,7 +101,7 @@
         "forfeited"
       ],
       "default": "pending",
-      "description": "Lifecycle status. active_carryover = delayed card reactivated in new round. pending_approval = result submitted on carryover card awaiting sign-off."
+      "description": "Lifecycle status."
     },
     "is_mutual": {
       "type": "boolean",
@@ -111,12 +128,11 @@
     },
     "battle_preferences": {
       "type": "object",
-      "description": "Map of CampaignPlayer.id \u2192 'play_tabletop' | 'auto_resolve' | 'delay' | 'forfeit'. One preference per player per card. Replaces delay_votes, auto_resolve_votes, player_forfeits.",
+      "description": "Map of CampaignPlayer.id \u2192 'play_tabletop' | 'auto_resolve' | 'delay' | 'forfeit'.",
       "default": {}
     },
     "voting_closes_at": {
-      "type": "string",
-      "description": "ISO timestamp when preference voting window closes. Set at card creation from campaign settings."
+      "type": "string"
     },
     "voting_closed": {
       "type": "boolean",
@@ -124,7 +140,7 @@
     },
     "tally_result": {
       "type": "object",
-      "description": "Result of the preference tally: { outcome: 'auto_resolve'|'delay'|'tabletop'|'forfeit_only', tallied_at }",
+      "description": "Result of the preference tally.",
       "default": {}
     },
     "delayed_at": {
@@ -132,64 +148,112 @@
     },
     "delay_votes": {
       "type": "object",
-      "description": "Legacy field \u2014 kept for backward compat. Use battle_preferences instead.",
+      "description": "Legacy field \u2014 kept for backward compat.",
       "default": {}
     },
     "auto_resolve_votes": {
       "type": "object",
-      "description": "Legacy field \u2014 kept for backward compat. Use battle_preferences instead.",
+      "description": "Legacy field \u2014 kept for backward compat.",
       "default": {}
     },
     "player_forfeits": {
       "type": "object",
-      "description": "Legacy field \u2014 kept for backward compat. Use battle_preferences instead.",
+      "description": "Legacy field \u2014 kept for backward compat.",
       "default": {}
     },
     "battle_card_source": {
       "type": "string",
       "enum": [
         "military_attack",
-        "incite_rebellion",
-        "manufactured_crisis",
-        "assassination",
-        "mercenary_action",
+        "supply_route_establishment",
+        "supply_route_race",
         "supply_raid",
-        "resource_interdiction"
+        "supply_caravan_escort",
+        "uprising",
+        "labor_strike",
+        "tax_protest",
+        "manufactured_crisis",
+        "incite_rebellion"
       ],
-      "description": "Sprint 4K: Which operation generated this battle card. Null = legacy attack-generated card.",
+      "description": "Which operation generated this card. incite_rebellion is a legacy alias for uprising. military_attack = standard attack phase card.",
       "default": "military_attack"
     },
     "source_player_id": {
       "type": "string",
-      "description": "Sprint 4K: CampaignPlayer.id of the player who initiated the operation. May differ from attacker (e.g. diplomatic ops)."
+      "description": "CampaignPlayer.id of the player who initiated the operation."
     },
     "source_operation_metadata": {
       "type": "object",
-      "description": "Sprint 4K: Operation-specific metadata. Fields vary by source type. See operationsPhase for full field list.",
+      "description": "Operation-specific stakes and metadata for consequence handling.",
       "default": {},
       "properties": {
-        "diplomatic_operation_type": {
+        "influence_spent": {
+          "type": "number"
+        },
+        "region_id": {
           "type": "string"
         },
-        "target_structure": {
+        "invested_gold": {
+          "type": "number"
+        },
+        "invested_resources": {
+          "type": "object"
+        },
+        "declared_resource_type": {
           "type": "string"
         },
-        "target_supply_route_id": {
+        "supply_route_id": {
           "type": "string"
         },
-        "target_resource_hub_territory": {
+        "route_target_territory": {
+          "type": "string"
+        },
+        "route_cooldown_until_round": {
+          "type": "number"
+        },
+        "target_resource_hub": {
           "type": "string"
         },
         "target_region": {
           "type": "string"
         },
-        "mercenary_flag": {
-          "type": "boolean"
+        "target_territories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         },
-        "influence_spent": {
+        "territory_b_id": {
+          "type": "string"
+        },
+        "territory_b_player_id": {
+          "type": "string"
+        },
+        "diplomat_committed_troops": {
           "type": "number"
         },
-        "region_id": {
+        "forced_participant_troops": {
+          "type": "object"
+        },
+        "troop_loss_basis": {
+          "type": "number"
+        },
+        "influence_reward_target": {
+          "type": "string"
+        },
+        "gold_transfer_amount": {
+          "type": "number"
+        },
+        "resource_loss_amount": {
+          "type": "number"
+        },
+        "shipment_contents": {
+          "type": "object"
+        },
+        "shipment_origin": {
+          "type": "string"
+        },
+        "shipment_destination": {
           "type": "string"
         },
         "objective_hook": {

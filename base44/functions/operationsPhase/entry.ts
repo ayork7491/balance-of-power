@@ -1,5 +1,5 @@
 /**
- * operationsPhase — Sprint 4K Operations Phase Expansion
+ * operationsPhase — Sprint 4L v1 Battle Card Operations
  *
  * Generates Battle Cards through non-attack conflict sources.
  * All generated cards enter the EXISTING battle lifecycle unchanged.
@@ -11,24 +11,24 @@
  *   getGeneratedCards        — list battle cards generated via operations this round
  *
  * ─── DIPLOMATIC OPERATIONS (influence cost) ────────────────────────────────
- *   incite_rebellion         — 4 influence: generate battle card at target territory
- *   manufactured_crisis      — 4 influence: generate battle card in a region
- *   assassination            — 6 influence: battle card targeting a structure territory
- *   mercenary_action         — 6 influence: battle card with mercenary_flag metadata
+ *   uprising                 — 4 influence: rebel unrest at target territory (replaces incite_rebellion)
+ *   labor_strike             — 4 influence: disrupt resource hub production
+ *   tax_protest              — 4 influence: challenge another player's gold in a territory
+ *   manufactured_crisis      — 4 influence: engineer conflict in a region
  *
- * ─── ECONOMIC OPERATIONS (resource cost, configurable) ─────────────────────
- *   supply_raid              — targets enemy supply route, generates battle card
- *   resource_interdiction    — targets resource hub territory, generates battle card
+ * ─── ECONOMIC OPERATIONS (resource cost) ───────────────────────────────────
+ *   supply_route_establishment — establish a new supply route via battle
+ *   supply_route_race          — contest ownership of an existing supply route
+ *   supply_raid                — raid enemy territory for stored resources
+ *   supply_caravan_escort      — protect or intercept a resource shipment
  *
- * ─── METADATA ONLY ─────────────────────────────────────────────────────────
- *   battle_card_source, source_player_id, source_operation_metadata are set
- *   on the generated BattleCard. They do NOT affect resolution.
+ * ─── LEGACY COMPATIBILITY ──────────────────────────────────────────────────
+ *   incite_rebellion → remapped to uprising
+ *   assassination, mercenary_action, resource_interdiction → rejected (deprecated)
  *
- * ─── OBJECTIVE HOOKS ───────────────────────────────────────────────────────
- *   objective_hook field in metadata exposes completion events for:
- *     incite_rebellion, manufactured_crisis, mercenary_action
- *     cause_production_decrease (resource_interdiction)
- *     use_influence_alter_battle (assassination / manufactured_crisis)
+ * ─── LIFECYCLE ─────────────────────────────────────────────────────────────
+ *   All 8 operation types use the standard BattleCard lifecycle:
+ *   generated → preference/setup → tabletop result → approval → resolution/consequences
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
@@ -36,22 +36,30 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
 const OPERATION_COSTS = {
   // Diplomatic (influence)
-  incite_rebellion:     { type: 'influence', amount: 4 },
-  manufactured_crisis:  { type: 'influence', amount: 4 },
-  assassination:        { type: 'influence', amount: 6 },
-  mercenary_action:     { type: 'influence', amount: 6 },
-  // Economic (gold — configurable per campaign settings, defaults below)
-  supply_raid:          { type: 'resource', resource: 'gold', amount: 3 },
-  resource_interdiction:{ type: 'resource', resource: 'gold', amount: 3 },
+  uprising:                   { type: 'influence', amount: 4 },
+  labor_strike:               { type: 'influence', amount: 4 },
+  tax_protest:                { type: 'influence', amount: 4 },
+  manufactured_crisis:        { type: 'influence', amount: 4 },
+  // Economic (gold)
+  supply_route_establishment: { type: 'resource', resource: 'gold', amount: 3 },
+  supply_route_race:          { type: 'resource', resource: 'gold', amount: 3 },
+  supply_raid:                { type: 'resource', resource: 'gold', amount: 3 },
+  supply_caravan_escort:      { type: 'resource', resource: 'gold', amount: 2 },
 };
 
-const DIPLOMATIC_OPS = new Set(['incite_rebellion', 'manufactured_crisis', 'assassination', 'mercenary_action']);
-const ECONOMIC_OPS   = new Set(['supply_raid', 'resource_interdiction']);
+const DIPLOMATIC_OPS = new Set(['uprising', 'labor_strike', 'tax_protest', 'manufactured_crisis']);
+const ECONOMIC_OPS   = new Set(['supply_route_establishment', 'supply_route_race', 'supply_raid', 'supply_caravan_escort']);
 
-// Default tabletop scale reference (troops per full point)
+// Legacy alias: incite_rebellion → uprising
+const LEGACY_ALIASES = { incite_rebellion: 'uprising' };
+
+// Deprecated types that should no longer generate cards
+const DEPRECATED_OPS = new Set(['assassination', 'mercenary_action', 'resource_interdiction']);
+
+// Default tabletop scale reference
 const DEFAULT_AVG_BATTLE_SIZE = 1000;
 
-// ─── Territory → Region mapping (inline) ─────────────────────────────────────
+// ─── Territory → Region mapping ───────────────────────────────────────────────
 const SC_TERRITORY_REGION = {
   I8:'outer_passes', I4:'outer_passes', I6:'outer_passes', I7:'outer_passes',
   I1:'high_crown',   I2:'high_crown',   I3:'high_crown',   I5:'high_crown',
@@ -71,29 +79,24 @@ const SC_TERRITORY_REGION = {
 
 async function spendRegionalInfluence(base44, campaignId, playerId, regionId, amount, round) {
   const existing = await base44.asServiceRole.entities.RegionalInfluencePool.filter({
-    campaign_id: campaignId,
-    region_id: regionId,
-    player_id: playerId,
+    campaign_id: campaignId, region_id: regionId, player_id: playerId,
   });
   const record = existing[0];
-  const currentAmount = record?.spendable_influence ?? 0;
-  if (currentAmount < amount) {
-    throw new Error(`Not enough influence in region '${regionId}'. Have ${currentAmount}, need ${amount}.`);
+  const current = record?.spendable_influence ?? 0;
+  if (current < amount) {
+    throw new Error(`Not enough influence in region '${regionId}'. Have ${current}, need ${amount}.`);
   }
-  const newAmount = currentAmount - amount;
   if (record) {
     await base44.asServiceRole.entities.RegionalInfluencePool.update(record.id, {
-      spendable_influence: newAmount,
-      last_updated_round: round,
+      spendable_influence: current - amount, last_updated_round: round,
     });
   }
-  return newAmount;
+  return current - amount;
 }
 
 async function spendPlayerResource(base44, campaignId, playerId, resource, amount, round) {
   const ledgers = await base44.asServiceRole.entities.PlayerResourceLedger.filter({
-    campaign_id: campaignId,
-    player_id: playerId,
+    campaign_id: campaignId, player_id: playerId,
   });
   const ledger = ledgers[0];
   const current = ledger?.[resource] ?? 0;
@@ -102,8 +105,7 @@ async function spendPlayerResource(base44, campaignId, playerId, resource, amoun
   }
   if (ledger) {
     await base44.asServiceRole.entities.PlayerResourceLedger.update(ledger.id, {
-      [resource]: current - amount,
-      updated_at_round: round,
+      [resource]: current - amount, updated_at_round: round,
     });
   }
   return current - amount;
@@ -115,15 +117,10 @@ function computeCardScale(totalTroops, avgBattleSize) {
   return { scaleFactor, tabletopSize };
 }
 
-async function log(base44, campaignId, round, eventType, playerId, payload) {
+async function logOp(base44, campaignId, round, eventType, playerId, payload) {
   await base44.asServiceRole.entities.SetupLog.create({
-    campaign_id: campaignId,
-    phase: 'battle',
-    round,
-    event_type: eventType,
-    player_id: playerId ?? null,
-    payload,
-    is_public: true,
+    campaign_id: campaignId, phase: 'battle', round,
+    event_type: eventType, player_id: playerId ?? null, payload, is_public: true,
   });
 }
 
@@ -140,15 +137,10 @@ Deno.serve(async (req) => {
     return Response.json({ error: 'campaign_id and action are required' }, { status: 400 });
   }
 
-  let campaigns, players;
-  try {
-    [campaigns, players] = await Promise.all([
-      base44.asServiceRole.entities.Campaign.filter({ id: campaign_id }),
-      base44.asServiceRole.entities.CampaignPlayer.filter({ campaign_id }),
-    ]);
-  } catch {
-    return Response.json({ error: 'Campaign not found' }, { status: 404 });
-  }
+  const [campaigns, players] = await Promise.all([
+    base44.asServiceRole.entities.Campaign.filter({ id: campaign_id }),
+    base44.asServiceRole.entities.CampaignPlayer.filter({ campaign_id }),
+  ]);
   const campaign = campaigns[0];
   if (!campaign) return Response.json({ error: 'Campaign not found' }, { status: 404 });
 
@@ -216,6 +208,7 @@ Deno.serve(async (req) => {
       operations_this_round: myOpCards.length,
       generated_cards: myOpCards.map(c => ({
         id: c.id,
+        battle_type: c.battle_type,
         battle_card_source: c.battle_card_source,
         target_territory_id: c.target_territory_id,
         status: c.status,
@@ -234,17 +227,36 @@ Deno.serve(async (req) => {
 
   // ── ACTION: submitOperation ────────────────────────────────────────────────
   if (action === 'submitOperation') {
-    const {
+    let {
       operation_type,
       region_id,
       target_territory_id,
       target_supply_route_id,
-      target_resource_hub_territory,
       committed_troops,
+      declared_resource_type,
+      // caravan escort fields
+      shipment_contents,
+      shipment_destination,
+      // tax protest
+      gold_transfer_amount,
+      // manufactured crisis
+      territory_b_id,
     } = body;
 
     if (!operation_type) {
       return Response.json({ error: 'operation_type is required' }, { status: 400 });
+    }
+
+    // ── Legacy alias: incite_rebellion → uprising ────────────────────────────
+    if (LEGACY_ALIASES[operation_type]) {
+      operation_type = LEGACY_ALIASES[operation_type];
+    }
+
+    // ── Reject deprecated operation types ────────────────────────────────────
+    if (DEPRECATED_OPS.has(operation_type)) {
+      return Response.json({
+        error: `Operation type '${operation_type}' has been deprecated and no longer generates battle cards. Use the v1 operation types instead.`,
+      }, { status: 400 });
     }
 
     const costConfig = OPERATION_COSTS[operation_type];
@@ -252,102 +264,95 @@ Deno.serve(async (req) => {
       return Response.json({ error: `Unknown operation type: ${operation_type}` }, { status: 400 });
     }
 
-    // ── Validate target territory ────────────────────────────────────────────
     if (!target_territory_id) {
       return Response.json({ error: 'target_territory_id is required' }, { status: 400 });
     }
 
     const territoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
     const targetState = territoryStates.find(s => s.territory_id === target_territory_id);
+    const avgSize = campaign.settings?.average_battle_size ?? DEFAULT_AVG_BATTLE_SIZE;
 
-    // ── Influence-based operations ───────────────────────────────────────────
+    // ── DIPLOMATIC OPERATIONS ─────────────────────────────────────────────────
     if (DIPLOMATIC_OPS.has(operation_type)) {
       if (!region_id) {
         return Response.json({ error: 'region_id is required for diplomatic operations' }, { status: 400 });
       }
 
-      // Validate player has influence in target territory (for incite_rebellion)
-      if (operation_type === 'incite_rebellion') {
-        const influenceRecords = await base44.asServiceRole.entities.TerritoryInfluence.filter({
-          campaign_id,
-          territory_id: target_territory_id,
-          player_id: actingPlayer.id,
-        });
-        const influence = influenceRecords[0]?.influence_amount ?? 0;
-        if (influence < 1) {
-          return Response.json({ error: 'You must have influence in the target territory to incite a rebellion.' }, { status: 400 });
-        }
-      }
-
-      // Validate structure exists for assassination
-      if (operation_type === 'assassination') {
-        const buildings = await base44.asServiceRole.entities.TerritoryBuilding.filter({
-          campaign_id,
-          territory_id: target_territory_id,
-          status: 'active',
-        });
-        if (buildings.length === 0) {
-          return Response.json({ error: 'Target territory must contain an active building for an assassination operation.' }, { status: 400 });
-        }
-      }
-
       // Spend influence
       await spendRegionalInfluence(base44, campaign_id, actingPlayer.id, region_id, costConfig.amount, round);
 
-      // Build operation metadata
+      const defenderPlayerId = targetState?.owner_player_id ?? null;
       const defenderTroops = targetState?.troop_count ?? 0;
-      const operationTroops = committed_troops ?? Math.max(1, Math.round(defenderTroops * 0.5));
-      const totalTroops = operationTroops + defenderTroops;
-      const avgSize = campaign.settings?.average_battle_size ?? DEFAULT_AVG_BATTLE_SIZE;
-      const { scaleFactor, tabletopSize } = computeCardScale(totalTroops, avgSize);
+      const diplomatTroops = committed_troops ?? Math.max(1, Math.round(defenderTroops * 0.3));
+      const totalTroops = diplomatTroops + defenderTroops;
+      const { scaleFactor, tabletopSize } = computeCardScale(Math.max(totalTroops, 2), avgSize);
 
+      let battleType = operation_type; // uprising, labor_strike, tax_protest, manufactured_crisis
       let metadata = {
-        diplomatic_operation_type: operation_type,
         influence_spent: costConfig.amount,
         region_id,
-        objective_hook: null,
+        diplomat_committed_troops: diplomatTroops,
+        troop_loss_basis: defenderTroops,
+        influence_reward_target: region_id,
+        objective_hook: operation_type,
       };
 
-      if (operation_type === 'incite_rebellion') {
-        metadata.objective_hook = 'incite_rebellion';
+      // Operation-specific metadata
+      if (operation_type === 'uprising') {
+        // Diplomat attacks territory to incite revolt
         metadata.rebellion_narrative = 'Local rebels rise against current control.';
+      }
+      if (operation_type === 'labor_strike') {
+        // Targets a resource hub territory
+        metadata.target_resource_hub = target_territory_id;
+      }
+      if (operation_type === 'tax_protest') {
+        // Targets a player's gold; diplomat is the defender role
+        metadata.gold_transfer_amount = gold_transfer_amount ?? Math.max(1, Math.round((defenderTroops ?? 1) * 1));
+        metadata.taxed_player_id = defenderPlayerId;
       }
       if (operation_type === 'manufactured_crisis') {
         metadata.target_region = SC_TERRITORY_REGION[target_territory_id] ?? region_id;
-        metadata.objective_hook = 'manufactured_crisis';
         metadata.use_influence_alter_battle = true;
-      }
-      if (operation_type === 'assassination') {
-        metadata.objective_hook = 'use_influence_alter_battle';
-        metadata.use_influence_alter_battle = true;
-        // Store first active building in territory as assassination target
-        const buildings = await base44.asServiceRole.entities.TerritoryBuilding.filter({
-          campaign_id,
-          territory_id: target_territory_id,
-          status: 'active',
-        });
-        metadata.target_structure = buildings[0]?.building_type ?? null;
-        metadata.target_building_id = buildings[0]?.id ?? null;
-      }
-      if (operation_type === 'mercenary_action') {
-        metadata.mercenary_flag = true;
-        metadata.objective_hook = 'mercenary_action';
+        if (territory_b_id) {
+          metadata.territory_b_id = territory_b_id;
+          const stateB = territoryStates.find(s => s.territory_id === territory_b_id);
+          metadata.territory_b_player_id = stateB?.owner_player_id ?? null;
+        }
       }
 
-      // Create the BattleCard
+      // Tax protest: diplomat is the "defender" — the taxed player's forces attack
+      // All others: diplomat is the attacker
+      let attackers, cardDefenderPlayerId, cardDefenderTroops;
+      if (operation_type === 'tax_protest') {
+        // Taxed player attacks the protest; diplomat defends
+        attackers = [{
+          player_id: defenderPlayerId ?? actingPlayer.id,
+          origin_territory_id: target_territory_id,
+          committed_troops: defenderTroops,
+        }];
+        cardDefenderPlayerId = actingPlayer.id;
+        cardDefenderTroops = diplomatTroops;
+      } else {
+        attackers = [{
+          player_id: actingPlayer.id,
+          origin_territory_id: target_territory_id,
+          committed_troops: diplomatTroops,
+        }];
+        cardDefenderPlayerId = defenderPlayerId;
+        cardDefenderTroops = defenderTroops;
+      }
+
       const card = await base44.asServiceRole.entities.BattleCard.create({
         campaign_id,
         round,
-        battle_type: 'siege',
+        battle_type: battleType,
+        battle_pillar: 'diplomatic',
         target_territory_id,
-        defender_player_id: targetState?.owner_player_id ?? null,
-        defender_troops: defenderTroops,
-        attackers: [{
-          player_id: actingPlayer.id,
-          origin_territory_id: target_territory_id,
-          committed_troops: operationTroops,
-        }],
-        total_attacking_troops: operationTroops,
+        defender_player_id: cardDefenderPlayerId,
+        defender_troops: cardDefenderTroops,
+        attackers,
+        total_attacking_troops: attackers.reduce((s, a) => s + (a.committed_troops ?? 0), 0),
         total_troops_in_battle: totalTroops,
         scale_factor: scaleFactor,
         tabletop_size: tabletopSize,
@@ -359,79 +364,83 @@ Deno.serve(async (req) => {
         source_operation_metadata: metadata,
       });
 
-      await log(base44, campaign_id, round, `operation_${operation_type}_generated`, actingPlayer.id, {
-        battle_card_id: card.id,
-        target_territory_id,
-        influence_spent: costConfig.amount,
-        region_id,
+      await logOp(base44, campaign_id, round, `operation_${operation_type}_generated`, actingPlayer.id, {
+        battle_card_id: card.id, target_territory_id, influence_spent: costConfig.amount, region_id,
       });
 
       return Response.json({
         success: true,
         battle_card_id: card.id,
         operation_type,
+        battle_type: battleType,
         target_territory_id,
         tabletop_size: tabletopSize,
         influence_spent: costConfig.amount,
-        message: `${operation_type.replace(/_/g, ' ')} operation generated a battle card at ${target_territory_id}.`,
+        message: `${operation_type.replace(/_/g, ' ')} generated a battle card at ${target_territory_id}.`,
       });
     }
 
-    // ── Resource-based operations ────────────────────────────────────────────
+    // ── ECONOMIC OPERATIONS ────────────────────────────────────────────────────
     if (ECONOMIC_OPS.has(operation_type)) {
       const cost = costConfig.amount;
       const resource = costConfig.resource;
 
-      // Spend resources
       await spendPlayerResource(base44, campaign_id, actingPlayer.id, resource, cost, round);
 
       const defenderTroops = targetState?.troop_count ?? 0;
-      const operationTroops = committed_troops ?? Math.max(1, Math.round(defenderTroops * 0.5));
+      const operationTroops = committed_troops ?? Math.max(1, Math.round(Math.max(defenderTroops, 1) * 0.5));
       const totalTroops = operationTroops + defenderTroops;
-      const avgSize = campaign.settings?.average_battle_size ?? DEFAULT_AVG_BATTLE_SIZE;
-      const { scaleFactor, tabletopSize } = computeCardScale(totalTroops, avgSize);
+      const { scaleFactor, tabletopSize } = computeCardScale(Math.max(totalTroops, 2), avgSize);
 
       let metadata = {
-        resource_spent: cost,
+        invested_gold: cost,
         resource_type: resource,
-        objective_hook: null,
+        objective_hook: operation_type,
       };
 
-      if (operation_type === 'supply_raid') {
+      if (operation_type === 'supply_route_establishment') {
+        metadata.route_target_territory = target_territory_id;
+        metadata.route_cooldown_until_round = round + 2;
+        if (target_supply_route_id) metadata.supply_route_id = target_supply_route_id;
+      }
+
+      if (operation_type === 'supply_route_race') {
         if (!target_supply_route_id) {
-          return Response.json({ error: 'target_supply_route_id is required for supply_raid' }, { status: 400 });
+          return Response.json({ error: 'target_supply_route_id is required for supply_route_race' }, { status: 400 });
         }
-        // Validate supply route exists
         const routes = await base44.asServiceRole.entities.SupplyRoute.filter({ campaign_id });
         const route = routes.find(r => r.id === target_supply_route_id);
         if (!route) {
           return Response.json({ error: 'Supply route not found.' }, { status: 404 });
         }
-        metadata.target_supply_route_id = target_supply_route_id;
+        metadata.supply_route_id = target_supply_route_id;
         metadata.supply_route_owner = route.owner_player_id;
         metadata.supply_route_resource = route.resource_type;
+        metadata.route_cooldown_until_round = round + 2;
       }
 
-      if (operation_type === 'resource_interdiction') {
-        const hubTerritory = target_resource_hub_territory ?? target_territory_id;
-        const hubBuildings = await base44.asServiceRole.entities.TerritoryBuilding.filter({
-          campaign_id,
-          territory_id: hubTerritory,
-          building_type: 'resource_hub',
-          status: 'active',
-        });
-        if (hubBuildings.length === 0) {
-          return Response.json({ error: 'Target territory does not have an active Resource Hub.' }, { status: 400 });
+      if (operation_type === 'supply_raid') {
+        if (!declared_resource_type) {
+          return Response.json({ error: 'declared_resource_type is required for supply_raid' }, { status: 400 });
         }
-        metadata.target_resource_hub_territory = hubTerritory;
-        metadata.resource_hub_id = hubBuildings[0]?.id ?? null;
-        metadata.objective_hook = 'cause_production_decrease';
+        metadata.declared_resource_type = declared_resource_type;
+        metadata.target_resource_hub = target_territory_id;
+      }
+
+      if (operation_type === 'supply_caravan_escort') {
+        if (!shipment_destination) {
+          return Response.json({ error: 'shipment_destination is required for supply_caravan_escort' }, { status: 400 });
+        }
+        metadata.shipment_origin = target_territory_id;
+        metadata.shipment_destination = shipment_destination;
+        metadata.shipment_contents = shipment_contents ?? {};
       }
 
       const card = await base44.asServiceRole.entities.BattleCard.create({
         campaign_id,
         round,
-        battle_type: 'siege',
+        battle_type: operation_type,
+        battle_pillar: 'economic',
         target_territory_id,
         defender_player_id: targetState?.owner_player_id ?? null,
         defender_troops: defenderTroops,
@@ -452,20 +461,19 @@ Deno.serve(async (req) => {
         source_operation_metadata: metadata,
       });
 
-      await log(base44, campaign_id, round, `operation_${operation_type}_generated`, actingPlayer.id, {
-        battle_card_id: card.id,
-        target_territory_id,
-        resource_spent: cost,
+      await logOp(base44, campaign_id, round, `operation_${operation_type}_generated`, actingPlayer.id, {
+        battle_card_id: card.id, target_territory_id, resource_spent: cost,
       });
 
       return Response.json({
         success: true,
         battle_card_id: card.id,
         operation_type,
+        battle_type: operation_type,
         target_territory_id,
         tabletop_size: tabletopSize,
         resource_spent: cost,
-        message: `${operation_type.replace(/_/g, ' ')} operation generated a battle card at ${target_territory_id}.`,
+        message: `${operation_type.replace(/_/g, ' ')} generated a battle card at ${target_territory_id}.`,
       });
     }
 
