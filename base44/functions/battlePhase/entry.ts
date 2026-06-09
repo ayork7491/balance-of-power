@@ -486,6 +486,338 @@ async function buildTerritoryUpdatesWithRecovery(base44, campaign_id, round, car
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// § NON-MILITARY CONSEQUENCE HANDLERS
+// Applied after result approval/resolution for economic and diplomatic cards.
+// Military cards continue using the existing territory update logic above.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const NON_MILITARY_TYPES = new Set([
+  'supply_route_establishment', 'supply_route_race', 'supply_raid', 'supply_caravan_escort',
+  'uprising', 'labor_strike', 'tax_protest', 'manufactured_crisis',
+]);
+
+/**
+ * applyNonMilitaryConsequences — runs after result is confirmed for non-military cards.
+ * Does NOT modify territory ownership. Returns a summary of changes made.
+ */
+async function applyNonMilitaryConsequences(base44, campaign_id, round, card, result) {
+  const meta = card.source_operation_metadata ?? {};
+  const sourcePlayerId = card.source_player_id;
+  const winnerPlayerId = result.winner_player_id;
+  const attackerWon = winnerPlayerId != null &&
+    (card.attackers ?? []).some(a => a.player_id === winnerPlayerId);
+  const defenderWon = winnerPlayerId === card.defender_player_id;
+  const summary = [];
+
+  // ── SUPPLY ROUTE ESTABLISHMENT ─────────────────────────────────────────────
+  if (card.battle_type === 'supply_route_establishment') {
+    if (attackerWon) {
+      // Activate supply route — create or update SupplyRoute record
+      const existing = await base44.asServiceRole.entities.SupplyRoute.filter({
+        campaign_id, owner_player_id: sourcePlayerId,
+        hub_territory_id: card.target_territory_id,
+        source_territory_id: card.target_territory_id,
+      });
+      if (existing.length === 0) {
+        await base44.asServiceRole.entities.SupplyRoute.create({
+          campaign_id,
+          owner_player_id: sourcePlayerId,
+          hub_territory_id: meta.route_target_territory ?? card.target_territory_id,
+          source_territory_id: meta.route_target_territory ?? card.target_territory_id,
+          route_status: 'active',
+          range_distance: 1,
+          resource_type: 'gold',
+          created_round: round,
+        });
+      }
+      summary.push('supply_route_activated');
+    } else {
+      // Cooldown applied — store on metadata (no dedicated entity for this yet)
+      summary.push(`supply_route_failed_cooldown_until_${meta.route_cooldown_until_round ?? round + 2}`);
+    }
+  }
+
+  // ── SUPPLY ROUTE RACE ──────────────────────────────────────────────────────
+  else if (card.battle_type === 'supply_route_race') {
+    if (attackerWon) {
+      // Challenger wins — take over the existing route or create a new one
+      const routeId = meta.supply_route_id;
+      if (routeId) {
+        const routes = await base44.asServiceRole.entities.SupplyRoute.filter({ campaign_id });
+        const route = routes.find(r => r.id === routeId);
+        if (route) {
+          await base44.asServiceRole.entities.SupplyRoute.update(routeId, {
+            owner_player_id: sourcePlayerId,
+            route_status: 'active',
+          });
+        }
+      }
+      summary.push('supply_route_ownership_transferred');
+    } else {
+      summary.push(`supply_route_race_failed_cooldown_until_${meta.route_cooldown_until_round ?? round + 2}`);
+    }
+  }
+
+  // ── SUPPLY RAID ────────────────────────────────────────────────────────────
+  else if (card.battle_type === 'supply_raid') {
+    if (attackerWon) {
+      const declaredResource = meta.declared_resource_type;
+      if (declaredResource) {
+        // Get stored resources from target territory
+        const targetState = await base44.asServiceRole.entities.TerritoryState.filter({
+          campaign_id, territory_id: card.target_territory_id,
+        });
+        const ts = targetState[0];
+        if (ts) {
+          const storedAmt = (ts.resource_storage ?? {})[declaredResource] ?? 0;
+          if (storedAmt > 0) {
+            // Remove from target territory
+            const newStorage = { ...(ts.resource_storage ?? {}), [declaredResource]: 0 };
+            await base44.asServiceRole.entities.TerritoryState.update(ts.id, { resource_storage: newStorage });
+            // Add to raider's resource ledger
+            const ledgers = await base44.asServiceRole.entities.PlayerResourceLedger.filter({
+              campaign_id, player_id: sourcePlayerId,
+            });
+            const ledger = ledgers[0];
+            if (ledger) {
+              await base44.asServiceRole.entities.PlayerResourceLedger.update(ledger.id, {
+                [declaredResource]: (ledger[declaredResource] ?? 0) + storedAmt,
+                updated_at_round: round,
+              });
+            }
+            summary.push(`supply_raid_stole_${storedAmt}_${declaredResource}`);
+          } else {
+            summary.push('supply_raid_nothing_to_steal');
+          }
+        }
+      }
+    } else {
+      summary.push('supply_raid_failed');
+    }
+  }
+
+  // ── SUPPLY CARAVAN ESCORT ──────────────────────────────────────────────────
+  else if (card.battle_type === 'supply_caravan_escort') {
+    const shipment = meta.shipment_contents ?? {};
+    const destination = meta.shipment_destination;
+    if (defenderWon) {
+      // Shipment delivered — add to destination territory storage
+      if (destination && Object.keys(shipment).length > 0) {
+        const destState = await base44.asServiceRole.entities.TerritoryState.filter({
+          campaign_id, territory_id: destination,
+        });
+        const ds = destState[0];
+        if (ds) {
+          const newStorage = { ...(ds.resource_storage ?? {}) };
+          for (const [res, amt] of Object.entries(shipment)) {
+            newStorage[res] = (newStorage[res] ?? 0) + (amt ?? 0);
+          }
+          await base44.asServiceRole.entities.TerritoryState.update(ds.id, { resource_storage: newStorage });
+          summary.push('caravan_delivered');
+        }
+      }
+    } else if (attackerWon) {
+      // 20% stolen, 80% destroyed
+      if (Object.keys(shipment).length > 0) {
+        const stolenResources = {};
+        for (const [res, amt] of Object.entries(shipment)) {
+          stolenResources[res] = Math.floor((amt ?? 0) * 0.20);
+        }
+        const interceptorId = winnerPlayerId;
+        const ledgers = await base44.asServiceRole.entities.PlayerResourceLedger.filter({
+          campaign_id, player_id: interceptorId,
+        });
+        const ledger = ledgers[0];
+        if (ledger) {
+          const updates = {};
+          for (const [res, amt] of Object.entries(stolenResources)) {
+            if (amt > 0) updates[res] = (ledger[res] ?? 0) + amt;
+          }
+          if (Object.keys(updates).length > 0) {
+            await base44.asServiceRole.entities.PlayerResourceLedger.update(ledger.id, {
+              ...updates, updated_at_round: round,
+            });
+          }
+        }
+        summary.push('caravan_intercepted_20pct_stolen');
+      }
+    }
+  }
+
+  // ── UPRISING ───────────────────────────────────────────────────────────────
+  else if (card.battle_type === 'uprising') {
+    const defenderPlayerId = card.defender_player_id;
+    const regionTarget = meta.influence_reward_target ?? meta.region_id;
+
+    if (attackerWon) {
+      // Reduce garrison and award influence to diplomat
+      const targetStates = await base44.asServiceRole.entities.TerritoryState.filter({
+        campaign_id, territory_id: card.target_territory_id,
+      });
+      const ts = targetStates[0];
+      if (ts) {
+        const lossAmount = Math.max(1, Math.round((meta.troop_loss_basis ?? 2) * 0.5));
+        const newCount = Math.max(0, (ts.troop_count ?? 0) - lossAmount);
+        await base44.asServiceRole.entities.TerritoryState.update(ts.id, { troop_count: newCount });
+      }
+      // Grant influence to diplomat in territory
+      await upsertTerritoryInfluence(base44, campaign_id, card.target_territory_id, sourcePlayerId, 2, round);
+      // Grant regional spendable influence
+      if (regionTarget) await upsertRegionalInfluence(base44, campaign_id, regionTarget, sourcePlayerId, 1, round);
+      summary.push('uprising_won_garrison_reduced_influence_granted');
+    } else {
+      // Defender wins — reduced troop loss, diplomat loses influence (already spent)
+      const targetStates = await base44.asServiceRole.entities.TerritoryState.filter({
+        campaign_id, territory_id: card.target_territory_id,
+      });
+      const ts = targetStates[0];
+      if (ts) {
+        const minorLoss = Math.max(0, Math.round((meta.troop_loss_basis ?? 2) * 0.15));
+        const newCount = Math.max(0, (ts.troop_count ?? 0) - minorLoss);
+        await base44.asServiceRole.entities.TerritoryState.update(ts.id, { troop_count: newCount });
+      }
+      summary.push('uprising_defended_minor_loss_applied');
+    }
+  }
+
+  // ── LABOR STRIKE ──────────────────────────────────────────────────────────
+  else if (card.battle_type === 'labor_strike') {
+    const hubTerritory = meta.target_resource_hub ?? card.target_territory_id;
+    const regionTarget = meta.influence_reward_target ?? meta.region_id;
+
+    if (attackerWon) {
+      // Destroy stored resources in hub territory
+      const hubStates = await base44.asServiceRole.entities.TerritoryState.filter({
+        campaign_id, territory_id: hubTerritory,
+      });
+      const hs = hubStates[0];
+      if (hs && hs.resource_storage) {
+        const destroyRatio = 0.5;
+        const newStorage = {};
+        for (const [res, amt] of Object.entries(hs.resource_storage)) {
+          newStorage[res] = Math.max(0, Math.floor((amt ?? 0) * (1 - destroyRatio)));
+        }
+        await base44.asServiceRole.entities.TerritoryState.update(hs.id, { resource_storage: newStorage });
+      }
+      await upsertTerritoryInfluence(base44, campaign_id, hubTerritory, sourcePlayerId, 2, round);
+      if (regionTarget) await upsertRegionalInfluence(base44, campaign_id, regionTarget, sourcePlayerId, 1, round);
+      summary.push('labor_strike_won_resources_destroyed_influence_granted');
+    } else {
+      // Minor resource loss
+      const hubStates = await base44.asServiceRole.entities.TerritoryState.filter({
+        campaign_id, territory_id: hubTerritory,
+      });
+      const hs = hubStates[0];
+      if (hs && hs.resource_storage) {
+        const minorRatio = 0.1;
+        const newStorage = {};
+        for (const [res, amt] of Object.entries(hs.resource_storage)) {
+          newStorage[res] = Math.max(0, Math.floor((amt ?? 0) * (1 - minorRatio)));
+        }
+        await base44.asServiceRole.entities.TerritoryState.update(hs.id, { resource_storage: newStorage });
+      }
+      summary.push('labor_strike_defended_minor_resource_loss');
+    }
+  }
+
+  // ── TAX PROTEST ───────────────────────────────────────────────────────────
+  else if (card.battle_type === 'tax_protest') {
+    const regionTarget = meta.influence_reward_target ?? meta.region_id;
+    const goldAmount = meta.gold_transfer_amount ?? 0;
+    // Diplomat is defender in tax protest
+    const taxedPlayerId = card.attackers?.[0]?.player_id ?? null;
+
+    if (defenderWon) {
+      // Diplomat wins: seize gold, gain influence
+      if (goldAmount > 0 && taxedPlayerId && sourcePlayerId) {
+        const [taxedLedgers, diplomatLedgers] = await Promise.all([
+          base44.asServiceRole.entities.PlayerResourceLedger.filter({ campaign_id, player_id: taxedPlayerId }),
+          base44.asServiceRole.entities.PlayerResourceLedger.filter({ campaign_id, player_id: sourcePlayerId }),
+        ]);
+        const taxedLedger = taxedLedgers[0];
+        const diplomatLedger = diplomatLedgers[0];
+        const actualGold = Math.min(goldAmount, taxedLedger?.gold ?? 0);
+        if (actualGold > 0) {
+          if (taxedLedger) {
+            await base44.asServiceRole.entities.PlayerResourceLedger.update(taxedLedger.id, {
+              gold: (taxedLedger.gold ?? 0) - actualGold, updated_at_round: round,
+            });
+          }
+          if (diplomatLedger) {
+            await base44.asServiceRole.entities.PlayerResourceLedger.update(diplomatLedger.id, {
+              gold: (diplomatLedger.gold ?? 0) + actualGold, updated_at_round: round,
+            });
+          }
+          summary.push(`tax_protest_won_gold_transferred_${actualGold}`);
+        }
+      }
+      await upsertTerritoryInfluence(base44, campaign_id, card.target_territory_id, sourcePlayerId, 2, round);
+      if (regionTarget) await upsertRegionalInfluence(base44, campaign_id, regionTarget, sourcePlayerId, 1, round);
+    } else {
+      // Diplomat loses — influence already spent, committed troops lost (tracked by result)
+      summary.push('tax_protest_failed_no_gold_transferred');
+    }
+  }
+
+  // ── MANUFACTURED CRISIS ────────────────────────────────────────────────────
+  else if (card.battle_type === 'manufactured_crisis') {
+    const regionTarget = meta.influence_reward_target ?? meta.region_id;
+    const territoryB = meta.territory_b_id;
+    // Diplomat is defender; wins if they prevent mutual destruction
+    if (defenderWon) {
+      // Diplomat peacekeeping win: gain influence in both territories
+      await upsertTerritoryInfluence(base44, campaign_id, card.target_territory_id, sourcePlayerId, 3, round);
+      if (territoryB) {
+        await upsertTerritoryInfluence(base44, campaign_id, territoryB, sourcePlayerId, 3, round);
+      }
+      if (regionTarget) await upsertRegionalInfluence(base44, campaign_id, regionTarget, sourcePlayerId, 2, round);
+      summary.push('manufactured_crisis_diplomat_won_influence_granted');
+    } else {
+      // A player won — they destroyed the opposing crisis force; diplomat gains nothing
+      summary.push('manufactured_crisis_player_won_no_diplomat_reward');
+    }
+  }
+
+  return summary;
+}
+
+// Helpers for influence side-effects
+
+async function upsertTerritoryInfluence(base44, campaignId, territoryId, playerId, addAmount, round) {
+  const existing = await base44.asServiceRole.entities.TerritoryInfluence.filter({
+    campaign_id: campaignId, territory_id: territoryId, player_id: playerId,
+  });
+  if (existing[0]) {
+    await base44.asServiceRole.entities.TerritoryInfluence.update(existing[0].id, {
+      influence_amount: (existing[0].influence_amount ?? 0) + addAmount,
+      last_updated_round: round,
+    });
+  } else {
+    await base44.asServiceRole.entities.TerritoryInfluence.create({
+      campaign_id: campaignId, territory_id: territoryId, player_id: playerId,
+      influence_amount: addAmount, last_updated_round: round, source: 'battle_consequence',
+    });
+  }
+}
+
+async function upsertRegionalInfluence(base44, campaignId, regionId, playerId, addAmount, round) {
+  const existing = await base44.asServiceRole.entities.RegionalInfluencePool.filter({
+    campaign_id: campaignId, region_id: regionId, player_id: playerId,
+  });
+  if (existing[0]) {
+    await base44.asServiceRole.entities.RegionalInfluencePool.update(existing[0].id, {
+      spendable_influence: (existing[0].spendable_influence ?? 0) + addAmount,
+      last_updated_round: round,
+    });
+  } else {
+    await base44.asServiceRole.entities.RegionalInfluencePool.create({
+      campaign_id: campaignId, region_id: regionId, player_id: playerId,
+      spendable_influence: addAmount, last_updated_round: round,
+    });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // § LOGGING + LOCKED TERRITORIES
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -552,14 +884,19 @@ Deno.serve(async (req) => {
   async function applyAutoResolve(card, autoResult, base44Ref, campaign_idRef, roundRef) {
     const now = new Date().toISOString();
     const isCarryover = ['active_carryover', 'pending_approval'].includes(card.status);
+    const isNonMilitary = NON_MILITARY_TYPES.has(card.battle_type);
     await base44Ref.asServiceRole.entities.BattleCard.update(card.id, {
       status: 'auto_resolved', resolved_at: now,
       ...(isCarryover ? { resolved_in_battle_round: roundRef } : {}),
       result: { ...autoResult, submitted_by: 'system', submitted_at: now, applied_at: null },
     });
-    const territoryStates = await base44Ref.asServiceRole.entities.TerritoryState.filter({ campaign_id: campaign_idRef });
-    const updates = await buildTerritoryUpdatesWithRecovery(base44Ref, campaign_idRef, roundRef, card, autoResult, territoryStates);
-    await applyTerritoryUpdates(base44Ref, updates);
+    if (isNonMilitary) {
+      await applyNonMilitaryConsequences(base44Ref, campaign_idRef, roundRef, card, autoResult);
+    } else {
+      const territoryStates = await base44Ref.asServiceRole.entities.TerritoryState.filter({ campaign_id: campaign_idRef });
+      const updates = await buildTerritoryUpdatesWithRecovery(base44Ref, campaign_idRef, roundRef, card, autoResult, territoryStates);
+      await applyTerritoryUpdates(base44Ref, updates);
+    }
     await base44Ref.asServiceRole.entities.BattleCard.update(card.id, {
       result_applied: true,
       result: { ...autoResult, submitted_by: 'system', submitted_at: now, applied_at: new Date().toISOString() },
@@ -1021,11 +1358,17 @@ Deno.serve(async (req) => {
     if (newStatus === 'resolved' && !card.result_applied) {
       const result = card.result;
       const isDoubleSiegeResult = card.battle_type === 'double_siege' && result?.double_siege_result != null;
+      const isNonMilitary = NON_MILITARY_TYPES.has(card.battle_type);
       if (result?.winner_player_id || isDoubleSiegeResult) {
         const isCarryoverCard = ['active_carryover', 'pending_approval'].includes(card.status);
-        const territoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
-        const updates = await buildTerritoryUpdatesWithRecovery(base44, campaign_id, round, card, result, territoryStates);
-        await applyTerritoryUpdates(base44, updates);
+        if (isNonMilitary) {
+          // Non-military: apply specialized consequences, NO territory ownership changes
+          await applyNonMilitaryConsequences(base44, campaign_id, round, card, result);
+        } else {
+          const territoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+          const updates = await buildTerritoryUpdatesWithRecovery(base44, campaign_id, round, card, result, territoryStates);
+          await applyTerritoryUpdates(base44, updates);
+        }
         await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
           result_applied: true,
           ...(isCarryoverCard ? { resolved_in_battle_round: round } : {}),
@@ -1528,8 +1871,12 @@ Deno.serve(async (req) => {
       const resultIsDS = card.battle_type === 'double_siege' && resultToApply?.double_siege_result?.defender_held === false;
       if (resultToApply?.winner_player_id || resultIsDS) {
         const wasCarryover = card.round < round;
-        const freshStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
-        await applyTerritoryUpdates(base44, await buildTerritoryUpdatesWithRecovery(base44, campaign_id, round, card, resultToApply, freshStates));
+        if (NON_MILITARY_TYPES.has(card.battle_type)) {
+          await applyNonMilitaryConsequences(base44, campaign_id, round, card, resultToApply);
+        } else {
+          const freshStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+          await applyTerritoryUpdates(base44, await buildTerritoryUpdatesWithRecovery(base44, campaign_id, round, card, resultToApply, freshStates));
+        }
         await base44.asServiceRole.entities.BattleCard.update(card.id, {
           result_applied: true,
           ...(wasCarryover ? { resolved_in_battle_round: round } : {}),

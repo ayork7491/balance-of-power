@@ -12,6 +12,7 @@ import AppShell from '@/components/layout/AppShell';
 import BattleTypeTag from '@/components/phases/battle/BattleTypeTag';
 import BattleStatusTag from '@/components/phases/battle/BattleStatusTag';
 import BattlePreferencePanel, { PreferenceRecord } from '@/components/phases/battle/BattlePreferencePanel';
+import BattleCardStakesPanel from '@/components/phases/battle/BattleCardStakesPanel';
 import { PLAYER_COLORS } from '@/config/theme';
 import { getMap } from '@/features/maps';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -380,6 +381,11 @@ export default function BattleCardDetail() {
             </div>
           </div>
         </div>
+
+        {/* Stakes & Consequences — shown for non-military cards */}
+        {card.battle_card_source && card.battle_card_source !== 'military_attack' && (
+          <BattleCardStakesPanel card={card} players={players} mapDef={mapDef} />
+        )}
 
         {/* Scaling stats — clearly labeled BOP vs Tabletop */}
         <div className="panel p-3 space-y-2">
