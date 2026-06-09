@@ -905,6 +905,34 @@ Deno.serve(async (req) => {
       ).length,
     }, true);
 
+    // ── Sprint 5A: Victory check at end of Consolidation (Fortify) Phase ────
+    // Invoke victoryPhase.checkVictory. If a winner is found, it sets
+    // campaign.current_phase = 'complete' — we skip the deploy advance.
+    let victoryResult = null;
+    try {
+      const victoryRes = await base44.asServiceRole.functions.invoke('victoryPhase', {
+        action: 'checkVictory',
+        campaign_id,
+      });
+      victoryResult = victoryRes?.data ?? null;
+    } catch (vErr) {
+      // Non-fatal: victory check failure should not block phase advance
+      await log(base44, campaign_id, round, phase, 'victory_check_error', null, {
+        error: vErr?.message ?? 'unknown',
+      }, false);
+    }
+
+    if (victoryResult?.campaign_complete) {
+      // Winner declared — campaign already set to 'complete' by victoryPhase
+      return Response.json({
+        success: true,
+        next_phase: 'complete',
+        next_round: round,
+        movements_applied: Object.keys(troopChanges).length / 2,
+        victory: victoryResult.winner,
+      });
+    }
+
     // Advance to next round's deploy phase
     const nextRound = round + 1;
     await base44.asServiceRole.entities.Campaign.update(campaign_id, {

@@ -1,12 +1,14 @@
 /**
- * LeaderboardPanel — right dock panel showing player rankings.
+ * LeaderboardPanel — right dock panel showing player rankings + victory progress.
  */
 import { useMemo } from 'react';
 import { useLeaderboard } from '@/features/campaigns/leaderboard/useLeaderboard';
 import { Trophy, Users, Shield, TrendingUp } from 'lucide-react';
 import PlayerColorDot from '@/components/ui/PlayerColorDot';
+import VictoryProgressPanel from '@/components/campaigns/VictoryProgressPanel';
+import VictorySummaryPanel from '@/components/campaigns/VictorySummaryPanel';
 
-export default function LeaderboardPanel({ campaign, players }) {
+export default function LeaderboardPanel({ campaign, players, trackers = [], thresholds }) {
   const { leaderboard, isLoading, error } = useLeaderboard(campaign?.id);
 
   if (isLoading) {
@@ -33,6 +35,11 @@ export default function LeaderboardPanel({ campaign, players }) {
         <p className="font-display text-xs tracking-widest uppercase text-muted-foreground">
           Campaign Standings
         </p>
+      </div>
+
+      {/* Victory Summary + Progress */}
+      <div className="-mx-4 border-b border-border mb-3">
+        <VictorySummaryPanel trackers={trackers} players={players} thresholds={thresholds} />
       </div>
 
       {leaderboard.length === 0 ? (

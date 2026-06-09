@@ -14,6 +14,7 @@ import FortifyInfoPanel from '@/components/phases/fortify/FortifyInfoPanel';
 // History and leaderboard
 import LeaderboardPanel from '@/components/campaigns/LeaderboardPanel';
 import HistoryLogPanel from '@/components/campaigns/HistoryLogPanel';
+import VictoryProgressPanel from '@/components/campaigns/VictoryProgressPanel';
 import InfoPanelPlaceholder from './InfoPanelPlaceholder';
 
 // Region legend (moved out of map viewport)
@@ -130,6 +131,10 @@ export default function RightDockRouter({
           ) : activeTab === 'leaderboard' ? (
             <>
               <LeaderboardPanel campaign={campaign} players={players} />
+              {/* Victory progress per player */}
+              <div className="border-t border-border">
+                <VictoryProgressPanel campaign={campaign} players={players} />
+              </div>
               {/* Region bonuses surfaced here for portrait access */}
               {mapDef?.regions?.length > 0 && (
                 <div className="mt-2 border-t border-border bg-muted/20">
