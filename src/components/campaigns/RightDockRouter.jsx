@@ -38,6 +38,9 @@ import ObjectivesPanel from '@/components/objectives/ObjectivesPanel';
 // Operations panel (Sprint 4K)
 import OperationsPanel from '@/components/operations/OperationsPanel';
 
+// Intelligence panel (Sprint 4M)
+import IntelligencePanel from '@/components/intelligence/IntelligencePanel';
+
 const SETUP_PHASES = new Set(['faction_selection', 'territory_draft', 'initial_deploy']);
 const GAMEPLAY_PHASES = new Set(['deploy', 'attack', 'battle', 'fortify']);
 
@@ -77,15 +80,27 @@ export default function RightDockRouter({
             </div>
           ) : activeTab === 'influence' ? (
             <div className="h-full overflow-y-auto dock-scroll">
-              {/* Secret Objectives — Sprint 4I */}
-              <ObjectivesPanel
+              {/* Intelligence Actions + Reports — Sprint 4M */}
+              <IntelligencePanel
                 campaign={campaign}
                 myPlayer={myPlayer}
                 isAdmin={isAdmin}
                 actingAsPlayerId={actingAsPlayerId}
-                stateById={stateById ?? {}}
+                mapDef={mapDef}
                 players={players}
+                stateById={stateById ?? {}}
               />
+              {/* Secret Objectives — Sprint 4I */}
+              <div className="border-t border-border">
+                <ObjectivesPanel
+                  campaign={campaign}
+                  myPlayer={myPlayer}
+                  isAdmin={isAdmin}
+                  actingAsPlayerId={actingAsPlayerId}
+                  stateById={stateById ?? {}}
+                  players={players}
+                />
+              </div>
               {/* Diplomatic Actions — Sprint 4H */}
               <div className="border-t border-border">
                 <DiplomaticActionsPanel

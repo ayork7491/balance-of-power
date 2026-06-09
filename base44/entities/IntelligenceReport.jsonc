@@ -1,0 +1,68 @@
+{
+  "name": "IntelligenceReport",
+  "type": "object",
+  "description": "Historical snapshot of intelligence gathered by a player about a target. Reports are immutable once created \u2014 they represent conditions at the time of gathering.",
+  "properties": {
+    "campaign_id": {
+      "type": "string",
+      "description": "FK \u2192 Campaign.id"
+    },
+    "viewer_player_id": {
+      "type": "string",
+      "description": "FK \u2192 CampaignPlayer.id \u2014 the player who gathered this intelligence."
+    },
+    "target_player_id": {
+      "type": "string",
+      "description": "FK \u2192 CampaignPlayer.id \u2014 the player being investigated. Null for territory-only reports."
+    },
+    "target_territory_id": {
+      "type": "string",
+      "description": "Territory targeted by this report. Null for region-level reports."
+    },
+    "target_region_id": {
+      "type": "string",
+      "description": "Region targeted by this report. Null for territory-level reports."
+    },
+    "report_type": {
+      "type": "string",
+      "enum": [
+        "recon_territory",
+        "audit_stockpile",
+        "investigate_influence"
+      ],
+      "description": "The intelligence action that generated this report."
+    },
+    "generated_round": {
+      "type": "number",
+      "description": "Campaign round when this report was generated."
+    },
+    "generated_phase": {
+      "type": "string",
+      "description": "Phase when this report was generated (e.g. 'battle', 'deploy')."
+    },
+    "generated_at": {
+      "type": "string",
+      "description": "ISO timestamp when the report was generated."
+    },
+    "report_data": {
+      "type": "object",
+      "description": "The actual intelligence snapshot. Shape depends on report_type. Never updated after creation.",
+      "default": {}
+    },
+    "influence_spent": {
+      "type": "number",
+      "default": 0,
+      "description": "Spendable influence cost paid to generate this report."
+    },
+    "region_id_used": {
+      "type": "string",
+      "description": "Region from which influence was spent."
+    }
+  },
+  "required": [
+    "campaign_id",
+    "viewer_player_id",
+    "report_type",
+    "generated_round"
+  ]
+}
