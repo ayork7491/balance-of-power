@@ -1,12 +1,9 @@
 /**
- * CommandCenterPanel — Sprint 5B
+ * CommandCenterPanel — Sprint 5B.2
  *
- * The primary gameplay interface. Shows:
- *   - Phase summary (round, phase, description)
- *   - For non-battle phases: Military / Economic / Diplomatic pillar tabs
- *   - For battle phase: unified conflict queue (ConflictQueuePanel)
- *
- * Reuses existing panels — no business logic duplicated.
+ * Primary gameplay interface with unified Planning Phase lock-in bar.
+ * During deploy phase: shows PlanningPhaseLockBar + ResourceStagingPanel.
+ * Other phases: unchanged.
  */
 import { useState, useMemo } from 'react';
 import { Shield, Coins, Feather, Swords, ChevronRight, Clock } from 'lucide-react';
@@ -23,6 +20,8 @@ import IntelligencePanel from '@/components/intelligence/IntelligencePanel';
 import LogisticsPanel from '@/components/logistics/LogisticsPanel';
 import ConflictQueuePanel from '@/components/command/ConflictQueuePanel';
 import PhaseSummaryBar from '@/components/command/PhaseSummaryBar';
+import PlanningPhaseLockBar from '@/components/command/PlanningPhaseLockBar';
+import ResourceStagingPanel from '@/components/phases/resource/ResourceStagingPanel';
 
 // Setup panels
 import FactionSelectionPanel from '@/components/setup/FactionSelectionPanel';
@@ -72,9 +71,11 @@ export default function CommandCenterPanel({
   isAdmin,
 }) {
   const [pillarTab, setPillarTab] = useState('military');
+  const [planningStatus, setPlanningStatus] = useState(null);
   const phase = campaign?.current_phase;
   const isSetup = SETUP_PHASES.has(phase);
   const isBattle = phase === 'battle';
+  const isDeploy = phase === 'deploy';
 
   // ── Setup phases: render directly, no pillar tabs ────────────────────────
   if (isSetup) {
@@ -125,6 +126,17 @@ export default function CommandCenterPanel({
     <div className="flex flex-col">
       <PhaseSummaryBar campaign={campaign} players={players} myPlayer={myPlayer} />
 
+      {/* Planning Phase lock-in bar — only during deploy phase */}
+      {isDeploy && (
+        <PlanningPhaseLockBar
+          campaign={campaign}
+          myPlayer={myPlayer}
+          actingAsPlayerId={actingAsPlayerId}
+          onLocked={onPhaseChanged}
+          onStatusLoaded={setPlanningStatus}
+        />
+      )}
+
       {/* Pillar tabs — sticky inside the outer scroll container */}
       <div className="sticky top-0 z-10 flex border-b border-border bg-panel-header">
         {PILLAR_TABS.map(t => (
@@ -146,11 +158,13 @@ export default function CommandCenterPanel({
           campaign={campaign} players={players} myPlayer={myPlayer}
           stateById={stateById} mapDef={mapDef} onPhaseChanged={onPhaseChanged}
           actingAsPlayerId={actingAsPlayerId} isAdmin={isAdmin}
+          planningStatus={planningStatus}
         />}
         {pillarTab === 'diplomatic' && <DiplomaticContent
           campaign={campaign} players={players} myPlayer={myPlayer}
           mapDef={mapDef} stateById={stateById} onPhaseChanged={onPhaseChanged}
           actingAsPlayerId={actingAsPlayerId} isAdmin={isAdmin}
+          planningStatus={planningStatus}
         />}
       </div>
     </div>
@@ -187,16 +201,28 @@ function MilitaryContent({ campaign, players, myPlayer, actionPlayer, stateById,
     actingAsPlayerId={actingAsPlayerId} stateById={stateById} mapDef={mapDef} players={players} />;
 }
 
-function EconomicContent({ campaign, players, myPlayer, stateById, mapDef, onPhaseChanged, actingAsPlayerId, isAdmin }) {
+function EconomicContent({ campaign, players, myPlayer, stateById, mapDef, onPhaseChanged, actingAsPlayerId, isAdmin, planningStatus }) {
   const phase = campaign?.current_phase;
   return (
     <div className="space-y-0">
-      {/* Resource activation always available in deploy phase */}
+      {/* Deploy phase: staging-mode resource panel */}
       {phase === 'deploy' && (
+        <ResourceStagingPanel
+          campaign={campaign}
+          myPlayer={myPlayer}
+          mapDef={mapDef}
+          actingAsPlayerId={actingAsPlayerId}
+          planningStatus={planningStatus}
+        />
+      )}
+      {/* Non-deploy phase: original resource panel */}
+      {phase !== 'deploy' && (
         <ResourcePhasePanel campaign={campaign} myPlayer={myPlayer} mapDef={mapDef} isAdmin={isAdmin} />
       )}
       {/* Logistics — supply routes, hubs */}
-      <LogisticsPanel campaign={campaign} myPlayer={myPlayer} mapDef={mapDef} />
+      <div className={phase === 'deploy' ? 'border-t border-border' : ''}>
+        <LogisticsPanel campaign={campaign} myPlayer={myPlayer} mapDef={mapDef} />
+      </div>
       {/* Operations-phase economic ops */}
       {(phase === 'attack' || phase === 'fortify') && (
         <div className="border-t border-border">
@@ -208,7 +234,7 @@ function EconomicContent({ campaign, players, myPlayer, stateById, mapDef, onPha
   );
 }
 
-function DiplomaticContent({ campaign, players, myPlayer, mapDef, stateById, onPhaseChanged, actingAsPlayerId, isAdmin }) {
+function DiplomaticContent({ campaign, players, myPlayer, mapDef, stateById, onPhaseChanged, actingAsPlayerId, isAdmin, planningStatus }) {
   return (
     <div className="space-y-0">
       {/* Intelligence actions */}
@@ -216,7 +242,9 @@ function DiplomaticContent({ campaign, players, myPlayer, mapDef, stateById, onP
         actingAsPlayerId={actingAsPlayerId} mapDef={mapDef} players={players} stateById={stateById ?? {}} />
       <div className="border-t border-border">
         <ObjectivesPanel campaign={campaign} myPlayer={myPlayer} isAdmin={isAdmin}
-          actingAsPlayerId={actingAsPlayerId} stateById={stateById ?? {}} players={players} />
+          actingAsPlayerId={actingAsPlayerId} stateById={stateById ?? {}} players={players}
+          planningStatus={planningStatus}
+        />
       </div>
       <div className="border-t border-border">
         <DiplomaticActionsPanel campaign={campaign} myPlayer={myPlayer} players={players}

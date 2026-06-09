@@ -24,6 +24,7 @@ import { useActingAsPayload } from '@/features/adminTestMode/useActingAsPayload'
 import DeployIncomeCard from './DeployIncomeCard';
 import DeployLockStatusRow from './DeployLockStatusRow';
 import DeployPlacementList from './DeployPlacementList';
+import AdminDeployControls from './AdminDeployControls';
 
 export default function DeployPanel({
   campaign,
@@ -229,7 +230,7 @@ export default function DeployPanel({
 
       {error && <p className="text-xs text-destructive">{error}</p>}
 
-      {/* Save / Lock buttons */}
+      {/* Save staged deployment — lock happens via Planning Phase lock bar */}
       {deployStarted && !isLocked && (
         <div className="flex gap-2">
           <button
@@ -238,15 +239,7 @@ export default function DeployPanel({
             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded border border-primary/40 text-primary text-xs font-display tracking-wider uppercase hover:bg-primary/10 transition-colors disabled:opacity-40"
           >
             {submitting && !saved ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-            {saved ? '✓ Saved' : 'Save'}
-          </button>
-          <button
-            onClick={handleLockAndRefresh}
-            disabled={submitting || troopsRemaining !== 0}
-            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded bg-primary text-primary-foreground text-xs font-display tracking-wider uppercase hover:brightness-110 disabled:opacity-40"
-          >
-            {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
-            Lock as {actingPlayer?.display_name || 'Player'}
+            {saved ? '✓ Saved' : 'Stage Deployment'}
           </button>
         </div>
       )}
@@ -254,9 +247,14 @@ export default function DeployPanel({
       {deployStarted && !isLocked && troopsRemaining !== 0 && (
         <p className="text-xs text-muted-foreground">
           {troopsRemaining > 0
-            ? `Place ${troopsRemaining} more troop${troopsRemaining !== 1 ? 's' : ''} to lock.`
+            ? `${troopsRemaining} troop${troopsRemaining !== 1 ? 's' : ''} left to place.`
             : `Over by ${Math.abs(troopsRemaining)}. Reduce some placements.`
           }
+        </p>
+      )}
+      {deployStarted && !isLocked && (
+        <p className="text-[10px] text-muted-foreground italic text-center">
+          Lock deployment using the Planning Phase button above.
         </p>
       )}
 
@@ -288,32 +286,15 @@ export default function DeployPanel({
         </div>
       )}
 
-      {/* Admin controls */}
+      {/* Admin controls — advance requires all players to have locked Planning Phase */}
       {isAdmin && deployStarted && (
-        <div className="pt-2 border-t border-border space-y-2">
-          {allLocked ? (
-            <button
-              onClick={handleProcessEnd}
-              disabled={advancing}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded bg-primary text-primary-foreground text-xs font-display tracking-widest uppercase hover:brightness-110 glow-primary disabled:opacity-40"
-            >
-              {advancing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-              Reveal &amp; Begin Attack Phase
-            </button>
-          ) : (
-            <div className="space-y-2">
-              <p className="text-xs text-muted-foreground">Waiting for all players to lock…</p>
-              <button
-                onClick={handleProcessEnd}
-                disabled={advancing}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded border border-border text-xs text-muted-foreground font-display tracking-wider uppercase hover:text-foreground transition-colors disabled:opacity-40"
-              >
-                {advancing && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                Force Advance (auto-fill missing)
-              </button>
-            </div>
-          )}
-        </div>
+        <AdminDeployControls
+          campaign={campaign}
+          activePlayers={activePlayers}
+          lockStatus={lockStatus}
+          advancing={advancing}
+          onProcessEnd={handleProcessEnd}
+        />
       )}
     </div>
   );

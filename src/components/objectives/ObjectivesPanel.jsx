@@ -30,6 +30,7 @@ export default function ObjectivesPanel({
   actingAsPlayerId,
   stateById = {},
   players = [],
+  planningStatus = null,
 }) {
   const [state, setState] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -119,6 +120,8 @@ export default function ObjectivesPanel({
               pendingDraw={pendingDraw}
               cardDefinitions={cardDefs}
               onResolved={load}
+              planningStatus={planningStatus}
+              autoDealt={planningStatus?.diplomatic?.objective_dealt ?? false}
             />
           </section>
 

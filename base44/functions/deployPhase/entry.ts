@@ -529,6 +529,18 @@ Deno.serve(async (req) => {
     // Clear the reveal-applied guard for this new round so processPhaseEnd can run.
     await base44.asServiceRole.entities.Campaign.update(campaign_id, { deploy_reveal_applied_at: null });
 
+    // Seed starting influence if not already done (idempotent — only runs once per campaign)
+    // This ensures diplomatic players have usable influence from Round 1.
+    try {
+      await base44.asServiceRole.functions.invoke('planningPhase', {
+        action: 'seedStartingInfluence',
+        campaign_id,
+        acting_as_player_id: null,
+      });
+    } catch (infErr) {
+      console.warn('[startDeploy] Starting influence seed failed (non-fatal):', infErr?.message);
+    }
+
     const snapshot = buildSnapshot({
       campaignId: campaign_id, round, phase, snapshotType: 'phase_start',
       territoryStates: allTerritoryStates, activePlayers, deployIncomes,

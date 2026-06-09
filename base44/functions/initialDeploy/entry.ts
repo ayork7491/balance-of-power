@@ -359,19 +359,27 @@ Deno.serve(async (req) => {
     console.log('[processPhaseEnd] SUCCESS: Advanced to deploy round 1.');
 
     // ── STEP 6: Auto-start deploy phase (income + stubs) ─────────────────────
-    // Call deployPhase/startDeploy so players see their income immediately
-    // without requiring a manual "Start Deploy" button press.
     try {
       await base44.asServiceRole.functions.invoke('deployPhase', {
         action: 'startDeploy',
         campaign_id,
-        _internal: true, // bypass admin check — called from system
+        _internal: true,
       });
       console.log('[processPhaseEnd] Deploy phase auto-started successfully.');
     } catch (deployErr) {
-      // Non-fatal: deploy start failure should NOT roll back reveal.
-      // Admin can manually start deploy if needed.
       console.warn('[processPhaseEnd] Auto-start deploy failed (non-fatal):', deployErr?.message);
+    }
+
+    // ── STEP 7: Seed starting influence (1 perm + 1 spendable per territory) ─
+    try {
+      await base44.asServiceRole.functions.invoke('planningPhase', {
+        action: 'seedStartingInfluence',
+        campaign_id,
+        acting_as_player_id: null,
+      });
+      console.log('[processPhaseEnd] Starting influence seeded successfully.');
+    } catch (infErr) {
+      console.warn('[processPhaseEnd] Starting influence seed failed (non-fatal):', infErr?.message);
     }
 
     return Response.json({
