@@ -13,7 +13,6 @@ import { base44 } from '@/api/base44Client';
 // Phase action panels
 import DeployPanel from '@/components/phases/deploy/DeployPanel';
 import AttackPanel from '@/components/phases/attack/AttackPanel';
-import FortifyPanel from '@/components/phases/fortify/FortifyPanel';
 import ResourcePhasePanel from '@/components/phases/resource/ResourcePhasePanel';
 import ObjectivesPanel from '@/components/objectives/ObjectivesPanel';
 import OperationsPanel from '@/components/operations/OperationsPanel';
@@ -30,6 +29,13 @@ import AdminOperationsTab from '@/components/command/AdminOperationsTab';
 import MilitaryOpsPanel from '@/components/operations/MilitaryOpsPanel';
 import EconomicOpsPanel from '@/components/operations/EconomicOpsPanel';
 import DiplomaticOpsPanel from '@/components/operations/DiplomaticOpsPanel';
+
+// Consolidation Phase panels
+import ConsolidationPhaseHeader from '@/components/consolidation/ConsolidationPhaseHeader';
+import MilitaryConsolidationPanel from '@/components/consolidation/MilitaryConsolidationPanel';
+import EconomicConsolidationPanel from '@/components/consolidation/EconomicConsolidationPanel';
+import DiplomaticConsolidationPanel from '@/components/consolidation/DiplomaticConsolidationPanel';
+import AdminConsolidationTab from '@/components/consolidation/AdminConsolidationTab';
 
 // Setup panels
 import FactionSelectionPanel from '@/components/setup/FactionSelectionPanel';
@@ -98,6 +104,7 @@ export default function CommandCenterPanel({
   const isSetup = SETUP_PHASES.has(phase);
   const isBattle = phase === 'battle';
   const isDeploy = phase === 'deploy';
+  const isFortify = phase === 'fortify';
 
   // ── Setup phases: render directly, no pillar tabs ────────────────────────
   if (isSetup) {
@@ -143,6 +150,57 @@ export default function CommandCenterPanel({
     );
   }
 
+  // ── Consolidation Phase (fortify): dedicated panels ─────────────────────
+  if (isFortify) {
+    const consolidationTabs = isAdmin ? [...PLAYER_TABS, ADMIN_TAB] : PLAYER_TABS;
+    return (
+      <div className="flex flex-col">
+        <PhaseSummaryBar campaign={campaign} players={players} myPlayer={myPlayer} />
+        <ConsolidationPhaseHeader
+          campaign={campaign}
+          myPlayer={myPlayer}
+          actingAsPlayerId={actingAsPlayerId}
+          players={players}
+          onLocked={onPhaseChanged}
+          onStatusLoaded={() => {}}
+        />
+        <div className="sticky top-0 z-10 flex border-b border-border bg-panel-header">
+          {consolidationTabs.map(t => (
+            <PillarTab key={t.id} {...t} isActive={pillarTab === t.id} onClick={setPillarTab} />
+          ))}
+        </div>
+        <div>
+          {pillarTab === 'military' && (
+            <MilitaryConsolidationPanel
+              campaign={campaign} players={players} myPlayer={myPlayer}
+              stateById={stateById} mapDef={mapDef} adjacencyMap={adjacencyMap}
+              selectedTerritoryId={selectedTerritoryId}
+              onClearSelection={onClearSelection}
+            />
+          )}
+          {pillarTab === 'economic' && (
+            <EconomicConsolidationPanel
+              campaign={campaign} myPlayer={myPlayer}
+              actingAsPlayerId={actingAsPlayerId} mapDef={mapDef}
+            />
+          )}
+          {pillarTab === 'diplomatic' && (
+            <DiplomaticConsolidationPanel
+              campaign={campaign} myPlayer={myPlayer}
+              actingAsPlayerId={actingAsPlayerId} players={players}
+              mapDef={mapDef} stateById={stateById ?? {}}
+            />
+          )}
+          {pillarTab === 'admin' && isAdmin && (
+            <AdminConsolidationTab
+              campaign={campaign} players={players} onPhaseChanged={onPhaseChanged}
+            />
+          )}
+        </div>
+      </div>
+    );
+  }
+
   // ── Gameplay phases: pillar tabs ─────────────────────────────────────────
   const visibleTabs = isAdmin ? [...PLAYER_TABS, ADMIN_TAB] : PLAYER_TABS;
 
@@ -162,8 +220,8 @@ export default function CommandCenterPanel({
         />
       )}
 
-      {/* Operations Phase header — only during attack/fortify phases */}
-      {(phase === 'attack' || phase === 'fortify') && (
+      {/* Operations Phase header — only during attack phase */}
+      {phase === 'attack' && (
         <OperationsPhaseHeader
           campaign={campaign}
           myPlayer={myPlayer}
@@ -206,6 +264,7 @@ export default function CommandCenterPanel({
         {pillarTab === 'admin' && isAdmin && <AdminContent
           campaign={campaign} players={players} myPlayer={myPlayer}
           onPhaseChanged={onPhaseChanged} isDeploy={isDeploy} isAttack={phase === 'attack'}
+          isFortify={false}
         />}
       </div>
     </div>
@@ -230,14 +289,6 @@ function MilitaryContent({ campaign, players, myPlayer, actionPlayer, stateById,
       preselectedTargetId={attackPreselectedTargetId}
       onClearSelection={onClearSelection} onPhaseChanged={onPhaseChanged} />;
   }
-  if (phase === 'fortify') {
-    return <FortifyPanel campaign={campaign} players={players} myPlayer={myPlayer}
-      stateById={stateById} mapDef={mapDef} adjacencyMap={adjacencyMap}
-      selectedTerritoryId={selectedTerritoryId}
-      onClearSelection={onClearSelection} onPhaseChanged={onPhaseChanged}
-      isAdmin={isAdmin} />;
-  }
-
   return <OperationsPanel campaign={campaign} myPlayer={myPlayer} isAdmin={isAdmin}
     actingAsPlayerId={actingAsPlayerId} stateById={stateById} mapDef={mapDef} players={players} />;
 }
