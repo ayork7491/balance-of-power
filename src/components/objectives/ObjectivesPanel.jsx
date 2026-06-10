@@ -21,7 +21,6 @@ import { Target, ChevronDown, ChevronRight, Loader2, RefreshCw, Trophy, Trash2 }
 import { base44 } from '@/api/base44Client';
 import ObjectiveCardDisplay from './ObjectiveCardDisplay';
 import ObjectiveOpportunity from './ObjectiveOpportunity';
-import ObjectiveCompleteModal from './ObjectiveCompleteModal';
 
 export default function ObjectivesPanel({
   campaign,
@@ -36,7 +35,6 @@ export default function ObjectivesPanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showDiscard, setShowDiscard] = useState(false);
-  const [completingCard, setCompletingCard] = useState(null); // card_id being completed
 
   const campaignId = campaign?.id;
   const actingPlayer = actingAsPlayerId
@@ -68,8 +66,6 @@ export default function ObjectivesPanel({
   const pendingDraw = state?.pending_draw ?? null;
   const completed = state?.completed ?? [];
   const discarded = state?.discarded ?? [];
-
-  const completingCardDef = completingCard ? cardDefs[completingCard] : null;
 
   return (
     <div className="px-3 pt-3 pb-2 space-y-4">
@@ -140,7 +136,7 @@ export default function ObjectivesPanel({
                     key={cid}
                     cardDef={cardDefs[cid]}
                     variant="active"
-                    onComplete={() => setCompletingCard(cid)}
+                    isOwner={true}
                   />
                 ))}
               </div>
@@ -194,17 +190,7 @@ export default function ObjectivesPanel({
         </>
       )}
 
-      {/* ── Complete modal ───────────────────────────────────────────────── */}
-      {completingCard && completingCardDef && (
-        <ObjectiveCompleteModal
-          cardDef={completingCardDef}
-          campaignId={campaignId}
-          actingPlayer={actingPlayer}
-          stateById={stateById}
-          onCompleted={() => { setCompletingCard(null); load(); }}
-          onClose={() => setCompletingCard(null)}
-        />
-      )}
+      {/* Objective completion is automatic — no manual complete UI */}
     </div>
   );
 }

@@ -258,6 +258,11 @@ function ActionCategory({ category, actions, regionPools, players, mapDef, state
   );
 }
 
+function getTerritoryName(mapDef, tid) {
+  if (!tid) return '';
+  return mapDef?.territories?.find(t => t.territory_id === tid)?.name ?? tid;
+}
+
 export default function DiplomaticOpsPanel({ campaign, myPlayer, actingAsPlayerId, players, mapDef, stateById, operationsStatus, onStaged }) {
   const actingPlayerId = actingAsPlayerId ?? myPlayer?.id;
 

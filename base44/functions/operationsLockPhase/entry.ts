@@ -449,8 +449,27 @@ Deno.serve(async (req) => {
         const territoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
         const targetState = territoryStates.find(s => s.territory_id === target_territory_id);
         const defenderPlayerId = targetState?.owner_player_id ?? null;
-        const defenderTroops = targetState?.troop_count ?? 0;
-        const diplomatTroops = Math.max(1, Math.round(defenderTroops * 0.3));
+        const garrisonTroops = targetState?.troop_count ?? 0;
+
+        // Uprising troop math: 30% of garrison enters battle
+        //   loyalists (defender) = 20% of garrison, rebels (diplomat) = 10% of garrison
+        //   Both are drawn from the territory garrison (subtracted at battle generation)
+        let diplomatTroops, cardDefenderTroopsUprise;
+        if (action_type === 'uprising') {
+          diplomatTroops = Math.max(1, Math.floor(garrisonTroops * 0.10));
+          cardDefenderTroopsUprise = Math.max(1, Math.floor(garrisonTroops * 0.20));
+          // Pre-deduct both from territory garrison so no troops are created from nothing
+          const battleForce = diplomatTroops + cardDefenderTroopsUprise;
+          const remainingGarrison = Math.max(0, garrisonTroops - battleForce);
+          if (targetState) {
+            await base44.asServiceRole.entities.TerritoryState.update(targetState.id, { troop_count: remainingGarrison });
+          }
+        } else {
+          diplomatTroops = Math.max(1, Math.round(garrisonTroops * 0.3));
+          cardDefenderTroopsUprise = garrisonTroops;
+        }
+
+        const defenderTroops = cardDefenderTroopsUprise;
         const totalTroops = diplomatTroops + defenderTroops;
         const scaleFactor = parseFloat(Math.max(totalTroops / DEFAULT_AVG_BATTLE_SIZE, 1).toFixed(2));
         const tabletopSize = Math.round(totalTroops / scaleFactor);
@@ -459,6 +478,7 @@ Deno.serve(async (req) => {
           influence_spent: cost, region_id,
           diplomat_committed_troops: diplomatTroops,
           troop_loss_basis: defenderTroops,
+          garrison_before_battle: garrisonTroops,
           influence_reward_target: region_id,
           objective_hook: action_type,
         };

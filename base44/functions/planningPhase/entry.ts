@@ -813,6 +813,51 @@ Deno.serve(async (req) => {
     });
   }
 
+  // ── ACTION: unlockPlanningPhase ────────────────────────────────────────────
+  // Allows a player to undo their planning lock before the phase advances.
+  // Admin can unlock any player by providing acting_as_player_id.
+  if (action === 'unlockPlanningPhase') {
+    if (campaign.current_phase !== 'deploy') {
+      return Response.json({ error: 'Not in deploy (Planning) phase' }, { status: 400 });
+    }
+
+    const staging = await getStagingDecision(base44, campaign_id, actingPlayer.id, round);
+    if (!staging?.data?.locked_at) {
+      return Response.json({ success: true, idempotent: true, message: 'Planning phase is not locked.' });
+    }
+
+    // Unlock the staging decision — wipe locked_at and per-pillar locks
+    await upsertStagingDecision(base44, campaign_id, actingPlayer.id, round, {
+      military_locked: false,
+      economic_locked: false,
+      diplomatic_locked: false,
+      locked_at: null,
+    });
+
+    // Also unlock the deploy PhaseDecision so the player can re-stage troops
+    const deployDecision = await getDeployDecision(base44, campaign_id, actingPlayer.id, round);
+    if (deployDecision?.is_locked) {
+      await base44.asServiceRole.entities.PhaseDecision.update(deployDecision.id, {
+        is_locked: false,
+        locked_at: null,
+      });
+    }
+
+    await base44.asServiceRole.entities.SetupLog.create({
+      campaign_id, phase: 'deploy', round,
+      event_type: 'planning_phase_unlocked',
+      player_id: actingPlayer.id,
+      payload: { display_name: actingPlayer.display_name, unlocked_by: myPlayer.id },
+      is_public: true,
+    });
+
+    return Response.json({
+      success: true,
+      message: `Planning phase unlocked for ${actingPlayer.display_name}.`,
+      player_id: actingPlayer.id,
+    });
+  }
+
   // ── ACTION: getAdminLockStatus ─────────────────────────────────────────────
   // Returns per-player planning lock status for admin guard check.
   if (action === 'getAdminLockStatus') {

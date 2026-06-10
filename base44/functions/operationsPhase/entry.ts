@@ -282,8 +282,25 @@ Deno.serve(async (req) => {
       await spendRegionalInfluence(base44, campaign_id, actingPlayer.id, region_id, costConfig.amount, round);
 
       const defenderPlayerId = targetState?.owner_player_id ?? null;
-      const defenderTroops = targetState?.troop_count ?? 0;
-      const diplomatTroops = committed_troops ?? Math.max(1, Math.round(defenderTroops * 0.3));
+      const garrisonTroops = targetState?.troop_count ?? 0;
+
+      // Uprising troop math: 30% of garrison enters battle
+      //   rebels (diplomat/attacker) = 10%, loyalists (defender) = 20%
+      //   Both deducted from territory garrison at card generation time
+      let diplomatTroops, actualDefenderTroops;
+      if (operation_type === 'uprising') {
+        diplomatTroops = committed_troops ?? Math.max(1, Math.floor(garrisonTroops * 0.10));
+        actualDefenderTroops = Math.max(1, Math.floor(garrisonTroops * 0.20));
+        const battleForce = diplomatTroops + actualDefenderTroops;
+        const remainingGarrison = Math.max(0, garrisonTroops - battleForce);
+        if (targetState) {
+          await base44.asServiceRole.entities.TerritoryState.update(targetState.id, { troop_count: remainingGarrison });
+        }
+      } else {
+        diplomatTroops = committed_troops ?? Math.max(1, Math.round(garrisonTroops * 0.3));
+        actualDefenderTroops = garrisonTroops;
+      }
+      const defenderTroops = actualDefenderTroops;
       const totalTroops = diplomatTroops + defenderTroops;
       const { scaleFactor, tabletopSize } = computeCardScale(Math.max(totalTroops, 2), avgSize);
 
@@ -293,6 +310,7 @@ Deno.serve(async (req) => {
         region_id,
         diplomat_committed_troops: diplomatTroops,
         troop_loss_basis: defenderTroops,
+        garrison_before_battle: garrisonTroops,
         influence_reward_target: region_id,
         objective_hook: operation_type,
       };

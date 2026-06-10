@@ -12,7 +12,7 @@
  *   onStatusLoaded     — called with the status object after load
  */
 import { useState, useEffect, useCallback } from 'react';
-import { Lock, Loader2, Shield, Coins, Feather, CheckCircle2, RefreshCw, Users } from 'lucide-react';
+import { Lock, Unlock, Loader2, Shield, Coins, Feather, CheckCircle2, RefreshCw, Users } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 
 function PillarProgress({ icon: IconComp, label, staged, total, isLocked, color, note }) {
@@ -45,11 +45,12 @@ function PillarProgress({ icon: IconComp, label, staged, total, isLocked, color,
   );
 }
 
-export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlayerId, players, onLocked, onStatusLoaded }) {
+export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlayerId, players, onLocked, onStatusLoaded, refreshTrigger }) {
   const [status, setStatus] = useState(null);
   const [adminStatus, setAdminStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [locking, setLocking] = useState(false);
+  const [unlocking, setUnlocking] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
 
@@ -82,6 +83,28 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
   }, [campaign?.id, myPlayer?.id, actingAsPlayerId]);
 
   useEffect(() => { load(); }, [load]);
+  // Auto-refresh when parent signals a staging change
+  useEffect(() => { if (refreshTrigger) load(); }, [refreshTrigger]);
+
+  const handleUnlock = async () => {
+    if (!campaign?.id) return;
+    setUnlocking(true);
+    setError(null);
+    try {
+      await base44.functions.invoke('planningPhase', {
+        action: 'unlockPlanningPhase',
+        campaign_id: campaign.id,
+        acting_as_player_id: actingAsPlayerId ?? undefined,
+      });
+      setSuccess(false);
+      await load();
+      onLocked?.();
+    } catch (e) {
+      setError(e?.response?.data?.error ?? 'Failed to unlock planning phase.');
+    } finally {
+      setUnlocking(false);
+    }
+  };
 
   const handleLock = async () => {
     if (!campaign?.id) return;
@@ -177,9 +200,19 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
       {/* Lock button row + player lock status */}
       <div className="flex items-center gap-2">
         {planning_locked ? (
-          <div className="flex items-center gap-2 flex-1 px-3 py-2 rounded border border-green-500/30 bg-green-500/10 text-xs text-green-400">
-            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-            Planning Phase Locked
+          <div className="flex items-center gap-2 flex-1">
+            <div className="flex items-center gap-2 flex-1 px-3 py-2 rounded border border-green-500/30 bg-green-500/10 text-xs text-green-400">
+              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+              Planning Phase Locked
+            </div>
+            <button
+              onClick={handleUnlock}
+              disabled={unlocking}
+              className="flex items-center gap-1 px-2 py-2 rounded border border-border text-muted-foreground text-xs hover:text-foreground hover:border-amber-500/50 transition-colors disabled:opacity-40"
+              title="Unlock to edit staging"
+            >
+              {unlocking ? <Loader2 className="w-3 h-3 animate-spin" /> : <Unlock className="w-3 h-3" />}
+            </button>
           </div>
         ) : (
           <>

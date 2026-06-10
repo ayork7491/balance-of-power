@@ -18,6 +18,7 @@ export default function ObjectiveCardDisplay({
   variant = 'active',
   completedEntry = null,
   selected = false,
+  isOwner = false,   // true = viewing player owns this objective — show full text
   onSelect,
   onComplete,
 }) {
@@ -62,13 +63,13 @@ export default function ObjectiveCardDisplay({
         </div>
       </div>
 
-      {/* Description — hidden for active (secret), shown for completed/discarded/choice */}
-      {(isCompleted || isDiscarded || isChoice) ? (
+      {/* Description — shown to owner (isOwner) and always for completed/discarded/choice */}
+      {(isCompleted || isDiscarded || isChoice || isOwner) ? (
         <p className="text-xs text-muted-foreground leading-relaxed">{cardDef.description}</p>
       ) : (
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <EyeOff className="w-3 h-3" />
-          <span className="italic">Secret — complete to reveal</span>
+          <span className="italic">Secret objective</span>
         </div>
       )}
 
@@ -88,15 +89,7 @@ export default function ObjectiveCardDisplay({
         </div>
       </div>
 
-      {/* Complete button for active variant */}
-      {variant === 'active' && onComplete && (
-        <button
-          onClick={onComplete}
-          className="mt-2 w-full text-[10px] font-display tracking-wider uppercase px-2 py-1 rounded border border-primary/40 text-primary hover:bg-primary/10 transition-colors flex items-center justify-center gap-1"
-        >
-          <Eye className="w-3 h-3" /> Mark Complete
-        </button>
-      )}
+      {/* Complete button removed — objectives are auto-completed by the system */}
     </div>
   );
 }

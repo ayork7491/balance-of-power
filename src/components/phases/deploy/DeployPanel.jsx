@@ -30,6 +30,7 @@ export default function DeployPanel({
   stateById,
   mapDef,
   onPhaseChanged,
+  onStagingChanged,
 }) {
   const round         = campaign?.current_round ?? 1;
   const isAdmin       = myPlayer?.is_admin;
@@ -181,7 +182,7 @@ export default function DeployPanel({
       {deployStarted && !isLocked && (
         <div className="flex gap-2">
           <button
-            onClick={handleSave}
+            onClick={async () => { await handleSave(); onStagingChanged?.(); }}
             disabled={submitting || troopsRemaining < 0}
             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded border border-primary/40 text-primary text-xs font-display tracking-wider uppercase hover:bg-primary/10 transition-colors disabled:opacity-40"
           >
