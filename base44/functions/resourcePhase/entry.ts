@@ -244,12 +244,23 @@ Deno.serve(async (req) => {
 
   // ── ACTION: getResourceState ───────────────────────────────────────────────
   if (action === 'getResourceState') {
+    const { acting_as_player_id } = body;
+    let actingPlayer = myPlayer;
+    if (acting_as_player_id) {
+      const target = players.find(p => p.id === acting_as_player_id);
+      if (!target) return Response.json({ error: 'Invalid acting_as_player_id' }, { status: 400 });
+      if (!isAdmin && target.id !== myPlayer.id) {
+        return Response.json({ error: 'Only admins can act as other players' }, { status: 403 });
+      }
+      actingPlayer = target;
+    }
+
     const allStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
-    const myStates = allStates.filter(s => s.owner_player_id === myPlayer.id);
+    const myStates = allStates.filter(s => s.owner_player_id === actingPlayer.id);
 
     // Ledger
     const ledgers = await base44.asServiceRole.entities.PlayerResourceLedger.filter({
-      campaign_id, player_id: myPlayer.id,
+      campaign_id, player_id: actingPlayer.id,
     });
     const ledger = ledgers[0] ?? emptyStorage();
 

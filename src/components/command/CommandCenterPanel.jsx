@@ -6,7 +6,9 @@
  * Other phases: unchanged.
  */
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { Shield, Coins, Feather, Swords, ChevronRight, Clock } from 'lucide-react';
+import { Shield, Coins, Feather, Settings } from 'lucide-react';
+
+import { base44 } from '@/api/base44Client';
 
 // Phase action panels
 import DeployPanel from '@/components/phases/deploy/DeployPanel';
@@ -22,6 +24,7 @@ import ConflictQueuePanel from '@/components/command/ConflictQueuePanel';
 import PhaseSummaryBar from '@/components/command/PhaseSummaryBar';
 import PlanningPhaseLockBar from '@/components/command/PlanningPhaseLockBar';
 import ResourceStagingPanel from '@/components/phases/resource/ResourceStagingPanel';
+import AdminPlanningTab from '@/components/command/AdminPlanningTab';
 
 // Setup panels
 import FactionSelectionPanel from '@/components/setup/FactionSelectionPanel';
@@ -30,22 +33,25 @@ import InitialDeployPanel from '@/components/setup/InitialDeployPanel';
 
 const SETUP_PHASES = new Set(['faction_selection', 'territory_draft', 'initial_deploy']);
 
-const PILLAR_TABS = [
+const PLAYER_TABS = [
   { id: 'military',   label: 'Military',   icon: Shield  },
   { id: 'economic',   label: 'Economic',   icon: Coins   },
   { id: 'diplomatic', label: 'Diplomatic', icon: Feather },
 ];
 
+const ADMIN_TAB = { id: 'admin', label: 'Admin', icon: Settings };
+
 function PillarTab({ id, label, icon: Icon, isActive, onClick }) {
+  const activeColor =
+    id === 'military'   ? 'text-red-400 border-red-400 bg-red-500/5' :
+    id === 'economic'   ? 'text-amber-400 border-amber-400 bg-amber-500/5' :
+    id === 'diplomatic' ? 'text-purple-400 border-purple-400 bg-purple-500/5' :
+                          'text-muted-foreground border-muted-foreground bg-muted/10';
   return (
     <button
       onClick={() => onClick(id)}
       className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-display tracking-wider uppercase transition-all border-b-2 ${
-        isActive
-          ? id === 'military'   ? 'text-red-400 border-red-400 bg-red-500/5'
-          : id === 'economic'   ? 'text-amber-400 border-amber-400 bg-amber-500/5'
-          : 'text-purple-400 border-purple-400 bg-purple-500/5'
-          : 'text-muted-foreground border-transparent hover:text-foreground'
+        isActive ? activeColor : 'text-muted-foreground border-transparent hover:text-foreground'
       }`}
     >
       <Icon className="w-3.5 h-3.5" />
@@ -131,6 +137,8 @@ export default function CommandCenterPanel({
   }
 
   // ── Gameplay phases: pillar tabs ─────────────────────────────────────────
+  const visibleTabs = isAdmin ? [...PLAYER_TABS, ADMIN_TAB] : PLAYER_TABS;
+
   return (
     <div className="flex flex-col">
       <PhaseSummaryBar campaign={campaign} players={players} myPlayer={myPlayer} />
@@ -149,7 +157,7 @@ export default function CommandCenterPanel({
 
       {/* Pillar tabs — sticky inside the outer scroll container */}
       <div className="sticky top-0 z-10 flex border-b border-border bg-panel-header">
-        {PILLAR_TABS.map(t => (
+        {visibleTabs.map(t => (
           <PillarTab key={t.id} {...t} isActive={pillarTab === t.id} onClick={setPillarTab} />
         ))}
       </div>
@@ -175,6 +183,10 @@ export default function CommandCenterPanel({
           mapDef={mapDef} stateById={stateById} onPhaseChanged={onPhaseChanged}
           actingAsPlayerId={actingAsPlayerId} isAdmin={isAdmin}
           planningStatus={planningStatus}
+        />}
+        {pillarTab === 'admin' && isAdmin && <AdminContent
+          campaign={campaign} players={players} myPlayer={myPlayer}
+          onPhaseChanged={onPhaseChanged} isDeploy={isDeploy}
         />}
       </div>
     </div>
@@ -209,6 +221,43 @@ function MilitaryContent({ campaign, players, myPlayer, actionPlayer, stateById,
   // Operations phase military ops are inside OperationsPanel
   return <OperationsPanel campaign={campaign} myPlayer={myPlayer} isAdmin={isAdmin}
     actingAsPlayerId={actingAsPlayerId} stateById={stateById} mapDef={mapDef} players={players} />;
+}
+
+function AdminContent({ campaign, players, myPlayer, onPhaseChanged, isDeploy }) {
+  const [advancing, setAdvancing] = useState(false);
+
+  const handleProcessEnd = async () => {
+    setAdvancing(true);
+    try {
+      await base44.functions.invoke('deployPhase', {
+        action: 'processPhaseEnd',
+        campaign_id: campaign.id,
+      });
+      onPhaseChanged?.();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setAdvancing(false);
+    }
+  };
+
+  if (!isDeploy) {
+    return (
+      <div className="p-3 text-xs text-muted-foreground italic">
+        Admin controls for this phase are available in the phase summary bar.
+      </div>
+    );
+  }
+
+  return (
+    <AdminPlanningTab
+      campaign={campaign}
+      players={players}
+      advancing={advancing}
+      onProcessEnd={handleProcessEnd}
+      onStartDeploy={onPhaseChanged}
+    />
+  );
 }
 
 function EconomicContent({ campaign, players, myPlayer, stateById, mapDef, onPhaseChanged, actingAsPlayerId, isAdmin, planningStatus }) {

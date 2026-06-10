@@ -17,15 +17,12 @@
  *   - Lock status shown via useDeployPhaseLockStatus (is_locked only).
  */
 import { useMemo, useState } from 'react';
-import { Loader2, Lock, Check, Play, ChevronDown, ChevronUp, TestTube } from 'lucide-react';
-import { base44 } from '@/api/base44Client';
+import { Loader2, Lock, ChevronDown, ChevronUp, TestTube } from 'lucide-react';
 import { useDeployPhase, useDeployPhaseLockStatus, useDeployIncome } from '@/features/campaigns/deploy';
 import { useActingAsPayload } from '@/features/adminTestMode/useActingAsPayload';
 import DeployIncomeCard from './DeployIncomeCard';
 import DeployLockStatusRow from './DeployLockStatusRow';
 import DeployPlacementList from './DeployPlacementList';
-import AdminDeployControls from './AdminDeployControls';
-
 export default function DeployPanel({
   campaign,
   players,
@@ -36,12 +33,9 @@ export default function DeployPanel({
 }) {
   const round         = campaign?.current_round ?? 1;
   const isAdmin       = myPlayer?.is_admin;
-  const [startingErr, setStartingErr]   = useState(null);
-  const [starting, setStarting]         = useState(false);
-  const [advancing, setAdvancing]       = useState(false);
   const [showIncome, setShowIncome]     = useState(true);
 
-  const { getPayload, actingPlayer, actingAsId } = useActingAsPayload(myPlayer);
+  const { actingPlayer, actingAsId } = useActingAsPayload(myPlayer);
 
   // CRITICAL: derive territories from actingPlayer (not myPlayer) so that
   // admins acting as test players get the correct territory list.
@@ -53,7 +47,7 @@ export default function DeployPanel({
   const {
     placements, decision, income, troopsRemaining,
     loading, submitting, saved, error,
-    handleChange, handleSave, handleLock, reload: reloadDecision,
+    handleChange, handleSave, handleLock,
   } = useDeployPhase({ campaign, myPlayer, myTerritories });
   
   const { lockStatus, reload: reloadLocks } = useDeployPhaseLockStatus({
@@ -69,46 +63,14 @@ export default function DeployPanel({
   });
 
   const activePlayers = players.filter(p => !p.is_eliminated);
-  const lockedCount   = lockStatus.filter(s => s.is_locked).length;
-  const allLocked     = lockedCount >= activePlayers.length && activePlayers.length > 0;
   const isLocked      = decision?.is_locked ?? false;
   const deployStarted = !!income; // income record exists = deploy was started
 
-  const handleStartDeploy = async () => {
-    setStarting(true);
-    setStartingErr(null);
-    try {
-      await base44.functions.invoke('deployPhase', {
-        action:      'startDeploy',
-        campaign_id: campaign.id,
-      });
-      await reloadDecision();
-    } catch (err) {
-      setStartingErr(err?.response?.data?.error || 'Failed to start deploy phase.');
-    } finally {
-      setStarting(false);
-    }
-  };
+
 
   const handleLockAndRefresh = async () => {
     await handleLock(onPhaseChanged, actingAsId);
     reloadLocks();
-  };
-
-  const handleProcessEnd = async () => {
-    setAdvancing(true);
-    try {
-      await base44.functions.invoke('deployPhase', {
-        action:      'processPhaseEnd',
-        campaign_id: campaign.id,
-      });
-      onPhaseChanged?.();
-    } catch (err) {
-      // surface in UI
-      console.error(err);
-    } finally {
-      setAdvancing(false);
-    }
   };
 
   if (loading) {
@@ -131,26 +93,11 @@ export default function DeployPanel({
         </p>
       </div>
 
-      {/* Deploy not started yet — auto-start automation usually handles this within seconds */}
+      {/* Deploy not started yet */}
       {!deployStarted && (
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 px-3 py-2 rounded border border-border bg-muted/20 text-xs text-muted-foreground">
-            <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-            <span>Phase starting… Income is being calculated.</span>
-          </div>
-          {isAdmin && (
-            <>
-              {startingErr && <p className="text-xs text-destructive">{startingErr}</p>}
-              <button
-                onClick={handleStartDeploy}
-                disabled={starting}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded border border-border text-xs text-muted-foreground font-display tracking-wider uppercase hover:text-foreground transition-colors disabled:opacity-40"
-              >
-                {starting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-                Start Manually
-              </button>
-            </>
-          )}
+        <div className="flex items-center gap-2 px-3 py-2 rounded border border-border bg-muted/20 text-xs text-muted-foreground">
+          <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+          <span>Phase starting… Income is being calculated.</span>
         </div>
       )}
 
@@ -266,16 +213,7 @@ export default function DeployPanel({
         </div>
       )}
 
-      {/* Admin controls — advance requires all players to have locked Planning Phase */}
-      {isAdmin && deployStarted && (
-        <AdminDeployControls
-          campaign={campaign}
-          activePlayers={activePlayers}
-          lockStatus={lockStatus}
-          advancing={advancing}
-          onProcessEnd={handleProcessEnd}
-        />
-      )}
+      {/* Admin controls moved to Admin tab in CommandCenterPanel */}
     </div>
   );
 }
