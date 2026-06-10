@@ -40,6 +40,10 @@ function StorageBadges({ storage }) {
 }
 
 export default function ResourceStagingPanel({ campaign, myPlayer, mapDef, actingAsPlayerId, onStaged, planningStatus }) {
+  // actingPlayerId is the canonical player for ALL operations in this panel.
+  // Never use myPlayer.id directly — it may differ from actingAsPlayerId in test/admin mode.
+  const actingPlayerId = actingAsPlayerId ?? myPlayer?.id;
+
   const [state, setState] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -50,14 +54,14 @@ export default function ResourceStagingPanel({ campaign, myPlayer, mapDef, actin
   const isLocked = planningStatus?.economic?.is_locked ?? false;
 
   const load = useCallback(async () => {
-    if (!campaign?.id || !myPlayer) return;
+    if (!campaign?.id || !actingPlayerId) return;
     setLoading(true);
     setError(null);
     try {
       const res = await base44.functions.invoke('resourcePhase', {
         action: 'getResourceState',
         campaign_id: campaign.id,
-        ...(actingAsPlayerId ? { acting_as_player_id: actingAsPlayerId } : {}),
+        acting_as_player_id: actingPlayerId,
       });
       setState(res.data);
     } catch (e) {
@@ -65,7 +69,7 @@ export default function ResourceStagingPanel({ campaign, myPlayer, mapDef, actin
     } finally {
       setLoading(false);
     }
-  }, [campaign?.id, myPlayer, actingAsPlayerId]);
+  }, [campaign?.id, actingPlayerId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -105,7 +109,7 @@ export default function ResourceStagingPanel({ campaign, myPlayer, mapDef, actin
         action: 'stageActivations',
         campaign_id: campaign.id,
         territory_ids: [...selected],
-        ...(actingAsPlayerId ? { acting_as_player_id: actingAsPlayerId } : {}),
+        acting_as_player_id: actingPlayerId,
       });
       setStagingResult(res.data);
       onStaged?.([...selected]);
@@ -135,6 +139,12 @@ export default function ResourceStagingPanel({ campaign, myPlayer, mapDef, actin
           <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
         </button>
       </div>
+      {/* Acting-as debug indicator */}
+      {actingAsPlayerId && actingAsPlayerId !== myPlayer?.id && (
+        <p className="text-[10px] text-accent border border-accent/30 bg-accent/10 rounded px-2 py-1">
+          Acting as player: <span className="font-mono">{actingPlayerId}</span>
+        </p>
+      )}
 
       {loading && !state && (
         <div className="flex items-center gap-2 text-muted-foreground text-xs py-2">

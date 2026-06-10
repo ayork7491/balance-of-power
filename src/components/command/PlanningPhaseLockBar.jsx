@@ -12,7 +12,7 @@
  *   onStatusLoaded     — called with the status object after load
  */
 import { useState, useEffect, useCallback } from 'react';
-import { Lock, Loader2, Shield, Coins, Feather, CheckCircle2, RefreshCw } from 'lucide-react';
+import { Lock, Loader2, Shield, Coins, Feather, CheckCircle2, RefreshCw, Users } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 
 function PillarProgress({ icon: IconComp, label, staged, total, isLocked, color, note }) {
@@ -45,8 +45,9 @@ function PillarProgress({ icon: IconComp, label, staged, total, isLocked, color,
   );
 }
 
-export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlayerId, onLocked, onStatusLoaded }) {
+export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlayerId, players, onLocked, onStatusLoaded }) {
   const [status, setStatus] = useState(null);
+  const [adminStatus, setAdminStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [locking, setLocking] = useState(false);
   const [error, setError] = useState(null);
@@ -59,13 +60,20 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
     setLoading(true);
     setError(null);
     try {
-      const res = await base44.functions.invoke('planningPhase', {
-        action: 'getPlanningStatus',
-        campaign_id: campaign.id,
-        acting_as_player_id: actingAsPlayerId ?? undefined,
-      });
-      setStatus(res.data);
-      onStatusLoaded?.(res.data);
+      const [statusRes, adminRes] = await Promise.all([
+        base44.functions.invoke('planningPhase', {
+          action: 'getPlanningStatus',
+          campaign_id: campaign.id,
+          acting_as_player_id: actingAsPlayerId ?? undefined,
+        }),
+        base44.functions.invoke('planningPhase', {
+          action: 'getAdminLockStatus',
+          campaign_id: campaign.id,
+        }),
+      ]);
+      setStatus(statusRes.data);
+      setAdminStatus(adminRes.data);
+      onStatusLoaded?.(statusRes.data);
     } catch (e) {
       setError(e?.response?.data?.error ?? 'Failed to load planning status.');
     } finally {
@@ -98,6 +106,11 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
   if (!status?.phase_started) return null;
 
   const { military, economic, diplomatic, planning_locked } = status ?? {};
+
+  // Player lock summary from admin status
+  const playerLocks = adminStatus?.players ?? [];
+  const lockedCount = playerLocks.filter(p => p.planning_locked).length;
+  const totalPlayers = playerLocks.length;
 
   // Determine readiness
   const militaryReady = military?.is_locked || military?.ready;
@@ -143,38 +156,62 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
 
       {error && <p className="text-[10px] text-destructive">{error}</p>}
 
-      {/* Lock button */}
-      {planning_locked ? (
-        <div className="flex items-center gap-2 px-3 py-2 rounded border border-green-500/30 bg-green-500/10 text-xs text-green-400">
-          <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-          Planning Phase Locked
-        </div>
-      ) : (
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleLock}
-            disabled={locking || !allReady}
-            className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded text-xs font-display tracking-wider uppercase transition-all ${
-              allReady
-                ? 'bg-primary text-primary-foreground hover:brightness-110 glow-primary'
-                : 'bg-muted/20 text-muted-foreground border border-border cursor-not-allowed'
-            } disabled:opacity-50`}
-          >
-            {locking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
-            Lock In Planning Phase
-          </button>
-          <button onClick={load} disabled={loading} className="p-2 text-muted-foreground hover:text-foreground transition-colors">
-            <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-        </div>
-      )}
+      {/* Lock button row + player lock status */}
+      <div className="flex items-center gap-2">
+        {planning_locked ? (
+          <div className="flex items-center gap-2 flex-1 px-3 py-2 rounded border border-green-500/30 bg-green-500/10 text-xs text-green-400">
+            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+            Planning Phase Locked
+          </div>
+        ) : (
+          <>
+            <button
+              onClick={handleLock}
+              disabled={locking || !allReady}
+              className={`flex items-center justify-center gap-2 px-3 py-2 rounded text-xs font-display tracking-wider uppercase transition-all ${
+                allReady
+                  ? 'bg-primary text-primary-foreground hover:brightness-110 glow-primary'
+                  : 'bg-muted/20 text-muted-foreground border border-border cursor-not-allowed'
+              } disabled:opacity-50`}
+            >
+              {locking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
+              Lock In
+            </button>
+            <button onClick={load} disabled={loading} className="p-2 text-muted-foreground hover:text-foreground transition-colors shrink-0">
+              <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+          </>
+        )}
+
+        {/* Player lock status — always visible in header */}
+        {totalPlayers > 0 && (
+          <div className="flex items-center gap-1.5 ml-auto shrink-0">
+            <Users className="w-3 h-3 text-muted-foreground" />
+            <span className={`text-xs font-mono font-bold ${lockedCount === totalPlayers ? 'text-green-400' : 'text-muted-foreground'}`}>
+              {lockedCount}/{totalPlayers}
+            </span>
+            <div className="flex gap-0.5">
+              {playerLocks.map(p => {
+                const playerDef = players?.find(pl => pl.id === p.player_id);
+                return (
+                  <div
+                    key={p.player_id}
+                    title={`${playerDef?.display_name ?? p.player_id}: ${p.planning_locked ? 'Locked' : 'Pending'}`}
+                    className={`w-2 h-2 rounded-full border ${p.planning_locked ? 'bg-green-500 border-green-400' : 'bg-muted border-border'}`}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
 
       {!allReady && !planning_locked && (
-        <p className="text-[10px] text-muted-foreground text-center">
-          {!militaryReady ? 'Stage all troops · ' : ''}
-          {!economicReady ? 'Stage activations · ' : ''}
-          {!diplomaticReady ? 'Select objective · ' : ''}
-          complete all tasks to lock
+        <p className="text-[10px] text-muted-foreground">
+          {!militaryReady ? '· Stage troops ' : ''}
+          {!economicReady ? '· Stage activations ' : ''}
+          {!diplomaticReady ? '· Select objective ' : ''}
+          to unlock
         </p>
       )}
     </div>

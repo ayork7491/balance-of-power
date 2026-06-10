@@ -132,6 +132,7 @@ export default function CommandCenterPanel({
           campaign={campaign}
           myPlayer={myPlayer}
           actingAsPlayerId={actingAsPlayerId}
+          players={players}
           onLocked={onPhaseChanged}
           onStatusLoaded={setPlanningStatus}
         />
@@ -203,10 +204,11 @@ function MilitaryContent({ campaign, players, myPlayer, actionPlayer, stateById,
 
 function EconomicContent({ campaign, players, myPlayer, stateById, mapDef, onPhaseChanged, actingAsPlayerId, isAdmin, planningStatus }) {
   const phase = campaign?.current_phase;
+  const isDeploy = phase === 'deploy';
   return (
     <div className="space-y-0">
-      {/* Deploy phase: staging-mode resource panel */}
-      {phase === 'deploy' && (
+      {/* Deploy (Planning) phase: staging-only, no logistics */}
+      {isDeploy && (
         <ResourceStagingPanel
           campaign={campaign}
           myPlayer={myPlayer}
@@ -215,14 +217,15 @@ function EconomicContent({ campaign, players, myPlayer, stateById, mapDef, onPha
           planningStatus={planningStatus}
         />
       )}
-      {/* Non-deploy phase: original resource panel */}
-      {phase !== 'deploy' && (
-        <ResourcePhasePanel campaign={campaign} myPlayer={myPlayer} mapDef={mapDef} isAdmin={isAdmin} />
+      {/* Non-deploy phase: full resource panel + logistics */}
+      {!isDeploy && (
+        <>
+          <ResourcePhasePanel campaign={campaign} myPlayer={myPlayer} mapDef={mapDef} isAdmin={isAdmin} />
+          <div className="border-t border-border">
+            <LogisticsPanel campaign={campaign} myPlayer={myPlayer} mapDef={mapDef} />
+          </div>
+        </>
       )}
-      {/* Logistics — supply routes, hubs */}
-      <div className={phase === 'deploy' ? 'border-t border-border' : ''}>
-        <LogisticsPanel campaign={campaign} myPlayer={myPlayer} mapDef={mapDef} />
-      </div>
       {/* Operations-phase economic ops */}
       {(phase === 'attack' || phase === 'fortify') && (
         <div className="border-t border-border">
@@ -235,21 +238,28 @@ function EconomicContent({ campaign, players, myPlayer, stateById, mapDef, onPha
 }
 
 function DiplomaticContent({ campaign, players, myPlayer, mapDef, stateById, onPhaseChanged, actingAsPlayerId, isAdmin, planningStatus }) {
+  const phase = campaign?.current_phase;
+  const isDeploy = phase === 'deploy';
   return (
     <div className="space-y-0">
-      {/* Intelligence actions */}
-      <IntelligencePanel campaign={campaign} myPlayer={myPlayer} isAdmin={isAdmin}
-        actingAsPlayerId={actingAsPlayerId} mapDef={mapDef} players={players} stateById={stateById ?? {}} />
-      <div className="border-t border-border">
-        <ObjectivesPanel campaign={campaign} myPlayer={myPlayer} isAdmin={isAdmin}
-          actingAsPlayerId={actingAsPlayerId} stateById={stateById ?? {}} players={players}
-          planningStatus={planningStatus}
-        />
-      </div>
-      <div className="border-t border-border">
-        <DiplomaticActionsPanel campaign={campaign} myPlayer={myPlayer} players={players}
-          mapDef={mapDef} actingAsPlayerId={actingAsPlayerId} stateById={stateById ?? {}} />
-      </div>
+      {/* Objectives always shown */}
+      <ObjectivesPanel campaign={campaign} myPlayer={myPlayer} isAdmin={isAdmin}
+        actingAsPlayerId={actingAsPlayerId} stateById={stateById ?? {}} players={players}
+        planningStatus={planningStatus}
+      />
+      {/* Intelligence + Diplomatic actions only outside Planning Phase */}
+      {!isDeploy && (
+        <>
+          <div className="border-t border-border">
+            <IntelligencePanel campaign={campaign} myPlayer={myPlayer} isAdmin={isAdmin}
+              actingAsPlayerId={actingAsPlayerId} mapDef={mapDef} players={players} stateById={stateById ?? {}} />
+          </div>
+          <div className="border-t border-border">
+            <DiplomaticActionsPanel campaign={campaign} myPlayer={myPlayer} players={players}
+              mapDef={mapDef} actingAsPlayerId={actingAsPlayerId} stateById={stateById ?? {}} />
+          </div>
+        </>
+      )}
     </div>
   );
 }

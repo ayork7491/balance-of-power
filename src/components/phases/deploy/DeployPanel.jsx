@@ -266,26 +266,6 @@ export default function DeployPanel({
         </div>
       )}
 
-      {/* Player lock status */}
-      {deployStarted && (
-        <div className="space-y-1 pt-2 border-t border-border">
-          <p className="text-xs font-display tracking-wider uppercase text-muted-foreground mb-2">
-            Players — {lockedCount}/{activePlayers.length} Locked
-          </p>
-          {activePlayers.map(p => {
-            const status = lockStatus.find(s => s.player_id === p.id);
-            return (
-              <DeployLockStatusRow
-                key={p.id}
-                player={p}
-                isLocked={status?.is_locked ?? false}
-                isMe={p.id === myPlayer?.id}
-              />
-            );
-          })}
-        </div>
-      )}
-
       {/* Admin controls — advance requires all players to have locked Planning Phase */}
       {isAdmin && deployStarted && (
         <AdminDeployControls
