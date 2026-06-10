@@ -140,57 +140,83 @@ function ProposalCard({ proposal, isIncoming, actingPlayerId, players, campaign,
 
 function CreateTradeForm({ campaign, actingPlayerId, players, stateById, mapDef, myInfluence, myTerritoryTroops, onCreated, onCancel }) {
   const [targetPlayer,   setTargetPlayer]   = useState('');
-  // Offer
-  const [offerLines,     setOfferLines]     = useState([]); // [{ id, resource, territory_id, amount }]
+  // Offer — each resource line: { id, resource, source_territory, dest_territory, amount }
+  const [offerLines,     setOfferLines]     = useState([]);
+  // Influence offer: { region: { amount, dest_region } }
   const [offerInfluence, setOfferInfluence] = useState({});
-  const [offerTroops,    setOfferTroops]    = useState({ territory_id: '', amount: 0 });
+  // Troops offer: { source_territory, dest_territory, amount }
+  const [offerTroops,    setOfferTroops]    = useState({ source_territory: '', dest_territory: '', amount: 0 });
   const [offerPeace,     setOfferPeace]     = useState({ duration: 0 });
-  // Request
-  const [reqLines,       setReqLines]       = useState([]); // [{ id, resource, amount }]
-  const [reqTroops,      setReqTroops]      = useState({ amount: 0 });
-  const [reqInfluence,   setReqInfluence]   = useState({ region: '', amount: 0 });
+  // Request — each resource line: { id, resource, amount, dest_territory }
+  const [reqLines,       setReqLines]       = useState([]);
+  // Troops request: { amount, dest_territory }
+  const [reqTroops,      setReqTroops]      = useState({ amount: 0, dest_territory: '' });
+  // Influence request: { amount, dest_region }
+  const [reqInfluence,   setReqInfluence]   = useState({ amount: 0, dest_region: '' });
   const [reqPeace,       setReqPeace]       = useState({ duration: 0 });
 
-  const [submitting,     setSubmitting]     = useState(false);
-  const [error,          setError]          = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [error,      setError]      = useState(null);
 
-  const otherPlayers = (players ?? []).filter(p => p.id !== actingPlayerId && !p.is_eliminated);
+  const otherPlayers  = (players ?? []).filter(p => p.id !== actingPlayerId && !p.is_eliminated);
+  const myTerritories = Object.values(stateById ?? {}).filter(s => s.owner_player_id === actingPlayerId);
 
-  // Affordability for offer side
-  const offerInfluenceOk = Object.entries(offerInfluence).every(([region, v]) => (myInfluence?.[region] ?? 0) >= v);
-  const offerTroopsOk    = !offerTroops.territory_id || (myTerritoryTroops?.[offerTroops.territory_id] ?? 0) >= (offerTroops.amount ?? 0);
-  const offerLinesOk     = offerLines.every(l => {
-    if (!l.territory_id || l.amount <= 0) return true; // incomplete = tolerated until submit
-    const ts = Object.values(stateById ?? {}).find(s => s.territory_id === l.territory_id && s.owner_player_id === actingPlayerId);
-    const avail = ts?.resource_storage?.[l.resource] ?? 0;
-    return l.amount <= avail;
-  });
-  const canPropose = offerInfluenceOk && offerTroopsOk && offerLinesOk;
+  // ── Inline validation — enables/disables submit button ──────────────────
+  const offerInfluenceOk = Object.entries(offerInfluence).every(([, v]) => (v?.amount ?? 0) === 0 || !!v.dest_region);
+  const offerTroopsOk    = !(offerTroops.source_territory && offerTroops.amount > 0) || !!offerTroops.dest_territory;
+  const offerLinesOk     = offerLines.every(l => !l.source_territory || l.amount <= 0 || !!l.dest_territory);
+  const reqLinesOk       = reqLines.every(l => l.amount <= 0 || !!l.dest_territory);
+  const reqTroopsOk      = (reqTroops.amount ?? 0) <= 0 || !!reqTroops.dest_territory;
+  const reqInfluenceOk   = (reqInfluence.amount ?? 0) <= 0 || !!reqInfluence.dest_region;
+  const canPropose       = offerInfluenceOk && offerTroopsOk && offerLinesOk && reqLinesOk && reqTroopsOk && reqInfluenceOk;
 
   const handleSubmit = async () => {
     if (!targetPlayer) { setError('Select a target player.'); return; }
 
-    // Build offer resources from lines
+    // Build offer resources: { resource: [{ source_territory, dest_territory, amount }] }
     const offerResources = {};
     for (const line of offerLines) {
-      if (!line.territory_id || line.amount <= 0) continue;
-      // Validate
-      const ts = Object.values(stateById ?? {}).find(s => s.territory_id === line.territory_id && s.owner_player_id === actingPlayerId);
-      const avail = ts?.resource_storage?.[line.resource] ?? 0;
-      if (line.amount > avail) { setError(`Not enough ${line.resource} at ${line.territory_id}.`); return; }
+      if (!line.source_territory || line.amount <= 0) continue;
+      if (!line.dest_territory) { setError(`Choose a destination territory for offered ${line.resource}.`); return; }
+      const ts = Object.values(stateById ?? {}).find(s => s.territory_id === line.source_territory && s.owner_player_id === actingPlayerId);
+      if ((ts?.resource_storage?.[line.resource] ?? 0) < line.amount) { setError(`Not enough ${line.resource} at ${line.source_territory}.`); return; }
       if (!offerResources[line.resource]) offerResources[line.resource] = [];
-      offerResources[line.resource].push({ territory_id: line.territory_id, amount: line.amount });
+      offerResources[line.resource].push({ source_territory: line.source_territory, dest_territory: line.dest_territory, amount: line.amount });
+    }
+
+    // Build offer influence: { region: { amount, dest_region } }
+    const offerInfluenceFinal = {};
+    for (const [region, v] of Object.entries(offerInfluence)) {
+      if ((v?.amount ?? 0) > 0) {
+        if (!v.dest_region) { setError(`Choose a destination region for offered influence from ${region.replace(/_/g,' ')}.`); return; }
+        offerInfluenceFinal[region] = { amount: v.amount, dest_region: v.dest_region };
+      }
+    }
+
+    if (offerTroops.source_territory && offerTroops.amount > 0 && !offerTroops.dest_territory) {
+      setError('Choose a destination territory for offered troops.'); return;
     }
 
     const hasOffer = Object.keys(offerResources).length > 0
-      || Object.values(offerInfluence).some(v => v > 0)
-      || (offerTroops.territory_id && offerTroops.amount > 0)
+      || Object.keys(offerInfluenceFinal).length > 0
+      || (offerTroops.source_territory && offerTroops.amount > 0)
       || offerPeace.duration > 0;
     if (!hasOffer) { setError('Add at least one offered asset.'); return; }
 
-    // Build request resources (no source — receiver chooses)
+    // Build request: { resource: { amount, dest_territory } }
     const reqResourcesMap = {};
-    reqLines.filter(l => l.amount > 0).forEach(l => { reqResourcesMap[l.resource] = l.amount; });
+    for (const line of reqLines) {
+      if (line.amount > 0) {
+        if (!line.dest_territory) { setError(`Choose a delivery territory for requested ${line.resource}.`); return; }
+        reqResourcesMap[line.resource] = { amount: line.amount, dest_territory: line.dest_territory };
+      }
+    }
+    if ((reqTroops.amount ?? 0) > 0 && !reqTroops.dest_territory) {
+      setError('Choose a delivery territory for requested troops.'); return;
+    }
+    if ((reqInfluence.amount ?? 0) > 0 && !reqInfluence.dest_region) {
+      setError('Choose a destination region for requested influence.'); return;
+    }
 
     setSubmitting(true);
     setError(null);
@@ -201,13 +227,13 @@ function CreateTradeForm({ campaign, actingPlayerId, players, stateById, mapDef,
         acting_as_player_id: actingPlayerId,
         target_player_id: targetPlayer,
         offer: {
-          resources:    offerResources,   // [{ territory_id, amount }] per resource type
-          influence:    offerInfluence,
-          troops:       offerTroops.territory_id && offerTroops.amount > 0 ? offerTroops : null,
+          resources:    offerResources,
+          influence:    offerInfluenceFinal,
+          troops:       offerTroops.source_territory && offerTroops.amount > 0 ? offerTroops : null,
           peace_treaty: offerPeace.duration > 0 ? offerPeace : null,
         },
         request: {
-          resources:    reqResourcesMap,  // { resource: amount } — no source
+          resources:    reqResourcesMap,
           troops:       reqTroops.amount > 0 ? reqTroops : null,
           influence:    reqInfluence.amount > 0 ? reqInfluence : null,
           peace_treaty: reqPeace.duration > 0 ? reqPeace : null,
@@ -243,17 +269,19 @@ function CreateTradeForm({ campaign, actingPlayerId, players, stateById, mapDef,
         actingPlayerId={actingPlayerId}
         myInfluence={myInfluence}
         myTerritoryTroops={myTerritoryTroops}
-        offerLines={offerLines}     setOfferLines={setOfferLines}
+        offerLines={offerLines}         setOfferLines={setOfferLines}
         offerInfluence={offerInfluence} setOfferInfluence={setOfferInfluence}
-        offerTroops={offerTroops}   setOfferTroops={setOfferTroops}
-        offerPeace={offerPeace}     setOfferPeace={setOfferPeace}
+        offerTroops={offerTroops}       setOfferTroops={setOfferTroops}
+        offerPeace={offerPeace}         setOfferPeace={setOfferPeace}
       />
 
       <TradeRequestBuilder
-        reqLines={reqLines}         setReqLines={setReqLines}
-        reqTroops={reqTroops}       setReqTroops={setReqTroops}
-        reqInfluence={reqInfluence} setReqInfluence={setReqInfluence}
-        reqPeace={reqPeace}         setReqPeace={setReqPeace}
+        reqLines={reqLines}             setReqLines={setReqLines}
+        reqTroops={reqTroops}           setReqTroops={setReqTroops}
+        reqInfluence={reqInfluence}     setReqInfluence={setReqInfluence}
+        reqPeace={reqPeace}             setReqPeace={setReqPeace}
+        myTerritories={myTerritories}
+        mapDef={mapDef}
       />
 
       {error && <p className="text-[10px] text-destructive flex items-center gap-1"><AlertTriangle className="w-3 h-3" />{error}</p>}
