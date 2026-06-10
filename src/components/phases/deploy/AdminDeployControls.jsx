@@ -37,38 +37,9 @@ export default function AdminDeployControls({ campaign, activePlayers, advancing
   const allPlanningLocked = planningStatus?.all_locked ?? false;
   const incompletePlayers = planningStatus?.status?.filter(s => !s.planning_locked) ?? [];
 
+  // Only show the advance button — lock status is shown in PlanningPhaseLockBar
   return (
     <div className="pt-2 border-t border-border space-y-2">
-      <div className="flex items-center justify-between">
-        <p className="text-[10px] font-display tracking-wider uppercase text-muted-foreground">
-          Planning Lock Status
-        </p>
-        <button onClick={load} disabled={loading} className="text-muted-foreground hover:text-foreground transition-colors">
-          <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
-        </button>
-      </div>
-
-      {loading ? (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Loader2 className="w-3 h-3 animate-spin" /> Checking…
-        </div>
-      ) : (
-        <div className="text-xs text-muted-foreground">
-          {planningLockedCount}/{totalPlayers} players locked Planning Phase
-        </div>
-      )}
-
-      {incompletePlayers.length > 0 && (
-        <div className="space-y-1">
-          {incompletePlayers.map(p => (
-            <div key={p.player_id} className="flex items-center gap-1.5 text-[10px] text-amber-400">
-              <AlertCircle className="w-3 h-3 shrink-0" />
-              {p.display_name} has not completed Planning Phase
-            </div>
-          ))}
-        </div>
-      )}
-
       {allPlanningLocked ? (
         <button
           onClick={onProcessEnd}
@@ -79,7 +50,7 @@ export default function AdminDeployControls({ campaign, activePlayers, advancing
           Reveal &amp; Begin Attack Phase
         </button>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           <button
             onClick={onProcessEnd}
             disabled={advancing}

@@ -5,7 +5,7 @@
  * During deploy phase: shows PlanningPhaseLockBar + ResourceStagingPanel.
  * Other phases: unchanged.
  */
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { Shield, Coins, Feather, Swords, ChevronRight, Clock } from 'lucide-react';
 
 // Phase action panels
@@ -72,6 +72,15 @@ export default function CommandCenterPanel({
 }) {
   const [pillarTab, setPillarTab] = useState('military');
   const [planningStatus, setPlanningStatus] = useState(null);
+
+  // Reset planningStatus when actingAsPlayerId changes so stale data isn't passed to child panels
+  const prevActingRef = useRef(actingAsPlayerId);
+  useEffect(() => {
+    if (prevActingRef.current !== actingAsPlayerId) {
+      prevActingRef.current = actingAsPlayerId;
+      setPlanningStatus(null);
+    }
+  }, [actingAsPlayerId]);
   const phase = campaign?.current_phase;
   const isSetup = SETUP_PHASES.has(phase);
   const isBattle = phase === 'battle';
