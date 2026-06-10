@@ -182,6 +182,7 @@ export default function CommandCenterPanel({
             <EconomicConsolidationPanel
               campaign={campaign} myPlayer={myPlayer}
               actingAsPlayerId={actingAsPlayerId} mapDef={mapDef}
+              players={players} stateById={stateById ?? {}}
             />
           )}
           {pillarTab === 'diplomatic' && (

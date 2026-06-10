@@ -460,5 +460,254 @@ Deno.serve(async (req) => {
     });
   }
 
+  // ── ACTION: proposeTradeConsolidation ─────────────────────────────────────
+  // Creates a trade_proposal DiplomaticAction record with full asset metadata.
+  if (action === 'proposeTradeConsolidation') {
+    const { target_player_id, offer, request: requestAssets } = body;
+    if (!target_player_id) return Response.json({ error: 'target_player_id is required' }, { status: 400 });
+    if (target_player_id === actingPlayer.id) return Response.json({ error: 'Cannot trade with yourself' }, { status: 400 });
+    const targetPlayer = players.find(p => p.id === target_player_id);
+    if (!targetPlayer) return Response.json({ error: 'Invalid target_player_id' }, { status: 400 });
+    if (!offer) return Response.json({ error: 'offer is required' }, { status: 400 });
+
+    // Validate affordability: check proposer has the offered resources
+    const offerResources = offer.resources ?? {};
+    if (Object.values(offerResources).some(v => v > 0)) {
+      const ledgers = await base44.asServiceRole.entities.PlayerResourceLedger.filter({
+        campaign_id,
+        player_id: actingPlayer.id,
+      });
+      const ledger = ledgers[0] ?? {};
+      for (const [r, v] of Object.entries(offerResources)) {
+        if (v > 0 && (ledger[r] ?? 0) < v) {
+          return Response.json({ error: `Not enough ${r}. Have ${ledger[r] ?? 0}, offering ${v}.` }, { status: 400 });
+        }
+      }
+    }
+
+    // Validate offered influence
+    const offerInfluence = offer.influence ?? {};
+    for (const [regionId, v] of Object.entries(offerInfluence)) {
+      if (v > 0) {
+        const pools = await base44.asServiceRole.entities.RegionalInfluencePool.filter({
+          campaign_id, region_id: regionId, player_id: actingPlayer.id,
+        });
+        const have = pools[0]?.spendable_influence ?? 0;
+        if (have < v) return Response.json({ error: `Not enough influence in ${regionId}. Have ${have}, offering ${v}.` }, { status: 400 });
+      }
+    }
+
+    // Validate offered troops
+    const offerTroops = offer.troops;
+    if (offerTroops?.territory_id && (offerTroops.amount ?? 0) > 0) {
+      const states = await base44.asServiceRole.entities.TerritoryState.filter({
+        campaign_id, territory_id: offerTroops.territory_id,
+      });
+      const ts = states[0];
+      if (!ts || ts.owner_player_id !== actingPlayer.id) {
+        return Response.json({ error: 'You do not own that territory.' }, { status: 400 });
+      }
+      if ((ts.troop_count ?? 0) < offerTroops.amount) {
+        return Response.json({ error: `Not enough troops. Have ${ts.troop_count ?? 0}, offering ${offerTroops.amount}.` }, { status: 400 });
+      }
+    }
+
+    const record = await base44.asServiceRole.entities.DiplomaticAction.create({
+      campaign_id,
+      round,
+      player_id: actingPlayer.id,
+      action_type: 'trade_proposal',
+      region_id: 'trade',
+      influence_spent: 0,
+      status: 'pending',
+      target_player_id,
+      effect_metadata: { offer, request: requestAssets ?? {} },
+    });
+
+    return Response.json({ success: true, proposal_id: record.id, message: 'Trade proposal sent.' });
+  }
+
+  // ── ACTION: resolveTradeConsolidation ─────────────────────────────────────
+  // Accepts or declines a trade_proposal. On accept: transfers assets between players.
+  if (action === 'resolveTradeConsolidation') {
+    const { proposal_id, resolution } = body;
+    if (!proposal_id) return Response.json({ error: 'proposal_id is required' }, { status: 400 });
+    if (!['accept', 'decline'].includes(resolution)) return Response.json({ error: 'resolution must be accept or decline' }, { status: 400 });
+
+    const proposals = await base44.asServiceRole.entities.DiplomaticAction.filter({ id: proposal_id, campaign_id });
+    const proposal = proposals[0];
+    if (!proposal) return Response.json({ error: 'Proposal not found' }, { status: 404 });
+    if (proposal.action_type !== 'trade_proposal') return Response.json({ error: 'Not a trade proposal' }, { status: 400 });
+    if (proposal.status !== 'pending') return Response.json({ error: `Proposal is already ${proposal.status}` }, { status: 400 });
+
+    // Only target player (or admin) can accept/decline
+    if (proposal.target_player_id !== actingPlayer.id && !isAdmin) {
+      return Response.json({ error: 'Only the recipient can accept or decline this proposal' }, { status: 403 });
+    }
+
+    if (resolution === 'decline') {
+      await base44.asServiceRole.entities.DiplomaticAction.update(proposal.id, { status: 'cancelled' });
+      return Response.json({ success: true, message: 'Trade proposal declined.' });
+    }
+
+    // ── Accept: validate both sides still have the assets ─────────────────
+    const meta = proposal.effect_metadata ?? {};
+    const offerAssets   = meta.offer   ?? {};
+    const requestAssets = meta.request ?? {};
+
+    const proposerId  = proposal.player_id;
+    const acceptorId  = actingPlayer.id;
+
+    // Proposer must still have what they offered
+    const proposerResources = offerAssets.resources ?? {};
+    if (Object.values(proposerResources).some(v => v > 0)) {
+      const [pl] = await base44.asServiceRole.entities.PlayerResourceLedger.filter({ campaign_id, player_id: proposerId });
+      if (!pl) return Response.json({ error: 'Proposer has no resource ledger.' }, { status: 400 });
+      for (const [r, v] of Object.entries(proposerResources)) {
+        if (v > 0 && (pl[r] ?? 0) < v) {
+          return Response.json({ error: `Proposer no longer has enough ${r}. Trade cannot be completed.` }, { status: 400 });
+        }
+      }
+    }
+
+    // Acceptor must still have what they're giving (request side)
+    const acceptorResources = requestAssets.resources ?? {};
+    if (Object.values(acceptorResources).some(v => v > 0)) {
+      const [al] = await base44.asServiceRole.entities.PlayerResourceLedger.filter({ campaign_id, player_id: acceptorId });
+      if (!al) return Response.json({ error: 'Acceptor has no resource ledger.' }, { status: 400 });
+      for (const [r, v] of Object.entries(acceptorResources)) {
+        if (v > 0 && (al[r] ?? 0) < v) {
+          return Response.json({ error: `You no longer have enough ${r} to complete this trade.` }, { status: 400 });
+        }
+      }
+    }
+
+    // ── Transfer resources ────────────────────────────────────────────────
+    const RESOURCES = ['gold','iron','timber','stone','food'];
+
+    async function transferResources(fromId, toId, amounts) {
+      if (!amounts || Object.values(amounts).every(v => !v)) return;
+      const [fromLedgers, toLedgers] = await Promise.all([
+        base44.asServiceRole.entities.PlayerResourceLedger.filter({ campaign_id, player_id: fromId }),
+        base44.asServiceRole.entities.PlayerResourceLedger.filter({ campaign_id, player_id: toId }),
+      ]);
+      const fromL = fromLedgers[0] ?? {};
+      const toL   = toLedgers[0]   ?? {};
+      const fromPatch = {};
+      const toPatch   = {};
+      for (const r of RESOURCES) {
+        const v = amounts[r] ?? 0;
+        if (v > 0) {
+          fromPatch[r] = Math.max(0, (fromL[r] ?? 0) - v);
+          toPatch[r]   = (toL[r] ?? 0) + v;
+        }
+      }
+      if (Object.keys(fromPatch).length > 0) {
+        if (fromL.id) {
+          await base44.asServiceRole.entities.PlayerResourceLedger.update(fromL.id, fromPatch);
+        }
+        if (toL.id) {
+          await base44.asServiceRole.entities.PlayerResourceLedger.update(toL.id, toPatch);
+        } else {
+          await base44.asServiceRole.entities.PlayerResourceLedger.create({ campaign_id, player_id: toId, ...toPatch });
+        }
+      }
+    }
+
+    // Proposer → Acceptor (offer)
+    await transferResources(proposerId, acceptorId, proposerResources);
+    // Acceptor → Proposer (request)
+    await transferResources(acceptorId, proposerId, acceptorResources);
+
+    // ── Transfer influence ────────────────────────────────────────────────
+    async function transferInfluence(fromId, toId, influenceMap) {
+      for (const [regionId, v] of Object.entries(influenceMap ?? {})) {
+        if (!v || v <= 0) continue;
+        const [fromPools, toPools] = await Promise.all([
+          base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id, region_id: regionId, player_id: fromId }),
+          base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id, region_id: regionId, player_id: toId }),
+        ]);
+        const fromP = fromPools[0];
+        const toP   = toPools[0];
+        if (fromP) {
+          await base44.asServiceRole.entities.RegionalInfluencePool.update(fromP.id, {
+            spendable_influence: Math.max(0, (fromP.spendable_influence ?? 0) - v),
+            last_updated_round: round,
+          });
+        }
+        if (toP) {
+          await base44.asServiceRole.entities.RegionalInfluencePool.update(toP.id, {
+            spendable_influence: (toP.spendable_influence ?? 0) + v,
+            last_updated_round: round,
+          });
+        } else {
+          await base44.asServiceRole.entities.RegionalInfluencePool.create({
+            campaign_id, region_id: regionId, player_id: toId, spendable_influence: v, last_updated_round: round,
+          });
+        }
+      }
+    }
+
+    await transferInfluence(proposerId, acceptorId, offerAssets.influence ?? {});
+    await transferInfluence(acceptorId, proposerId, requestAssets.influence ?? {});
+
+    // ── Transfer troops ───────────────────────────────────────────────────
+    async function transferTroops(fromId, toId, troopsSpec) {
+      if (!troopsSpec?.territory_id || !troopsSpec.amount) return;
+      const states = await base44.asServiceRole.entities.TerritoryState.filter({
+        campaign_id, territory_id: troopsSpec.territory_id,
+      });
+      const ts = states[0];
+      if (!ts || ts.owner_player_id !== fromId) return;
+      await base44.asServiceRole.entities.TerritoryState.update(ts.id, {
+        troop_count: Math.max(0, (ts.troop_count ?? 0) - troopsSpec.amount),
+      });
+      // Add troops to a territory owned by recipient — use their first territory as a fallback
+      const recipientStates = await base44.asServiceRole.entities.TerritoryState.filter({
+        campaign_id, owner_player_id: toId,
+      });
+      if (recipientStates.length > 0) {
+        const dest = recipientStates[0];
+        await base44.asServiceRole.entities.TerritoryState.update(dest.id, {
+          troop_count: (dest.troop_count ?? 0) + troopsSpec.amount,
+        });
+      }
+    }
+
+    await transferTroops(proposerId, acceptorId, offerAssets.troops);
+    await transferTroops(acceptorId, proposerId, requestAssets.troops);
+
+    // ── Peace treaty — create Non-Aggression Pact effect if included ──────
+    const peaceDuration = (offerAssets.peace_treaty?.duration ?? 0) + (requestAssets.peace_treaty?.duration ?? 0);
+    if (peaceDuration > 0) {
+      await base44.asServiceRole.entities.DiplomaticAction.create({
+        campaign_id,
+        round,
+        player_id: proposerId,
+        action_type: 'non_aggression_pact',
+        region_id: 'trade',
+        influence_spent: 0,
+        status: 'active',
+        expires_round: round + peaceDuration,
+        target_player_id: acceptorId,
+        effect_metadata: {
+          issuer_player_id: proposerId,
+          protected_player_id: proposerId,
+          restricted_player_id: acceptorId,
+          duration: peaceDuration,
+          created_by_trade: true,
+        },
+      });
+    }
+
+    // Mark proposal as accepted
+    await base44.asServiceRole.entities.DiplomaticAction.update(proposal.id, {
+      status: 'active',
+      expires_round: round,
+    });
+
+    return Response.json({ success: true, message: 'Trade accepted and assets transferred.' });
+  }
+
   return Response.json({ error: `Unknown action: ${action}` }, { status: 400 });
 });

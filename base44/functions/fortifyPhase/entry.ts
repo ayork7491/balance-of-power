@@ -948,5 +948,134 @@ Deno.serve(async (req) => {
     });
   }
 
+  // ── ACTION: getCaravans ───────────────────────────────────────────────────────
+  // Returns staged supply caravans for the acting player this round/phase.
+  if (action === 'getCaravans') {
+    const decisions = await base44.asServiceRole.entities.PhaseDecision.filter({
+      campaign_id, player_id: actingPlayer.id, phase: 'fortify', round,
+    });
+    const caravans = decisions[0]?.data?.caravans ?? [];
+    return Response.json({ success: true, caravans });
+  }
+
+  // ── ACTION: stageCaravan ──────────────────────────────────────────────────────
+  // Stages a supply caravan to move stored resources between territories.
+  // Does NOT require a Supply Route. May cross non-friendly territories (triggers Escort card).
+  if (action === 'stageCaravan') {
+    if (campaign.current_phase !== 'fortify') {
+      return Response.json({ error: 'Not in fortify phase' }, { status: 400 });
+    }
+    const { origin_territory_id, destination_territory_id, shipment_contents } = body;
+    if (!origin_territory_id || !destination_territory_id) {
+      return Response.json({ error: 'origin_territory_id and destination_territory_id are required' }, { status: 400 });
+    }
+    if (!shipment_contents || Object.values(shipment_contents).every(v => !v)) {
+      return Response.json({ error: 'shipment_contents must include at least one resource' }, { status: 400 });
+    }
+
+    // Validate origin ownership
+    const allStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+    const originState = allStates.find(s => s.territory_id === origin_territory_id);
+    if (!originState || originState.owner_player_id !== actingPlayer.id) {
+      return Response.json({ error: 'You do not own the origin territory' }, { status: 400 });
+    }
+
+    // Validate resource availability at origin
+    const storage = originState.resource_storage ?? {};
+    const RESOURCES = ['gold','iron','timber','stone','food'];
+    for (const r of RESOURCES) {
+      const requested = shipment_contents[r] ?? 0;
+      if (requested > 0 && (storage[r] ?? 0) < requested) {
+        return Response.json({ error: `Not enough ${r} at origin. Have ${storage[r] ?? 0}, requesting ${requested}.` }, { status: 400 });
+      }
+    }
+
+    // Load or create PhaseDecision
+    const decisions = await base44.asServiceRole.entities.PhaseDecision.filter({
+      campaign_id, player_id: actingPlayer.id, phase: 'fortify', round,
+    });
+    let decision = decisions[0];
+    if (!decision) {
+      decision = await base44.asServiceRole.entities.PhaseDecision.create({
+        campaign_id, player_id: actingPlayer.id, phase: 'fortify', round,
+        is_locked: false,
+        data: { movements: [], construction: null, caravans: [] },
+      });
+    }
+    if (decision.is_locked) return Response.json({ error: 'You have already locked your decisions' }, { status: 400 });
+
+    // Route safety analysis using inline BFS
+    const adj = buildAdjacency(campaign.map_id ?? 'shattered_crown_v1');
+    function findAnyPath(startId, endId) {
+      if (startId === endId) return [startId];
+      const visited = new Set([startId]);
+      const queue = [[startId, [startId]]];
+      while (queue.length > 0) {
+        const [current, path] = queue.shift();
+        const neighbors = adj[current] || new Set();
+        for (const neighbor of neighbors) {
+          if (!visited.has(neighbor)) {
+            const newPath = [...path, neighbor];
+            if (neighbor === endId) return newPath;
+            visited.add(neighbor);
+            queue.push([neighbor, newPath]);
+          }
+        }
+      }
+      return null;
+    }
+    const path = findAnyPath(origin_territory_id, destination_territory_id);
+    const traversed = path ? path.slice(1, -1) : [];
+    const enemyTerritories = traversed.filter(tid => {
+      const ts = allStates.find(s => s.territory_id === tid);
+      return ts?.owner_player_id && ts.owner_player_id !== actingPlayer.id;
+    });
+    const isSafe = enemyTerritories.length === 0;
+
+    const caravan = {
+      id: `caravan_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      origin: origin_territory_id,
+      destination: destination_territory_id,
+      contents: shipment_contents,
+      path: path ?? [],
+      safe: isSafe,
+      enemy_territories: enemyTerritories,
+      staged_at: new Date().toISOString(),
+    };
+
+    const existingCaravans = decision.data?.caravans ?? [];
+    await base44.asServiceRole.entities.PhaseDecision.update(decision.id, {
+      data: {
+        movements: decision.data?.movements ?? [],
+        construction: decision.data?.construction ?? null,
+        caravans: [...existingCaravans, caravan],
+      },
+    });
+
+    return Response.json({ success: true, caravan, caravans: [...existingCaravans, caravan] });
+  }
+
+  // ── ACTION: removeCaravan ─────────────────────────────────────────────────────
+  if (action === 'removeCaravan') {
+    if (campaign.current_phase !== 'fortify') {
+      return Response.json({ error: 'Not in fortify phase' }, { status: 400 });
+    }
+    const { caravan_id } = body;
+    if (!caravan_id) return Response.json({ error: 'caravan_id is required' }, { status: 400 });
+
+    const decisions = await base44.asServiceRole.entities.PhaseDecision.filter({
+      campaign_id, player_id: actingPlayer.id, phase: 'fortify', round,
+    });
+    const decision = decisions[0];
+    if (!decision) return Response.json({ error: 'No fortify decision found' }, { status: 404 });
+    if (decision.is_locked) return Response.json({ error: 'Already locked' }, { status: 400 });
+
+    const updatedCaravans = (decision.data?.caravans ?? []).filter(c => c.id !== caravan_id);
+    await base44.asServiceRole.entities.PhaseDecision.update(decision.id, {
+      data: { ...decision.data, caravans: updatedCaravans },
+    });
+    return Response.json({ success: true, caravans: updatedCaravans });
+  }
+
   return Response.json({ error: `Unknown action: ${action}` }, { status: 400 });
 });

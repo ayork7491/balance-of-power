@@ -14,37 +14,51 @@ export default function MovementSelector({
   const [troopCount, setTroopCount] = useState('');
   const [selectedDestination, setSelectedDestination] = useState(null);
 
-  // Find valid destinations from selected territory
+  // Find valid destinations from selected territory.
+  // CRITICAL: BFS only traverses through friendly-owned territories.
+  // Enemy or neutral territories are never traversable — they block the path.
   const validDestinations = useMemo(() => {
     if (!selectedTerritoryId || !myPlayer) return [];
-    
+
     const originState = stateById[selectedTerritoryId];
     if (!originState || originState.owner_player_id !== myPlayer.id) return [];
-    
-    // BFS to find all territories within maxDistance
+
+    const playerId = myPlayer.id;
+
+    // BFS — only traverse through friendly territories (including origin)
     const visited = new Set([selectedTerritoryId]);
     const queue = [[selectedTerritoryId, 0]];
     const valid = [];
-    
+
     while (queue.length > 0) {
       const [current, dist] = queue.shift();
+
       if (dist > 0 && dist <= maxDistance) {
         const currentState = stateById[current];
-        if (currentState?.owner_player_id === myPlayer.id) {
+        // Must be owned by acting player to be a valid destination
+        if (currentState?.owner_player_id === playerId) {
           valid.push(current);
+        } else {
+          // Non-friendly territory: cannot pass through, skip expansion
+          continue;
         }
       }
+
       if (dist < maxDistance) {
         const neighbors = adjacencyMap[current] || new Set();
         for (const neighbor of neighbors) {
           if (!visited.has(neighbor)) {
-            visited.add(neighbor);
-            queue.push([neighbor, dist + 1]);
+            // Only expand into friendly territories (or origin)
+            const neighborState = stateById[neighbor];
+            if (neighborState?.owner_player_id === playerId || neighbor === selectedTerritoryId) {
+              visited.add(neighbor);
+              queue.push([neighbor, dist + 1]);
+            }
           }
         }
       }
     }
-    
+
     return valid;
   }, [selectedTerritoryId, myPlayer, stateById, adjacencyMap, maxDistance]);
 
@@ -89,7 +103,7 @@ export default function MovementSelector({
       </div>
 
       {validDestinations.length === 0 ? (
-        <p className="text-xs text-muted-foreground">No valid destinations within {maxDistance} moves</p>
+        <p className="text-xs text-muted-foreground">No valid fortification destinations from this territory.</p>
       ) : (
         <div className="space-y-2">
           <div className="space-y-1">
