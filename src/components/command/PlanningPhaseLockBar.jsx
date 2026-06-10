@@ -103,7 +103,25 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
     }
   };
 
-  if (!status?.phase_started) return null;
+  // Show a minimal waiting state if deploy hasn't started yet (income not yet calculated)
+  if (loading && !status) {
+    return (
+      <div className="border-b border-border bg-panel-header px-3 py-2 flex items-center gap-2 text-xs text-muted-foreground">
+        <Loader2 className="w-3 h-3 animate-spin" /> Loading planning status…
+      </div>
+    );
+  }
+
+  if (!status?.phase_started) {
+    return (
+      <div className="border-b border-border bg-panel-header px-3 py-2 flex items-center gap-2 text-xs text-muted-foreground">
+        <Loader2 className="w-3 h-3 animate-spin" /> Waiting for phase to start…
+        <button onClick={load} className="ml-auto text-muted-foreground hover:text-foreground">
+          <RefreshCw className="w-3 h-3" />
+        </button>
+      </div>
+    );
+  }
 
   const { military, economic, diplomatic, planning_locked } = status ?? {};
 

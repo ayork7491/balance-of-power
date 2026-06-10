@@ -71,15 +71,22 @@ export default function ResourceStagingPanel({ campaign, myPlayer, mapDef, actin
     }
   }, [campaign?.id, actingPlayerId]);
 
+  // Reset selection whenever the acting player changes
+  useEffect(() => {
+    setSelected(new Set());
+    setStagingResult(null);
+  }, [actingPlayerId]);
+
   useEffect(() => { load(); }, [load]);
 
-  // Sync staged selections from planningStatus if available
+  // Sync staged selections from planningStatus only if it belongs to the same acting player
   useEffect(() => {
     const stagedIds = planningStatus?.economic?.staged_territory_ids;
-    if (stagedIds && stagedIds.length > 0) {
+    const statusPlayerId = planningStatus?.player_id;
+    if (stagedIds && stagedIds.length > 0 && statusPlayerId === actingPlayerId) {
       setSelected(new Set(stagedIds));
     }
-  }, [planningStatus?.economic?.staged_territory_ids]);
+  }, [planningStatus?.economic?.staged_territory_ids, planningStatus?.player_id, actingPlayerId]);
 
   const territories = state?.territories ?? [];
   const hubCount = state?.hub_count ?? territories.filter(t => t.has_resource_hub).length;
