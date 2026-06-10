@@ -1,14 +1,17 @@
 /**
- * TradeAcceptForm — Sprint 5B.11
+ * TradeAcceptForm — Sprint 5B.12
  *
- * Shown when receiver clicks Accept on an incoming trade proposal.
- * Receiver privately chooses SOURCE locations for all requested assets.
- * Destination locations were pre-set by the proposer and are read from the proposal.
+ * Ownership boundary rules:
+ *   Receiver gives (requested assets)  → receiver picks SOURCE from their own territories/regions
+ *   Receiver receives (offered assets)  → receiver picks DESTINATION from their own territories/regions
  *
- * Required receiver inputs per asset type:
- *   Resources: source territory (dest_territory pre-set by proposer)
- *   Troops:    source territory (dest_territory pre-set by proposer)
- *   Influence: source region    (dest_region pre-set by proposer)
+ * Proposer's stored data:
+ *   offer.*    → source_territory / source_region set by proposer (not shown to receiver as editable)
+ *   request.*  → dest_territory / dest_region set by proposer (not shown to receiver as editable)
+ *
+ * Receiver's choices:
+ *   For each requested asset  → source selector (receiver-owned only)
+ *   For each offered asset    → destination selector (receiver-owned only)
  */
 import { useState, useEffect, useCallback } from 'react';
 import { Loader2, Check, X as XIcon, AlertTriangle } from 'lucide-react';
@@ -17,38 +20,50 @@ import { base44 } from '@/api/base44Client';
 const RESOURCE_ICONS = { gold: '🟡', iron: '⚙️', timber: '🪵', stone: '🪨', food: '🌾' };
 
 export default function TradeAcceptForm({ proposal, campaign, actingPlayerId, stateById, mapDef, onAccepted, onCancel }) {
-  const meta = proposal.effect_metadata ?? {};
+  const meta          = proposal.effect_metadata ?? {};
+  const offerAssets   = meta.offer   ?? {};
   const requestAssets = meta.request ?? {};
 
-  // Request assets: new shape — { resource: { amount, dest_territory } } or legacy { resource: amount }
+  // ── Requested assets (receiver GIVES these — picks source) ───────────────
   const reqResources = requestAssets.resources ?? {};
   const reqTroops    = requestAssets.troops    ?? {};
   const reqInfluence = requestAssets.influence ?? {};
   const reqPeace     = requestAssets.peace_treaty ?? {};
 
-  // Normalise resource entries to { amount, dest_territory }
+  // Normalise resource request entries to { amount, dest_territory }
+  // dest_territory was set by proposer — receiver just confirms source
   const normReqResources = Object.entries(reqResources).reduce((acc, [r, v]) => {
-    if (typeof v === 'object') acc[r] = v;
-    else if (v > 0) acc[r] = { amount: v, dest_territory: '' };
+    if (typeof v === 'object' && (v.amount ?? 0) > 0) acc[r] = v;
+    else if (typeof v === 'number' && v > 0) acc[r] = { amount: v, dest_territory: '' };
     return acc;
   }, {});
 
-  const hasReqResources = Object.values(normReqResources).some(v => (v.amount ?? v) > 0);
+  // ── Offered assets (receiver RECEIVES these — picks destination) ──────────
+  const offResources = offerAssets.resources ?? {}; // { resource: [{ source_territory, amount }] }
+  const offTroops    = offerAssets.troops    ?? {};  // { source_territory, amount }
+  const offInfluence = offerAssets.influence ?? {};  // { region: amount } (number, not object)
+
+  const hasReqResources = Object.values(normReqResources).some(v => (v.amount ?? 0) > 0);
   const hasReqTroops    = (reqTroops.amount ?? 0) > 0;
   const hasReqInfluence = (reqInfluence.amount ?? 0) > 0;
+  const hasOffResources = Object.entries(offResources).some(([, lines]) => (Array.isArray(lines) ? lines : [lines]).some(l => (l?.amount ?? 0) > 0));
+  const hasOffTroops    = (offTroops.amount ?? 0) > 0;
+  const hasOffInfluence = Object.values(offInfluence).some(v => (typeof v === 'object' ? (v.amount ?? 0) : (v ?? 0)) > 0);
 
-  // Receiver's own assets (loaded fresh — never shared with proposer)
+  // Receiver's own assets
   const [myTerritories, setMyTerritories] = useState([]);
   const [myInfluence,   setMyInfluence]   = useState({});
   const [loading,       setLoading]       = useState(true);
 
-  // Payment sources chosen by receiver
-  // Resources: { [resource]: source_territory_id }
-  const [resourceSources, setResourceSources] = useState({});
-  // Troops: source_territory_id
-  const [troopSource,     setTroopSource]     = useState('');
-  // Influence: source_region_id
-  const [influenceSource, setInfluenceSource] = useState('');
+  // Sources (for what receiver gives — requested assets)
+  const [resourceSources,  setResourceSources]  = useState({}); // { resource: territory_id }
+  const [troopSource,      setTroopSource]      = useState('');
+  const [influenceSource,  setInfluenceSource]  = useState('');
+
+  // Destinations (for what receiver receives — offered assets)
+  const [resourceDests,    setResourceDests]    = useState({}); // { resource: territory_id }
+  const [troopDest,        setTroopDest]        = useState('');
+  const [influenceDests,   setInfluenceDests]   = useState({}); // { region: territory_id or region_id }
 
   const [submitting, setSubmitting] = useState(false);
   const [error,      setError]      = useState(null);
@@ -67,13 +82,20 @@ export default function TradeAcceptForm({ proposal, campaign, actingPlayerId, st
       const myT = Object.values(stateById ?? {}).filter(s => s.owner_player_id === actingPlayerId);
       setMyTerritories(myT);
 
-      // Pre-select if only one option
+      // Auto-select single-option sources
       const initSources = {};
       Object.keys(normReqResources).forEach(r => {
         const opts = myT.filter(t => (t.resource_storage?.[r] ?? 0) > 0);
         if (opts.length === 1) initSources[r] = opts[0].territory_id;
       });
       setResourceSources(initSources);
+
+      // Auto-select single-option destinations for received resources
+      const initDests = {};
+      Object.keys(offResources).forEach(r => {
+        if (myT.length === 1) initDests[r] = myT[0].territory_id;
+      });
+      setResourceDests(initDests);
     } catch { }
     finally { setLoading(false); }
   }, [campaign?.id, actingPlayerId, stateById]);
@@ -82,6 +104,11 @@ export default function TradeAcceptForm({ proposal, campaign, actingPlayerId, st
 
   function getTerritoryName(tid) {
     return mapDef?.territories?.find(t => t.territory_id === tid)?.name ?? tid;
+  }
+
+  function getRegionName(rid) {
+    const r = mapDef?.regions?.find(r => (r.id ?? r.region_id) === rid);
+    return r?.name ?? rid?.replace(/_/g, ' ') ?? rid;
   }
 
   function territoriesWithResource(resource) {
@@ -96,19 +123,24 @@ export default function TradeAcceptForm({ proposal, campaign, actingPlayerId, st
       .map(t => ({ territory_id: t.territory_id, name: getTerritoryName(t.territory_id), troops: t.troop_count ?? 0 }));
   }
 
-  function availableRegions() {
-    return Object.entries(myInfluence).filter(([, v]) => v > 0);
+  function myAllTerritories() {
+    return myTerritories.map(t => ({ territory_id: t.territory_id, name: getTerritoryName(t.territory_id) }));
+  }
+
+  function myAllRegions() {
+    // All regions where receiver already has presence OR all map regions they could receive into
+    return (mapDef?.regions ?? []).map(r => ({ region_id: r.id ?? r.region_id, name: r.name ?? (r.id ?? r.region_id) }));
   }
 
   function validate() {
+    // Validate sources (what receiver gives)
     for (const [resource, v] of Object.entries(normReqResources)) {
       const amount = v.amount ?? 0;
       if (amount <= 0) continue;
       const src = resourceSources[resource];
       if (!src) return `Choose source territory for ${resource}.`;
       const ts = myTerritories.find(t => t.territory_id === src);
-      const avail = ts?.resource_storage?.[resource] ?? 0;
-      if (amount > avail) return `Not enough ${resource} at ${getTerritoryName(src)} (have ${avail}, need ${amount}).`;
+      if ((ts?.resource_storage?.[resource] ?? 0) < amount) return `Not enough ${resource} at ${getTerritoryName(src)}.`;
     }
     if (hasReqTroops) {
       if (!troopSource) return 'Choose source territory for troops.';
@@ -117,9 +149,25 @@ export default function TradeAcceptForm({ proposal, campaign, actingPlayerId, st
     }
     if (hasReqInfluence) {
       if (!influenceSource) return 'Choose source region for influence.';
-      const have = myInfluence[influenceSource] ?? 0;
-      if (have < (reqInfluence.amount ?? 0)) return `Not enough influence in ${influenceSource} (have ${have}, need ${reqInfluence.amount}).`;
+      if ((myInfluence[influenceSource] ?? 0) < (reqInfluence.amount ?? 0)) return `Not enough influence in ${getRegionName(influenceSource)}.`;
     }
+
+    // Validate destinations (what receiver receives)
+    for (const resource of Object.keys(offResources)) {
+      const lines = Array.isArray(offResources[resource]) ? offResources[resource] : [offResources[resource]];
+      const totalOffered = lines.reduce((s, l) => s + (l?.amount ?? 0), 0);
+      if (totalOffered <= 0) continue;
+      if (!resourceDests[resource]) return `Choose destination territory to receive ${resource}.`;
+      if (!myTerritories.find(t => t.territory_id === resourceDests[resource])) return `Destination for ${resource} must be your territory.`;
+    }
+    if (hasOffTroops && !troopDest) return 'Choose destination territory to receive troops.';
+    if (hasOffTroops && !myTerritories.find(t => t.territory_id === troopDest)) return 'Destination for troops must be your territory.';
+    for (const [region] of Object.entries(offInfluence)) {
+      const amt = typeof offInfluence[region] === 'object' ? (offInfluence[region]?.amount ?? 0) : (offInfluence[region] ?? 0);
+      if (amt <= 0) continue;
+      if (!influenceDests[region]) return `Choose destination region to receive influence from ${getRegionName(region)}.`;
+    }
+
     return null;
   }
 
@@ -131,27 +179,48 @@ export default function TradeAcceptForm({ proposal, campaign, actingPlayerId, st
     setSubmitting(true);
     setError(null);
 
-    // Build receiver_payment with explicit source + dest for all assets
+    // ── receiver_payment: what receiver gives (requested assets) ─────────
     const payResources = {};
     for (const [resource, v] of Object.entries(normReqResources)) {
       const amount = v.amount ?? 0;
       if (amount <= 0) continue;
-      const sourceTid = resourceSources[resource];
-      const destTid   = v.dest_territory; // pre-set by proposer
-      payResources[resource] = [{ source_territory: sourceTid, dest_territory: destTid, amount }];
+      payResources[resource] = [{
+        source_territory: resourceSources[resource],
+        dest_territory:   v.dest_territory ?? '',   // proposer set this
+        amount,
+      }];
     }
 
     const payTroops = hasReqTroops ? {
       source_territory: troopSource,
-      dest_territory:   reqTroops.dest_territory ?? '',
+      dest_territory:   reqTroops.dest_territory ?? '',  // proposer set this
       amount:           reqTroops.amount,
     } : null;
 
     const payInfluence = hasReqInfluence ? {
       source_region: influenceSource,
-      dest_region:   reqInfluence.dest_region ?? '',
+      dest_region:   reqInfluence.dest_region ?? '',  // proposer set this
       amount:        reqInfluence.amount,
     } : null;
+
+    // ── receiver_destinations: where receiver wants offered assets delivered ─
+    // Backend combines proposer's source + receiver's destination for offer side
+    const receiverDestResources = {};
+    for (const [resource, lines] of Object.entries(offResources)) {
+      const arr = Array.isArray(lines) ? lines : [lines];
+      const total = arr.reduce((s, l) => s + (l?.amount ?? 0), 0);
+      if (total <= 0) continue;
+      receiverDestResources[resource] = resourceDests[resource] ?? '';
+    }
+
+    const receiverDestTroops = hasOffTroops ? troopDest : null;
+
+    const receiverDestInfluence = {};
+    for (const [region] of Object.entries(offInfluence)) {
+      const amt = typeof offInfluence[region] === 'object' ? (offInfluence[region]?.amount ?? 0) : (offInfluence[region] ?? 0);
+      if (amt <= 0) continue;
+      receiverDestInfluence[region] = influenceDests[region] ?? '';
+    }
 
     try {
       await base44.functions.invoke('diplomaticPhase', {
@@ -164,6 +233,11 @@ export default function TradeAcceptForm({ proposal, campaign, actingPlayerId, st
           resources: payResources,
           troops:    payTroops,
           influence: payInfluence,
+        },
+        receiver_destinations: {
+          resources:  receiverDestResources,
+          troops:     receiverDestTroops,
+          influence:  receiverDestInfluence,
         },
       });
       onAccepted();
@@ -180,101 +254,154 @@ export default function TradeAcceptForm({ proposal, campaign, actingPlayerId, st
     </div>
   );
 
-  const needsAnyChoice = hasReqResources || hasReqTroops || hasReqInfluence;
+  const allMyTerr = myAllTerritories();
+  const allMyReg  = myAllRegions();
 
   return (
-    <div className="mt-2 space-y-2 border border-green-500/20 bg-green-500/5 rounded p-2">
-      <p className="text-[10px] text-green-400 font-display tracking-wider uppercase">Choose sources for requested assets</p>
+    <div className="mt-2 space-y-3 border border-green-500/20 bg-green-500/5 rounded p-2">
 
-      {!needsAnyChoice && reqPeace.duration > 0 && (
-        <p className="text-[10px] text-muted-foreground italic">Only a peace treaty is requested — no assets to choose.</p>
-      )}
-      {!needsAnyChoice && !reqPeace.duration && (
-        <p className="text-[10px] text-muted-foreground italic">Nothing requested — accept freely.</p>
-      )}
+      {/* ── Section 1: What receiver gives (requested assets) ─────────────── */}
+      {(hasReqResources || hasReqTroops || hasReqInfluence) && (
+        <div className="space-y-2">
+          <p className="text-[10px] text-amber-400 font-display tracking-wider uppercase">You Give — Choose Sources</p>
 
-      {/* Resource payments */}
-      {Object.entries(normReqResources).map(([resource, v]) => {
-        const amount = v.amount ?? 0;
-        if (amount <= 0) return null;
-        const destTid = v.dest_territory;
-        const sources = territoriesWithResource(resource);
-        const chosenSrc = resourceSources[resource] ?? '';
-        const avail = myTerritories.find(t => t.territory_id === chosenSrc)?.resource_storage?.[resource] ?? 0;
+          {Object.entries(normReqResources).map(([resource, v]) => {
+            const amount = v.amount ?? 0;
+            if (amount <= 0) return null;
+            const sources = territoriesWithResource(resource);
+            const chosenSrc = resourceSources[resource] ?? '';
+            const avail = myTerritories.find(t => t.territory_id === chosenSrc)?.resource_storage?.[resource] ?? 0;
+            return (
+              <div key={resource} className="space-y-1 border border-border/40 rounded p-1.5">
+                <p className="text-[10px] text-foreground font-semibold">{RESOURCE_ICONS[resource]} Give {amount} {resource}</p>
+                {sources.length === 0
+                  ? <p className="text-[10px] text-destructive flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> No {resource} available.</p>
+                  : <div className="flex gap-1 items-center">
+                      <select
+                        value={chosenSrc}
+                        onChange={e => setResourceSources(prev => ({ ...prev, [resource]: e.target.value }))}
+                        className="flex-1 bg-muted/20 border border-border rounded px-1.5 py-1 text-[10px] text-foreground"
+                      >
+                        <option value="">— your source territory —</option>
+                        {sources.map(s => <option key={s.territory_id} value={s.territory_id}>{s.name} ({s.available})</option>)}
+                      </select>
+                      {chosenSrc && avail < amount && (
+                        <span className="text-[10px] text-destructive shrink-0">need {amount}</span>
+                      )}
+                    </div>
+                }
+              </div>
+            );
+          })}
 
-        return (
-          <div key={resource} className="space-y-1 border border-border/40 rounded p-1.5">
-            <p className="text-[10px] text-foreground font-semibold">{RESOURCE_ICONS[resource]} Give {amount} {resource}</p>
-            {destTid && (
-              <p className="text-[10px] text-muted-foreground">→ Deliver to: <span className="text-foreground">{getTerritoryName(destTid)}</span></p>
-            )}
-            <p className="text-[10px] text-muted-foreground">Choose source territory:</p>
-            {sources.length === 0
-              ? <p className="text-[10px] text-destructive flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> No {resource} stored in any territory.</p>
-              : <div className="flex gap-1 items-center">
-                  <select
-                    value={chosenSrc}
-                    onChange={e => setResourceSources(prev => ({ ...prev, [resource]: e.target.value }))}
-                    className="flex-1 bg-muted/20 border border-border rounded px-1.5 py-1 text-[10px] text-foreground"
+          {hasReqTroops && (
+            <div className="space-y-1 border border-border/40 rounded p-1.5">
+              <p className="text-[10px] text-foreground font-semibold">⚔ Give {reqTroops.amount} troops</p>
+              {territoriesWithTroops().length === 0
+                ? <p className="text-[10px] text-destructive flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> No troops available.</p>
+                : <select
+                    value={troopSource}
+                    onChange={e => setTroopSource(e.target.value)}
+                    className="w-full bg-muted/20 border border-border rounded px-1.5 py-1 text-[10px] text-foreground"
                   >
-                    <option value="">— select territory —</option>
-                    {sources.map(s => <option key={s.territory_id} value={s.territory_id}>{s.name} ({s.available} avail)</option>)}
+                    <option value="">— your source territory —</option>
+                    {territoriesWithTroops().map(t => (
+                      <option key={t.territory_id} value={t.territory_id}>{t.name} ({t.troops} troops)</option>
+                    ))}
                   </select>
-                  {chosenSrc && avail < amount && (
-                    <span className="text-[10px] text-destructive shrink-0">need {amount}, have {avail}</span>
-                  )}
-                </div>
-            }
-          </div>
-        );
-      })}
-
-      {/* Troops payment */}
-      {hasReqTroops && (
-        <div className="space-y-1 border border-border/40 rounded p-1.5">
-          <p className="text-[10px] text-foreground font-semibold">⚔ Give {reqTroops.amount} troops</p>
-          {reqTroops.dest_territory && (
-            <p className="text-[10px] text-muted-foreground">→ Deliver to: <span className="text-foreground">{getTerritoryName(reqTroops.dest_territory)}</span></p>
+              }
+            </div>
           )}
-          <p className="text-[10px] text-muted-foreground">Choose source territory:</p>
-          {territoriesWithTroops().length === 0
-            ? <p className="text-[10px] text-destructive flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> No troops available.</p>
-            : <select
-                value={troopSource}
-                onChange={e => setTroopSource(e.target.value)}
-                className="w-full bg-muted/20 border border-border rounded px-1.5 py-1 text-[10px] text-foreground"
-              >
-                <option value="">— select territory —</option>
-                {territoriesWithTroops().map(t => (
-                  <option key={t.territory_id} value={t.territory_id}>{t.name} ({t.troops} troops)</option>
-                ))}
-              </select>
-          }
+
+          {hasReqInfluence && (
+            <div className="space-y-1 border border-border/40 rounded p-1.5">
+              <p className="text-[10px] text-foreground font-semibold">🌐 Give {reqInfluence.amount} influence</p>
+              {Object.keys(myInfluence).length === 0
+                ? <p className="text-[10px] text-destructive flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> No spendable influence available.</p>
+                : <select
+                    value={influenceSource}
+                    onChange={e => setInfluenceSource(e.target.value)}
+                    className="w-full bg-muted/20 border border-border rounded px-1.5 py-1 text-[10px] text-foreground"
+                  >
+                    <option value="">— your source region —</option>
+                    {Object.entries(myInfluence).filter(([, v]) => v > 0).map(([region, avail]) => (
+                      <option key={region} value={region}>{getRegionName(region)} ({avail} avail)</option>
+                    ))}
+                  </select>
+              }
+            </div>
+          )}
         </div>
       )}
 
-      {/* Influence payment */}
-      {hasReqInfluence && (
-        <div className="space-y-1 border border-border/40 rounded p-1.5">
-          <p className="text-[10px] text-foreground font-semibold">🌐 Give {reqInfluence.amount} spendable influence</p>
-          {reqInfluence.dest_region && (
-            <p className="text-[10px] text-muted-foreground">→ Credited to region: <span className="text-foreground">{reqInfluence.dest_region.replace(/_/g, ' ')}</span></p>
+      {/* ── Section 2: What receiver receives (offered assets) ──────────────── */}
+      {(hasOffResources || hasOffTroops || hasOffInfluence) && (
+        <div className="space-y-2">
+          <p className="text-[10px] text-green-400 font-display tracking-wider uppercase">You Receive — Choose Destinations</p>
+
+          {Object.entries(offResources).map(([resource, lines]) => {
+            const arr = Array.isArray(lines) ? lines : [lines];
+            const total = arr.reduce((s, l) => s + (l?.amount ?? 0), 0);
+            if (total <= 0) return null;
+            return (
+              <div key={resource} className="space-y-1 border border-border/40 rounded p-1.5">
+                <p className="text-[10px] text-foreground font-semibold">{RESOURCE_ICONS[resource]} Receive {total} {resource}</p>
+                {allMyTerr.length === 0
+                  ? <p className="text-[10px] text-destructive flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> No territories to receive into.</p>
+                  : <select
+                      value={resourceDests[resource] ?? ''}
+                      onChange={e => setResourceDests(prev => ({ ...prev, [resource]: e.target.value }))}
+                      className="w-full bg-muted/20 border border-border rounded px-1.5 py-1 text-[10px] text-foreground"
+                    >
+                      <option value="">— your destination territory —</option>
+                      {allMyTerr.map(t => <option key={t.territory_id} value={t.territory_id}>{t.name}</option>)}
+                    </select>
+                }
+              </div>
+            );
+          })}
+
+          {hasOffTroops && (
+            <div className="space-y-1 border border-border/40 rounded p-1.5">
+              <p className="text-[10px] text-foreground font-semibold">⚔ Receive {offTroops.amount} troops</p>
+              {allMyTerr.length === 0
+                ? <p className="text-[10px] text-destructive flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> No territories to receive into.</p>
+                : <select
+                    value={troopDest}
+                    onChange={e => setTroopDest(e.target.value)}
+                    className="w-full bg-muted/20 border border-border rounded px-1.5 py-1 text-[10px] text-foreground"
+                  >
+                    <option value="">— your destination territory —</option>
+                    {allMyTerr.map(t => <option key={t.territory_id} value={t.territory_id}>{t.name}</option>)}
+                  </select>
+              }
+            </div>
           )}
-          <p className="text-[10px] text-muted-foreground">Choose source region:</p>
-          {availableRegions().length === 0
-            ? <p className="text-[10px] text-destructive flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> No spendable influence available.</p>
-            : <select
-                value={influenceSource}
-                onChange={e => setInfluenceSource(e.target.value)}
-                className="w-full bg-muted/20 border border-border rounded px-1.5 py-1 text-[10px] text-foreground"
-              >
-                <option value="">— select region —</option>
-                {availableRegions().map(([region, avail]) => (
-                  <option key={region} value={region}>{region.replace(/_/g, ' ')} ({avail} avail)</option>
-                ))}
-              </select>
-          }
+
+          {Object.entries(offInfluence).map(([region]) => {
+            const amt = typeof offInfluence[region] === 'object' ? (offInfluence[region]?.amount ?? 0) : (offInfluence[region] ?? 0);
+            if (amt <= 0) return null;
+            return (
+              <div key={region} className="space-y-1 border border-border/40 rounded p-1.5">
+                <p className="text-[10px] text-foreground font-semibold">🌐 Receive {amt} influence</p>
+                <select
+                  value={influenceDests[region] ?? ''}
+                  onChange={e => setInfluenceDests(prev => ({ ...prev, [region]: e.target.value }))}
+                  className="w-full bg-muted/20 border border-border rounded px-1.5 py-1 text-[10px] text-foreground"
+                >
+                  <option value="">— your destination region —</option>
+                  {allMyReg.map(r => <option key={r.region_id} value={r.region_id}>{r.name}</option>)}
+                </select>
+              </div>
+            );
+          })}
         </div>
+      )}
+
+      {(!hasReqResources && !hasReqTroops && !hasReqInfluence && !hasOffResources && !hasOffTroops && !hasOffInfluence) && (
+        <p className="text-[10px] text-muted-foreground italic">
+          {reqPeace.duration > 0 ? 'Only a peace treaty — no assets to choose.' : 'No assets in this trade.'}
+        </p>
       )}
 
       {error && <p className="text-[10px] text-destructive flex items-center gap-1"><AlertTriangle className="w-3 h-3" />{error}</p>}
