@@ -25,6 +25,11 @@ import PhaseSummaryBar from '@/components/command/PhaseSummaryBar';
 import PlanningPhaseLockBar from '@/components/command/PlanningPhaseLockBar';
 import ResourceStagingPanel from '@/components/phases/resource/ResourceStagingPanel';
 import AdminPlanningTab from '@/components/command/AdminPlanningTab';
+import OperationsPhaseHeader from '@/components/command/OperationsPhaseHeader';
+import AdminOperationsTab from '@/components/command/AdminOperationsTab';
+import MilitaryOpsPanel from '@/components/operations/MilitaryOpsPanel';
+import EconomicOpsPanel from '@/components/operations/EconomicOpsPanel';
+import DiplomaticOpsPanel from '@/components/operations/DiplomaticOpsPanel';
 
 // Setup panels
 import FactionSelectionPanel from '@/components/setup/FactionSelectionPanel';
@@ -78,13 +83,15 @@ export default function CommandCenterPanel({
 }) {
   const [pillarTab, setPillarTab] = useState('military');
   const [planningStatus, setPlanningStatus] = useState(null);
+  const [operationsStatus, setOperationsStatus] = useState(null);
 
-  // Reset planningStatus when actingAsPlayerId changes so stale data isn't passed to child panels
+  // Reset status caches when actingAsPlayerId changes
   const prevActingRef = useRef(actingAsPlayerId);
   useEffect(() => {
     if (prevActingRef.current !== actingAsPlayerId) {
       prevActingRef.current = actingAsPlayerId;
       setPlanningStatus(null);
+      setOperationsStatus(null);
     }
   }, [actingAsPlayerId]);
   const phase = campaign?.current_phase;
@@ -155,6 +162,18 @@ export default function CommandCenterPanel({
         />
       )}
 
+      {/* Operations Phase header — only during attack/fortify phases */}
+      {(phase === 'attack' || phase === 'fortify') && (
+        <OperationsPhaseHeader
+          campaign={campaign}
+          myPlayer={myPlayer}
+          actingAsPlayerId={actingAsPlayerId}
+          players={players}
+          onLocked={onPhaseChanged}
+          onStatusLoaded={setOperationsStatus}
+        />
+      )}
+
       {/* Pillar tabs — sticky inside the outer scroll container */}
       <div className="sticky top-0 z-10 flex border-b border-border bg-panel-header">
         {visibleTabs.map(t => (
@@ -176,17 +195,17 @@ export default function CommandCenterPanel({
           campaign={campaign} players={players} myPlayer={myPlayer}
           stateById={stateById} mapDef={mapDef} onPhaseChanged={onPhaseChanged}
           actingAsPlayerId={actingAsPlayerId} isAdmin={isAdmin}
-          planningStatus={planningStatus}
+          planningStatus={planningStatus} operationsStatus={operationsStatus}
         />}
         {pillarTab === 'diplomatic' && <DiplomaticContent
           campaign={campaign} players={players} myPlayer={myPlayer}
           mapDef={mapDef} stateById={stateById} onPhaseChanged={onPhaseChanged}
           actingAsPlayerId={actingAsPlayerId} isAdmin={isAdmin}
-          planningStatus={planningStatus}
+          planningStatus={planningStatus} operationsStatus={operationsStatus}
         />}
         {pillarTab === 'admin' && isAdmin && <AdminContent
           campaign={campaign} players={players} myPlayer={myPlayer}
-          onPhaseChanged={onPhaseChanged} isDeploy={isDeploy}
+          onPhaseChanged={onPhaseChanged} isDeploy={isDeploy} isAttack={phase === 'attack'}
         />}
       </div>
     </div>
@@ -204,7 +223,8 @@ function MilitaryContent({ campaign, players, myPlayer, actionPlayer, stateById,
       stateById={stateById} mapDef={mapDef} onPhaseChanged={onPhaseChanged} />;
   }
   if (phase === 'attack') {
-    return <AttackPanel campaign={campaign} players={players} myPlayer={myPlayer}
+    // Operations Phase: MilitaryOpsPanel — attacks only, no lock status, no admin controls
+    return <MilitaryOpsPanel campaign={campaign} players={players} myPlayer={myPlayer}
       stateById={stateById} mapDef={mapDef} adjacencyMap={adjacencyMap}
       selectedTerritoryId={selectedTerritoryId}
       preselectedTargetId={attackPreselectedTargetId}
@@ -218,15 +238,14 @@ function MilitaryContent({ campaign, players, myPlayer, actionPlayer, stateById,
       isAdmin={isAdmin} />;
   }
 
-  // Operations phase military ops are inside OperationsPanel
   return <OperationsPanel campaign={campaign} myPlayer={myPlayer} isAdmin={isAdmin}
     actingAsPlayerId={actingAsPlayerId} stateById={stateById} mapDef={mapDef} players={players} />;
 }
 
-function AdminContent({ campaign, players, myPlayer, onPhaseChanged, isDeploy }) {
+function AdminContent({ campaign, players, myPlayer, onPhaseChanged, isDeploy, isAttack }) {
   const [advancing, setAdvancing] = useState(false);
 
-  const handleProcessEnd = async () => {
+  const handleProcessDeployEnd = async () => {
     setAdvancing(true);
     try {
       await base44.functions.invoke('deployPhase', {
@@ -241,31 +260,59 @@ function AdminContent({ campaign, players, myPlayer, onPhaseChanged, isDeploy })
     }
   };
 
-  if (!isDeploy) {
+  const handleProcessAttackEnd = async () => {
+    setAdvancing(true);
+    try {
+      await base44.functions.invoke('attackPhase', {
+        action: 'processPhaseEnd',
+        campaign_id: campaign.id,
+      });
+      onPhaseChanged?.();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setAdvancing(false);
+    }
+  };
+
+  if (isDeploy) {
     return (
-      <div className="p-3 text-xs text-muted-foreground italic">
-        Admin controls for this phase are available in the phase summary bar.
-      </div>
+      <AdminPlanningTab
+        campaign={campaign}
+        players={players}
+        advancing={advancing}
+        onProcessEnd={handleProcessDeployEnd}
+        onStartDeploy={onPhaseChanged}
+      />
+    );
+  }
+
+  if (isAttack) {
+    return (
+      <AdminOperationsTab
+        campaign={campaign}
+        players={players}
+        advancing={advancing}
+        onProcessEnd={handleProcessAttackEnd}
+      />
     );
   }
 
   return (
-    <AdminPlanningTab
-      campaign={campaign}
-      players={players}
-      advancing={advancing}
-      onProcessEnd={handleProcessEnd}
-      onStartDeploy={onPhaseChanged}
-    />
+    <div className="p-3 text-xs text-muted-foreground italic">
+      Admin controls for this phase are available in the phase summary bar.
+    </div>
   );
 }
 
-function EconomicContent({ campaign, players, myPlayer, stateById, mapDef, onPhaseChanged, actingAsPlayerId, isAdmin, planningStatus }) {
+function EconomicContent({ campaign, players, myPlayer, stateById, mapDef, onPhaseChanged, actingAsPlayerId, isAdmin, planningStatus, operationsStatus }) {
   const phase = campaign?.current_phase;
   const isDeploy = phase === 'deploy';
+  const isAttack = phase === 'attack';
+
   return (
     <div className="space-y-0">
-      {/* Deploy (Planning) phase: staging-only, no logistics */}
+      {/* Planning Phase: resource activation staging only */}
       {isDeploy && (
         <ResourceStagingPanel
           campaign={campaign}
@@ -275,8 +322,20 @@ function EconomicContent({ campaign, players, myPlayer, stateById, mapDef, onPha
           planningStatus={planningStatus}
         />
       )}
-      {/* Non-deploy phase: full resource panel + logistics */}
-      {!isDeploy && (
+      {/* Operations Phase: construction projects */}
+      {isAttack && (
+        <EconomicOpsPanel
+          campaign={campaign}
+          myPlayer={myPlayer}
+          actingAsPlayerId={actingAsPlayerId}
+          players={players}
+          mapDef={mapDef}
+          stateById={stateById}
+          operationsStatus={operationsStatus}
+        />
+      )}
+      {/* Other phases: full resource panel + logistics */}
+      {!isDeploy && !isAttack && (
         <>
           <ResourcePhasePanel campaign={campaign} myPlayer={myPlayer} mapDef={mapDef} isAdmin={isAdmin} />
           <div className="border-t border-border">
@@ -284,28 +343,38 @@ function EconomicContent({ campaign, players, myPlayer, stateById, mapDef, onPha
           </div>
         </>
       )}
-      {/* Operations-phase economic ops */}
-      {(phase === 'attack' || phase === 'fortify') && (
-        <div className="border-t border-border">
-          <OperationsPanel campaign={campaign} myPlayer={myPlayer} isAdmin={isAdmin}
-            actingAsPlayerId={actingAsPlayerId} stateById={stateById} mapDef={mapDef} players={players} />
-        </div>
-      )}
     </div>
   );
 }
 
-function DiplomaticContent({ campaign, players, myPlayer, mapDef, stateById, onPhaseChanged, actingAsPlayerId, isAdmin, planningStatus }) {
+function DiplomaticContent({ campaign, players, myPlayer, mapDef, stateById, onPhaseChanged, actingAsPlayerId, isAdmin, planningStatus, operationsStatus }) {
   const phase = campaign?.current_phase;
   const isDeploy = phase === 'deploy';
+  const isAttack = phase === 'attack';
+
+  // Operations Phase: unified influence actions only (no objectives)
+  if (isAttack) {
+    return (
+      <DiplomaticOpsPanel
+        campaign={campaign}
+        myPlayer={myPlayer}
+        actingAsPlayerId={actingAsPlayerId}
+        players={players}
+        mapDef={mapDef}
+        stateById={stateById ?? {}}
+        operationsStatus={operationsStatus}
+      />
+    );
+  }
+
   return (
     <div className="space-y-0">
-      {/* Objectives always shown */}
+      {/* Objectives — shown in Planning Phase and other non-operations phases */}
       <ObjectivesPanel campaign={campaign} myPlayer={myPlayer} isAdmin={isAdmin}
         actingAsPlayerId={actingAsPlayerId} stateById={stateById ?? {}} players={players}
         planningStatus={planningStatus}
       />
-      {/* Intelligence + Diplomatic actions only outside Planning Phase */}
+      {/* Intelligence + Diplomatic actions outside Planning Phase */}
       {!isDeploy && (
         <>
           <div className="border-t border-border">
