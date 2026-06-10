@@ -1,185 +1,136 @@
 /**
- * DiplomaticConsolidationPanel — Sprint 5B.8
+ * DiplomaticConsolidationPanel — Sprint 5B.9
  *
- * Diplomatic tab content during Consolidation Phase.
- *
- * Section order (trade is PRIMARY):
- *   1. Trade Proposals (top, uncollapsed)
- *   2. Active Objective Hand
- *   3. Active Diplomatic Effects
- *
- * Trade Proposal features:
- *   - Resources (gold/iron/timber/stone/food)
- *   - Spendable Influence (by region)
- *   - Troops (from a territory)
- *   - Peace Treaty (with duration)
- *   - Affordability validation on propose AND accept
- *   - Accept / Decline buttons for incoming proposals
- *   - Acting-as mode aware
+ * Sections:
+ *   1. Trade Proposals (top, not collapsible) — territory-stored resources, hidden-info safe
+ *   2. Objective Hand (collapsible)
+ *   3. Active Effects (collapsible)
  */
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Loader2, RefreshCw, Feather, ChevronDown, ChevronRight, Star, ShieldCheck,
-  Send, Inbox, Plus, Check, X as XIcon, AlertTriangle, Sword, Coins, Users2 } from 'lucide-react';
+  Send, Inbox, Plus, Check, X as XIcon, AlertTriangle, Users2 } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
+import TradeOfferBuilder from './trade/TradeOfferBuilder';
+import TradeRequestBuilder from './trade/TradeRequestBuilder';
+import TradeAcceptForm from './trade/TradeAcceptForm';
 
 const RESOURCE_ICONS = { gold: '🟡', iron: '⚙️', timber: '🪵', stone: '🪨', food: '🌾' };
 const RESOURCE_TYPES = ['gold', 'iron', 'timber', 'stone', 'food'];
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function getPlayerName(players, id) {
   return players?.find(p => p.id === id)?.display_name ?? id;
 }
 
-// ── Trade Proposals Section ───────────────────────────────────────────────────
+// ── Asset Summary (read-only display on a proposal card) ──────────────────────
 
-function ResourceEditor({ label, state, setState, maxByResource }) {
-  return (
-    <div className="space-y-1">
-      <p className="text-[10px] text-muted-foreground">{label}:</p>
-      <div className="grid grid-cols-3 gap-1">
-        {RESOURCE_TYPES.map(r => {
-          const max = maxByResource?.[r] ?? 99;
-          return (
-            <div key={r} className="flex items-center gap-1">
-              <span className="text-[10px] shrink-0">{RESOURCE_ICONS[r]}</span>
-              <input
-                type="number" min={0} max={max}
-                value={state[r] ?? 0}
-                onChange={e => setState(prev => ({ ...prev, [r]: Math.min(max, Math.max(0, parseInt(e.target.value) || 0)) }))}
-                disabled={max === 0}
-                className="w-full bg-muted/20 border border-border rounded px-1 py-0.5 text-[10px] text-foreground disabled:opacity-30"
-              />
-              {maxByResource && <span className="text-[10px] text-muted-foreground shrink-0">/{max}</span>}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
+function AssetSummary({ assets, label }) {
+  const resources = assets?.resources ?? {};
+  const influence = assets?.influence ?? {};
+  const troops    = assets?.troops ?? {};
+  const peace     = assets?.peace_treaty ?? {};
 
-function AssetSummary({ resources, influence, troops, peaceTreaty, players, isOffer, label }) {
-  const hasResources = Object.values(resources ?? {}).some(v => v > 0);
-  const hasInfluence = Object.values(influence ?? {}).some(v => v > 0);
-  const hasTroops    = troops?.territory_id && (troops?.amount ?? 0) > 0;
-  const hasPeace     = peaceTreaty?.duration > 0;
-  const hasAnything  = hasResources || hasInfluence || hasTroops || hasPeace;
+  const lines = [];
+  Object.entries(resources).filter(([,v]) => v > 0).forEach(([r, v]) => lines.push(
+    <span key={r} className="text-foreground">{RESOURCE_ICONS[r]} {v}</span>
+  ));
+  Object.entries(influence).filter(([,v]) => v > 0).forEach(([region, v]) => lines.push(
+    <span key={region} className="text-purple-400">🌐 {region.replace(/_/g,' ')} +{v}</span>
+  ));
+  if ((troops.amount ?? 0) > 0) lines.push(<span key="troops" className="text-red-400">⚔ {troops.amount} troops</span>);
+  if ((peace.duration ?? 0) > 0) lines.push(<span key="peace" className="text-cyan-400">🕊 Peace {peace.duration}R</span>);
 
   return (
     <div>
       <p className="text-[10px] text-muted-foreground mb-0.5">{label}</p>
-      {!hasAnything
+      {lines.length === 0
         ? <span className="text-[10px] text-muted-foreground italic">nothing</span>
-        : <div className="flex flex-wrap gap-1.5 text-[10px]">
-            {hasResources && Object.entries(resources).filter(([,v]) => v > 0).map(([r, v]) => (
-              <span key={r} className="text-foreground">{RESOURCE_ICONS[r]}{v}</span>
-            ))}
-            {hasInfluence && Object.entries(influence).filter(([,v]) => v > 0).map(([region, v]) => (
-              <span key={region} className="text-purple-400">🌐 {region.replace(/_/g,' ')} +{v}</span>
-            ))}
-            {hasTroops && (
-              <span className="text-red-400">⚔ {troops.amount} troops</span>
-            )}
-            {hasPeace && (
-              <span className="text-cyan-400">🕊 Peace {peaceTreaty.duration}R</span>
-            )}
-          </div>
+        : <div className="flex flex-wrap gap-1.5 text-[10px]">{lines}</div>
       }
     </div>
   );
 }
 
-function ProposalCard({ proposal, isIncoming, actingPlayerId, players, onAction, myLedger, myResources }) {
-  const meta = proposal.effect_metadata ?? {};
+// ── Proposal Card ─────────────────────────────────────────────────────────────
+
+function ProposalCard({ proposal, isIncoming, actingPlayerId, players, campaign, stateById, mapDef, onAction }) {
+  const meta          = proposal.effect_metadata ?? {};
   const offerAssets   = meta.offer   ?? {};
   const requestAssets = meta.request ?? {};
-  const fromName   = isIncoming ? getPlayerName(players, proposal.player_id) : getPlayerName(players, proposal.target_player_id);
-  const [actioning, setActioning] = useState(false);
-  const [actionError, setActionError] = useState(null);
+  const counterpart   = isIncoming ? getPlayerName(players, proposal.player_id) : getPlayerName(players, proposal.target_player_id);
+  const isPending     = proposal.status === 'pending';
 
-  const statusColors = {
-    pending:   'text-amber-400',
-    active:    'text-green-400',
-    expired:   'text-muted-foreground',
-    cancelled: 'text-destructive',
-  };
+  const [declining,     setDeclining]     = useState(false);
+  const [declineError,  setDeclineError]  = useState(null);
+  const [showAcceptForm, setShowAcceptForm] = useState(false);
 
-  const handleAction = async (action) => {
-    setActioning(true);
-    setActionError(null);
+  const statusColors = { pending: 'text-amber-400', active: 'text-green-400', expired: 'text-muted-foreground', cancelled: 'text-destructive' };
+
+  const handleDecline = async () => {
+    setDeclining(true);
+    setDeclineError(null);
     try {
-      await onAction(proposal.id, action);
+      await base44.functions.invoke('diplomaticPhase', {
+        action: 'resolveTradeConsolidation',
+        campaign_id: campaign.id,
+        acting_as_player_id: actingPlayerId,
+        proposal_id: proposal.id,
+        resolution: 'decline',
+      });
+      onAction();
     } catch (e) {
-      setActionError(e?.response?.data?.error ?? `Failed to ${action} trade.`);
+      setDeclineError(e?.response?.data?.error ?? 'Failed to decline.');
     } finally {
-      setActioning(false);
+      setDeclining(false);
     }
   };
-
-  // Affordability check for accepting: recipient must have what they're giving (offerAssets from proposer's side = what proposer offers; acceptor gives requestAssets)
-  const acceptorGives = requestAssets;
-  const acceptorResources = acceptorGives.resources ?? {};
-  const canAffordAccept = RESOURCE_TYPES.every(r => (myResources?.[r] ?? 0) >= (acceptorResources[r] ?? 0));
-
-  const isPending  = proposal.status === 'pending';
-  const canAct     = isIncoming && isPending;
 
   return (
     <div className="rounded border border-border bg-muted/10 px-3 py-2.5 space-y-2">
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold text-foreground">
-          {isIncoming ? `From: ${fromName}` : `To: ${fromName}`}
+          {isIncoming ? `From: ${counterpart}` : `To: ${counterpart}`}
           {proposal.round && <span className="text-[10px] text-muted-foreground ml-1">R{proposal.round}</span>}
         </span>
-        <span className={`text-[10px] capitalize ${statusColors[proposal.status] ?? 'text-muted-foreground'}`}>
-          {proposal.status}
-        </span>
+        <span className={`text-[10px] capitalize ${statusColors[proposal.status] ?? 'text-muted-foreground'}`}>{proposal.status}</span>
       </div>
 
       <div className="grid grid-cols-2 gap-2">
-        <AssetSummary
-          resources={offerAssets.resources ?? {}}
-          influence={offerAssets.influence ?? {}}
-          troops={offerAssets.troops}
-          peaceTreaty={offerAssets.peace_treaty}
-          players={players}
-          label={isIncoming ? 'They offer:' : 'You offer:'}
-        />
-        <AssetSummary
-          resources={requestAssets.resources ?? {}}
-          influence={requestAssets.influence ?? {}}
-          troops={requestAssets.troops}
-          peaceTreaty={requestAssets.peace_treaty}
-          players={players}
-          label={isIncoming ? 'They want:' : 'You want:'}
-        />
+        <AssetSummary assets={offerAssets}   label={isIncoming ? 'They offer:' : 'You offer:'} />
+        <AssetSummary assets={requestAssets} label={isIncoming ? 'They want:' : 'You want:'} />
       </div>
 
-      {actionError && <p className="text-[10px] text-destructive">{actionError}</p>}
+      {declineError && <p className="text-[10px] text-destructive">{declineError}</p>}
 
-      {canAct && (
+      {/* Incoming pending: Accept / Decline */}
+      {isIncoming && isPending && !showAcceptForm && (
         <div className="flex gap-2 mt-1">
-          {!canAffordAccept && (
-            <p className="text-[10px] text-amber-400 flex items-center gap-1 mb-1">
-              <AlertTriangle className="w-3 h-3" /> You lack the required assets to accept.
-            </p>
-          )}
           <button
-            onClick={() => handleAction('accept')}
-            disabled={actioning || !canAffordAccept}
-            className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded border border-green-500/40 bg-green-500/10 text-green-400 text-[10px] font-display tracking-wider uppercase hover:brightness-110 disabled:opacity-40 transition-all"
+            onClick={() => setShowAcceptForm(true)}
+            className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded border border-green-500/40 bg-green-500/10 text-green-400 text-[10px] font-display tracking-wider uppercase hover:brightness-110 transition-all"
           >
-            {actioning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Accept
+            <Check className="w-3 h-3" /> Accept
           </button>
           <button
-            onClick={() => handleAction('decline')}
-            disabled={actioning}
+            onClick={handleDecline}
+            disabled={declining}
             className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded border border-destructive/40 bg-destructive/10 text-destructive text-[10px] font-display tracking-wider uppercase hover:brightness-110 disabled:opacity-40 transition-all"
           >
-            {actioning ? <Loader2 className="w-3 h-3 animate-spin" /> : <XIcon className="w-3 h-3" />} Decline
+            {declining ? <Loader2 className="w-3 h-3 animate-spin" /> : <XIcon className="w-3 h-3" />} Decline
           </button>
         </div>
+      )}
+
+      {/* Accept form — receiver chooses payment sources */}
+      {isIncoming && isPending && showAcceptForm && (
+        <TradeAcceptForm
+          proposal={proposal}
+          campaign={campaign}
+          actingPlayerId={actingPlayerId}
+          stateById={stateById}
+          mapDef={mapDef}
+          onAccepted={() => { setShowAcceptForm(false); onAction(); }}
+          onCancel={() => setShowAcceptForm(false)}
+        />
       )}
     </div>
   );
@@ -187,44 +138,59 @@ function ProposalCard({ proposal, isIncoming, actingPlayerId, players, onAction,
 
 // ── Create Trade Form ─────────────────────────────────────────────────────────
 
-function CreateTradeForm({ campaign, actingPlayerId, players, myResources, myInfluence, myTerritoryTroops, onCreated, onCancel }) {
-  const [targetPlayer, setTargetPlayer] = useState('');
+function CreateTradeForm({ campaign, actingPlayerId, players, stateById, mapDef, myInfluence, myTerritoryTroops, onCreated, onCancel }) {
+  const [targetPlayer,   setTargetPlayer]   = useState('');
+  // Offer
+  const [offerLines,     setOfferLines]     = useState([]); // [{ id, resource, territory_id, amount }]
+  const [offerInfluence, setOfferInfluence] = useState({});
+  const [offerTroops,    setOfferTroops]    = useState({ territory_id: '', amount: 0 });
+  const [offerPeace,     setOfferPeace]     = useState({ duration: 0 });
+  // Request
+  const [reqLines,       setReqLines]       = useState([]); // [{ id, resource, amount }]
+  const [reqTroops,      setReqTroops]      = useState({ amount: 0 });
+  const [reqInfluence,   setReqInfluence]   = useState({ region: '', amount: 0 });
+  const [reqPeace,       setReqPeace]       = useState({ duration: 0 });
 
-  // Offer state
-  const [offerResources,   setOfferResources]   = useState({});
-  const [offerInfluence,   setOfferInfluence]   = useState({});
-  const [offerTroops,      setOfferTroops]      = useState({ territory_id: '', amount: 0 });
-  const [offerPeace,       setOfferPeace]       = useState({ duration: 0 });
-
-  // Request state
-  const [reqResources,     setReqResources]     = useState({});
-  const [reqInfluence,     setReqInfluence]     = useState({});
-  const [reqTroops,        setReqTroops]        = useState({ territory_id: '', amount: 0 });
-  const [reqPeace,         setReqPeace]         = useState({ duration: 0 });
-
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState(null);
+  const [submitting,     setSubmitting]     = useState(false);
+  const [error,          setError]          = useState(null);
 
   const otherPlayers = (players ?? []).filter(p => p.id !== actingPlayerId && !p.is_eliminated);
 
-  // Affordability check for the offer side
-  const offerAffordable = RESOURCE_TYPES.every(r => (myResources?.[r] ?? 0) >= (offerResources[r] ?? 0));
-  const offerInfluenceAffordable = Object.entries(offerInfluence).every(([region, v]) => (myInfluence?.[region] ?? 0) >= v);
-  const offerTroopsAffordable = !offerTroops.territory_id || (myTerritoryTroops?.[offerTroops.territory_id] ?? 0) >= (offerTroops.amount ?? 0);
-  const canPropose = offerAffordable && offerInfluenceAffordable && offerTroopsAffordable;
-
-  const availableRegions = Object.keys(myInfluence ?? {}).filter(r => (myInfluence[r] ?? 0) > 0);
+  // Affordability for offer side
+  const offerInfluenceOk = Object.entries(offerInfluence).every(([region, v]) => (myInfluence?.[region] ?? 0) >= v);
+  const offerTroopsOk    = !offerTroops.territory_id || (myTerritoryTroops?.[offerTroops.territory_id] ?? 0) >= (offerTroops.amount ?? 0);
+  const offerLinesOk     = offerLines.every(l => {
+    if (!l.territory_id || l.amount <= 0) return true; // incomplete = tolerated until submit
+    const ts = Object.values(stateById ?? {}).find(s => s.territory_id === l.territory_id && s.owner_player_id === actingPlayerId);
+    const avail = ts?.resource_storage?.[l.resource] ?? 0;
+    return l.amount <= avail;
+  });
+  const canPropose = offerInfluenceOk && offerTroopsOk && offerLinesOk;
 
   const handleSubmit = async () => {
     if (!targetPlayer) { setError('Select a target player.'); return; }
-    if (!canPropose) { setError('You cannot offer assets you do not have.'); return; }
 
-    const hasOffer = Object.values(offerResources).some(v => v > 0)
+    // Build offer resources from lines
+    const offerResources = {};
+    for (const line of offerLines) {
+      if (!line.territory_id || line.amount <= 0) continue;
+      // Validate
+      const ts = Object.values(stateById ?? {}).find(s => s.territory_id === line.territory_id && s.owner_player_id === actingPlayerId);
+      const avail = ts?.resource_storage?.[line.resource] ?? 0;
+      if (line.amount > avail) { setError(`Not enough ${line.resource} at ${line.territory_id}.`); return; }
+      if (!offerResources[line.resource]) offerResources[line.resource] = [];
+      offerResources[line.resource].push({ territory_id: line.territory_id, amount: line.amount });
+    }
+
+    const hasOffer = Object.keys(offerResources).length > 0
       || Object.values(offerInfluence).some(v => v > 0)
       || (offerTroops.territory_id && offerTroops.amount > 0)
       || offerPeace.duration > 0;
-
     if (!hasOffer) { setError('Add at least one offered asset.'); return; }
+
+    // Build request resources (no source — receiver chooses)
+    const reqResourcesMap = {};
+    reqLines.filter(l => l.amount > 0).forEach(l => { reqResourcesMap[l.resource] = l.amount; });
 
     setSubmitting(true);
     setError(null);
@@ -235,16 +201,16 @@ function CreateTradeForm({ campaign, actingPlayerId, players, myResources, myInf
         acting_as_player_id: actingPlayerId,
         target_player_id: targetPlayer,
         offer: {
-          resources:   offerResources,
-          influence:   offerInfluence,
-          troops:      offerTroops.territory_id ? offerTroops : null,
-          peace_treaty:offerPeace.duration > 0 ? offerPeace : null,
+          resources:    offerResources,   // [{ territory_id, amount }] per resource type
+          influence:    offerInfluence,
+          troops:       offerTroops.territory_id && offerTroops.amount > 0 ? offerTroops : null,
+          peace_treaty: offerPeace.duration > 0 ? offerPeace : null,
         },
         request: {
-          resources:   reqResources,
-          influence:   reqInfluence,
-          troops:      reqTroops.territory_id ? reqTroops : null,
-          peace_treaty:reqPeace.duration > 0 ? reqPeace : null,
+          resources:    reqResourcesMap,  // { resource: amount } — no source
+          troops:       reqTroops.amount > 0 ? reqTroops : null,
+          influence:    reqInfluence.amount > 0 ? reqInfluence : null,
+          peace_treaty: reqPeace.duration > 0 ? reqPeace : null,
         },
       });
       onCreated();
@@ -271,104 +237,26 @@ function CreateTradeForm({ campaign, actingPlayerId, players, myResources, myInf
         </select>
       </div>
 
-      {/* Your resources */}
-      <div className="space-y-1">
-        <p className="text-[10px] text-muted-foreground font-semibold">Your available assets:</p>
-        <div className="flex flex-wrap gap-2 text-[10px] text-foreground">
-          {RESOURCE_TYPES.map(r => (
-            <span key={r} className={(myResources?.[r] ?? 0) > 0 ? 'text-foreground' : 'text-muted-foreground/40'}>
-              {RESOURCE_ICONS[r]} {myResources?.[r] ?? 0}
-            </span>
-          ))}
-          {availableRegions.map(region => (
-            <span key={region} className="text-purple-400">🌐 {region.replace(/_/g,' ')} {myInfluence[region]}</span>
-          ))}
-        </div>
-      </div>
+      <TradeOfferBuilder
+        stateById={stateById}
+        mapDef={mapDef}
+        actingPlayerId={actingPlayerId}
+        myInfluence={myInfluence}
+        myTerritoryTroops={myTerritoryTroops}
+        offerLines={offerLines}     setOfferLines={setOfferLines}
+        offerInfluence={offerInfluence} setOfferInfluence={setOfferInfluence}
+        offerTroops={offerTroops}   setOfferTroops={setOfferTroops}
+        offerPeace={offerPeace}     setOfferPeace={setOfferPeace}
+      />
 
-      {/* Offer */}
-      <div className="space-y-2 border border-green-500/20 rounded p-2">
-        <p className="text-[10px] text-green-400 font-display tracking-wider uppercase">You Offer</p>
-        <ResourceEditor label="Resources" state={offerResources} setState={setOfferResources} maxByResource={myResources} />
+      <TradeRequestBuilder
+        reqLines={reqLines}         setReqLines={setReqLines}
+        reqTroops={reqTroops}       setReqTroops={setReqTroops}
+        reqInfluence={reqInfluence} setReqInfluence={setReqInfluence}
+        reqPeace={reqPeace}         setReqPeace={setReqPeace}
+      />
 
-        {availableRegions.length > 0 && (
-          <div className="space-y-1">
-            <p className="text-[10px] text-muted-foreground">Spendable Influence:</p>
-            <div className="grid grid-cols-2 gap-1">
-              {availableRegions.map(region => (
-                <div key={region} className="flex items-center gap-1">
-                  <span className="text-[10px] text-purple-400 truncate shrink">{region.replace(/_/g,' ')}</span>
-                  <input
-                    type="number" min={0} max={myInfluence[region] ?? 0}
-                    value={offerInfluence[region] ?? 0}
-                    onChange={e => setOfferInfluence(prev => ({ ...prev, [region]: Math.min(myInfluence[region], Math.max(0, parseInt(e.target.value) || 0)) }))}
-                    className="w-12 bg-muted/20 border border-border rounded px-1 py-0.5 text-[10px] text-foreground shrink-0"
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {Object.keys(myTerritoryTroops ?? {}).length > 0 && (
-          <div className="space-y-1">
-            <p className="text-[10px] text-muted-foreground">Troops (from territory):</p>
-            <div className="flex gap-1">
-              <select
-                value={offerTroops.territory_id}
-                onChange={e => setOfferTroops(prev => ({ ...prev, territory_id: e.target.value }))}
-                className="flex-1 bg-muted/20 border border-border rounded px-2 py-1 text-[10px] text-foreground"
-              >
-                <option value="">— none —</option>
-                {Object.entries(myTerritoryTroops).filter(([,t]) => t > 0).map(([tid, t]) => (
-                  <option key={tid} value={tid}>{tid} ({t} troops)</option>
-                ))}
-              </select>
-              <input
-                type="number" min={0} max={myTerritoryTroops?.[offerTroops.territory_id] ?? 0}
-                value={offerTroops.amount ?? 0}
-                onChange={e => setOfferTroops(prev => ({ ...prev, amount: Math.max(0, parseInt(e.target.value) || 0) }))}
-                className="w-14 bg-muted/20 border border-border rounded px-1 py-1 text-[10px] text-foreground"
-                placeholder="amt"
-              />
-            </div>
-          </div>
-        )}
-
-        <div className="space-y-1">
-          <p className="text-[10px] text-muted-foreground">Peace Treaty (rounds):</p>
-          <input
-            type="number" min={0} max={20}
-            value={offerPeace.duration}
-            onChange={e => setOfferPeace({ duration: Math.max(0, parseInt(e.target.value) || 0) })}
-            className="w-20 bg-muted/20 border border-border rounded px-2 py-1 text-[10px] text-foreground"
-            placeholder="0"
-          />
-          {offerPeace.duration > 0 && <p className="text-[10px] text-cyan-400">Creates a Non-Aggression Pact for {offerPeace.duration} rounds if accepted.</p>}
-        </div>
-
-        {!offerAffordable && (
-          <p className="text-[10px] text-destructive flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> You don't have enough resources to offer.</p>
-        )}
-      </div>
-
-      {/* Request */}
-      <div className="space-y-2 border border-amber-500/20 rounded p-2">
-        <p className="text-[10px] text-amber-400 font-display tracking-wider uppercase">You Want (optional)</p>
-        <ResourceEditor label="Resources" state={reqResources} setState={setReqResources} />
-        <div className="space-y-1">
-          <p className="text-[10px] text-muted-foreground">Peace Treaty (rounds):</p>
-          <input
-            type="number" min={0} max={20}
-            value={reqPeace.duration}
-            onChange={e => setReqPeace({ duration: Math.max(0, parseInt(e.target.value) || 0) })}
-            className="w-20 bg-muted/20 border border-border rounded px-2 py-1 text-[10px] text-foreground"
-            placeholder="0"
-          />
-        </div>
-      </div>
-
-      {error && <p className="text-[10px] text-destructive">{error}</p>}
+      {error && <p className="text-[10px] text-destructive flex items-center gap-1"><AlertTriangle className="w-3 h-3" />{error}</p>}
 
       <div className="flex gap-2">
         <button
@@ -379,10 +267,7 @@ function CreateTradeForm({ campaign, actingPlayerId, players, myResources, myInf
           {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
           Send Proposal
         </button>
-        <button
-          onClick={onCancel}
-          className="px-3 py-2 rounded border border-border text-muted-foreground text-xs hover:text-foreground transition-colors"
-        >
+        <button onClick={onCancel} className="px-3 py-2 rounded border border-border text-muted-foreground text-xs hover:text-foreground transition-colors">
           Cancel
         </button>
       </div>
@@ -390,37 +275,28 @@ function CreateTradeForm({ campaign, actingPlayerId, players, myResources, myInf
   );
 }
 
-// ── Trade Proposals Main Section ──────────────────────────────────────────────
+// ── Trade Proposals Section ───────────────────────────────────────────────────
 
 function TradeProposalsSection({ campaign, actingPlayerId, players, stateById, mapDef }) {
-  const [activeTab, setActiveTab] = useState('incoming'); // 'incoming' | 'outgoing' | 'create'
-  const [outgoing, setOutgoing] = useState([]);
-  const [incoming, setIncoming] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [activeTab,  setActiveTab]  = useState('incoming');
+  const [outgoing,   setOutgoing]   = useState([]);
+  const [incoming,   setIncoming]   = useState([]);
+  const [loading,    setLoading]    = useState(false);
   const [showCreate, setShowCreate] = useState(false);
 
-  // My resource state
-  const [myResources, setMyResources] = useState({});
-  const [myInfluence, setMyInfluence] = useState({});
-  const [myTerritoryTroops, setMyTerritoryTroops] = useState({});
+  const [myInfluence,      setMyInfluence]      = useState({});
+  const [myTerritoryTroops,setMyTerritoryTroops]= useState({});
 
   const loadPlayerAssets = useCallback(async () => {
     if (!campaign?.id || !actingPlayerId) return;
     try {
-      const [ledger, regPools] = await Promise.all([
-        base44.entities.PlayerResourceLedger.filter({ campaign_id: campaign.id, player_id: actingPlayerId }).catch(() => []),
-        base44.entities.RegionalInfluencePool.filter({ campaign_id: campaign.id, player_id: actingPlayerId }).catch(() => []),
-      ]);
-      const lr = ledger[0] ?? {};
-      setMyResources({ gold: lr.gold ?? 0, iron: lr.iron ?? 0, timber: lr.timber ?? 0, stone: lr.stone ?? 0, food: lr.food ?? 0 });
+      const regPools = await base44.entities.RegionalInfluencePool.filter({ campaign_id: campaign.id, player_id: actingPlayerId }).catch(() => []);
       const inf = {};
       regPools.forEach(p => { if (p.spendable_influence > 0) inf[p.region_id] = p.spendable_influence; });
       setMyInfluence(inf);
-
-      // Troop count per territory
-      const myTerritories = Object.values(stateById ?? {}).filter(s => s.owner_player_id === actingPlayerId);
       const troops = {};
-      myTerritories.forEach(s => { if (s.troop_count > 0) troops[s.territory_id] = s.troop_count; });
+      Object.values(stateById ?? {}).filter(s => s.owner_player_id === actingPlayerId && s.troop_count > 0)
+        .forEach(s => { troops[s.territory_id] = s.troop_count; });
       setMyTerritoryTroops(troops);
     } catch { }
   }, [campaign?.id, actingPlayerId, stateById]);
@@ -430,16 +306,8 @@ function TradeProposalsSection({ campaign, actingPlayerId, players, stateById, m
     setLoading(true);
     try {
       const [sent, received] = await Promise.all([
-        base44.entities.DiplomaticAction.filter({
-          campaign_id: campaign.id,
-          player_id: actingPlayerId,
-          action_type: 'trade_proposal',
-        }).catch(() => []),
-        base44.entities.DiplomaticAction.filter({
-          campaign_id: campaign.id,
-          target_player_id: actingPlayerId,
-          action_type: 'trade_proposal',
-        }).catch(() => []),
+        base44.entities.DiplomaticAction.filter({ campaign_id: campaign.id, player_id: actingPlayerId, action_type: 'trade_proposal' }).catch(() => []),
+        base44.entities.DiplomaticAction.filter({ campaign_id: campaign.id, target_player_id: actingPlayerId, action_type: 'trade_proposal' }).catch(() => []),
       ]);
       setOutgoing(sent ?? []);
       setIncoming(received ?? []);
@@ -447,40 +315,22 @@ function TradeProposalsSection({ campaign, actingPlayerId, players, stateById, m
     finally { setLoading(false); }
   }, [campaign?.id, actingPlayerId]);
 
-  useEffect(() => {
-    loadProposals();
-    loadPlayerAssets();
-  }, [loadProposals, loadPlayerAssets]);
-
-  const handleTradeAction = async (proposalId, action) => {
-    await base44.functions.invoke('diplomaticPhase', {
-      action: 'resolveTradeConsolidation',
-      campaign_id: campaign.id,
-      acting_as_player_id: actingPlayerId,
-      proposal_id: proposalId,
-      resolution: action, // 'accept' | 'decline'
-    });
-    await loadProposals();
-    await loadPlayerAssets();
-  };
+  useEffect(() => { loadProposals(); loadPlayerAssets(); }, [loadProposals, loadPlayerAssets]);
 
   const pendingIncoming = incoming.filter(p => p.status === 'pending');
 
   return (
     <div className="rounded border border-primary/30 bg-primary/5">
-      {/* Header — always visible, NOT collapsible */}
       <div className="flex items-center justify-between px-3 py-2.5 border-b border-primary/20">
         <span className="font-display text-xs tracking-wider uppercase font-semibold text-primary flex items-center gap-1.5">
           <Users2 className="w-3.5 h-3.5" /> Trade Proposals
           {pendingIncoming.length > 0 && (
-            <span className="ml-1 px-1.5 py-0.5 rounded-full bg-primary text-primary-foreground text-[10px] font-mono">
-              {pendingIncoming.length}
-            </span>
+            <span className="ml-1 px-1.5 py-0.5 rounded-full bg-primary text-primary-foreground text-[10px] font-mono">{pendingIncoming.length}</span>
           )}
         </span>
         <div className="flex gap-1">
           <button
-            onClick={() => { setShowCreate(v => !v); setActiveTab('incoming'); }}
+            onClick={() => setShowCreate(v => !v)}
             className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-display tracking-wider uppercase transition-colors ${
               showCreate ? 'bg-primary text-primary-foreground' : 'border border-primary/40 text-primary hover:bg-primary/10'
             }`}
@@ -494,13 +344,13 @@ function TradeProposalsSection({ campaign, actingPlayerId, players, stateById, m
       </div>
 
       <div className="px-3 py-3 space-y-3">
-        {/* Create form */}
         {showCreate && (
           <CreateTradeForm
             campaign={campaign}
             actingPlayerId={actingPlayerId}
             players={players}
-            myResources={myResources}
+            stateById={stateById}
+            mapDef={mapDef}
             myInfluence={myInfluence}
             myTerritoryTroops={myTerritoryTroops}
             onCreated={() => { setShowCreate(false); loadProposals(); }}
@@ -508,11 +358,10 @@ function TradeProposalsSection({ campaign, actingPlayerId, players, stateById, m
           />
         )}
 
-        {/* Sub-tabs */}
         <div className="flex gap-1">
           {[
-            { id: 'incoming', icon: Inbox,  label: `Incoming (${incoming.length})` },
-            { id: 'outgoing', icon: Send,   label: `Outgoing (${outgoing.length})` },
+            { id: 'incoming', icon: Inbox, label: `Incoming (${incoming.length})` },
+            { id: 'outgoing', icon: Send,  label: `Outgoing (${outgoing.length})` },
           ].map(({ id, icon: Icon, label }) => (
             <button
               key={id}
@@ -533,14 +382,10 @@ function TradeProposalsSection({ campaign, actingPlayerId, players, stateById, m
             ? <p className="text-xs text-muted-foreground italic">No incoming proposals.</p>
             : <div className="space-y-2">
                 {incoming.map(p => (
-                  <ProposalCard
-                    key={p.id}
-                    proposal={p}
-                    isIncoming={true}
-                    actingPlayerId={actingPlayerId}
-                    players={players}
-                    onAction={handleTradeAction}
-                    myResources={myResources}
+                  <ProposalCard key={p.id} proposal={p} isIncoming={true}
+                    actingPlayerId={actingPlayerId} players={players}
+                    campaign={campaign} stateById={stateById} mapDef={mapDef}
+                    onAction={() => { loadProposals(); loadPlayerAssets(); }}
                   />
                 ))}
               </div>
@@ -551,14 +396,10 @@ function TradeProposalsSection({ campaign, actingPlayerId, players, stateById, m
             ? <p className="text-xs text-muted-foreground italic">No outgoing proposals.</p>
             : <div className="space-y-2">
                 {outgoing.map(p => (
-                  <ProposalCard
-                    key={p.id}
-                    proposal={p}
-                    isIncoming={false}
-                    actingPlayerId={actingPlayerId}
-                    players={players}
-                    onAction={handleTradeAction}
-                    myResources={myResources}
+                  <ProposalCard key={p.id} proposal={p} isIncoming={false}
+                    actingPlayerId={actingPlayerId} players={players}
+                    campaign={campaign} stateById={stateById} mapDef={mapDef}
+                    onAction={() => { loadProposals(); loadPlayerAssets(); }}
                   />
                 ))}
               </div>
@@ -568,13 +409,10 @@ function TradeProposalsSection({ campaign, actingPlayerId, players, stateById, m
   );
 }
 
-// ── Objective Hand Section ────────────────────────────────────────────────────
+// ── Objective Hand ────────────────────────────────────────────────────────────
 
 const CATEGORY_COLORS = {
-  military:    { bg: 'bg-red-500/10',    border: 'border-red-500/30',    text: 'text-red-400' },
-  economic:    { bg: 'bg-amber-500/10',  border: 'border-amber-500/30',  text: 'text-amber-400' },
   diplomatic:  { bg: 'bg-purple-500/10', border: 'border-purple-500/30', text: 'text-purple-400' },
-  territorial: { bg: 'bg-green-500/10',  border: 'border-green-500/30',  text: 'text-green-400' },
 };
 
 function ObjectiveHandSection({ campaign, actingPlayerId }) {
@@ -606,10 +444,7 @@ function ObjectiveHandSection({ campaign, actingPlayerId }) {
 
   return (
     <div className="rounded border border-purple-500/30 bg-purple-500/5">
-      <button
-        onClick={() => setExpanded(v => !v)}
-        className="w-full flex items-center justify-between px-3 py-2 text-left"
-      >
+      <button onClick={() => setExpanded(v => !v)} className="w-full flex items-center justify-between px-3 py-2 text-left">
         <span className="font-display text-xs tracking-wider uppercase font-semibold text-purple-400 flex items-center gap-1.5">
           <Star className="w-3.5 h-3.5" /> Objective Hand ({hand.length})
         </span>
@@ -621,30 +456,26 @@ function ObjectiveHandSection({ campaign, actingPlayerId }) {
             <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="w-3 h-3 animate-spin" /> Loading…</div>
           ) : hand.length === 0 ? (
             <p className="text-xs text-muted-foreground italic">No objectives in hand.</p>
-          ) : (
-            hand.map(({ id, completed }) => {
-              const def = defs[id];
-              const colors = CATEGORY_COLORS.diplomatic;
-              return (
-                <div key={id} className={`rounded border ${colors.border} ${colors.bg} px-3 py-2`}>
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      <p className={`text-xs font-semibold ${colors.text} truncate`}>{def?.title ?? id}</p>
-                      <p className="text-[10px] text-muted-foreground mt-0.5">{def?.description ?? '—'}</p>
-                    </div>
-                    <div className="shrink-0 flex flex-col items-end gap-1">
-                      {def?.influence_reward > 0 && (
-                        <span className="flex items-center gap-0.5 text-[10px] text-purple-400 font-mono">
-                          <Star className="w-2.5 h-2.5" /> {def.influence_reward}
-                        </span>
-                      )}
-                      {completed && <span className="text-[10px] text-green-400">✓ Done</span>}
-                    </div>
+          ) : hand.map(({ id, completed }) => {
+            const def = defs[id];
+            const colors = CATEGORY_COLORS.diplomatic;
+            return (
+              <div key={id} className={`rounded border ${colors.border} ${colors.bg} px-3 py-2`}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className={`text-xs font-semibold ${colors.text} truncate`}>{def?.title ?? id}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{def?.description ?? '—'}</p>
+                  </div>
+                  <div className="shrink-0 flex flex-col items-end gap-1">
+                    {def?.influence_reward > 0 && (
+                      <span className="flex items-center gap-0.5 text-[10px] text-purple-400 font-mono"><Star className="w-2.5 h-2.5" /> {def.influence_reward}</span>
+                    )}
+                    {completed && <span className="text-[10px] text-green-400">✓ Done</span>}
                   </div>
                 </div>
-              );
-            })
-          )}
+              </div>
+            );
+          })}
           <p className="text-[10px] text-muted-foreground italic">Draw and discard objectives during Planning Phase.</p>
         </div>
       )}
@@ -652,7 +483,7 @@ function ObjectiveHandSection({ campaign, actingPlayerId }) {
   );
 }
 
-// ── Active Effects Section ────────────────────────────────────────────────────
+// ── Active Effects ────────────────────────────────────────────────────────────
 
 const ACTION_LABELS = {
   war_rations:         { label: 'War Rations',         icon: '⚔️',  color: 'text-red-400',    border: 'border-red-500/30',    bg: 'bg-red-500/5' },
@@ -683,10 +514,7 @@ function ActiveEffectsSection({ campaign, actingPlayerId, players }) {
 
   return (
     <div className="rounded border border-cyan-500/30 bg-cyan-500/5">
-      <button
-        onClick={() => setExpanded(v => !v)}
-        className="w-full flex items-center justify-between px-3 py-2 text-left"
-      >
+      <button onClick={() => setExpanded(v => !v)} className="w-full flex items-center justify-between px-3 py-2 text-left">
         <span className="font-display text-xs tracking-wider uppercase font-semibold text-cyan-400 flex items-center gap-1.5">
           <ShieldCheck className="w-3.5 h-3.5" /> Active Effects ({effects.length})
         </span>
@@ -698,28 +526,25 @@ function ActiveEffectsSection({ campaign, actingPlayerId, players }) {
             <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="w-3 h-3 animate-spin" /> Loading…</div>
           ) : effects.length === 0 ? (
             <p className="text-xs text-muted-foreground italic">No active diplomatic effects.</p>
-          ) : (
-            effects.map(e => {
-              const cfg = ACTION_LABELS[e.action_type] ?? { label: e.action_type, icon: '🎯', color: 'text-foreground', border: 'border-border', bg: 'bg-muted/10' };
-              return (
-                <div key={e.id} className={`rounded border ${cfg.border} ${cfg.bg} px-3 py-2`}>
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="text-sm shrink-0">{cfg.icon}</span>
-                      <span className={`text-xs font-semibold ${cfg.color}`}>{cfg.label}</span>
-                    </div>
-                    {e.expires_round && <span className="text-[10px] text-muted-foreground shrink-0">Expires R{e.expires_round}</span>}
+          ) : effects.map(e => {
+            const cfg = ACTION_LABELS[e.action_type] ?? { label: e.action_type, icon: '🎯', color: 'text-foreground', border: 'border-border', bg: 'bg-muted/10' };
+            return (
+              <div key={e.id} className={`rounded border ${cfg.border} ${cfg.bg} px-3 py-2`}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="text-sm shrink-0">{cfg.icon}</span>
+                    <span className={`text-xs font-semibold ${cfg.color}`}>{cfg.label}</span>
                   </div>
-                  <div className="flex gap-3 mt-1 text-[10px] text-muted-foreground flex-wrap">
-                    {e.target_player_id && <span>→ {getPlayerName(players, e.target_player_id)}</span>}
-                    {e.target_player_b_id && <span>& {getPlayerName(players, e.target_player_b_id)}</span>}
-                    {e.region_id && <span>Region: {e.region_id.replace(/_/g, ' ')}</span>}
-                    {e.influence_spent > 0 && <span>Cost: {e.influence_spent} inf</span>}
-                  </div>
+                  {e.expires_round && <span className="text-[10px] text-muted-foreground shrink-0">Expires R{e.expires_round}</span>}
                 </div>
-              );
-            })
-          )}
+                <div className="flex gap-3 mt-1 text-[10px] text-muted-foreground flex-wrap">
+                  {e.target_player_id && <span>→ {getPlayerName(players, e.target_player_id)}</span>}
+                  {e.region_id && e.region_id !== 'trade' && <span>Region: {e.region_id.replace(/_/g, ' ')}</span>}
+                  {e.influence_spent > 0 && <span>Cost: {e.influence_spent} inf</span>}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -730,27 +555,14 @@ function ActiveEffectsSection({ campaign, actingPlayerId, players }) {
 
 export default function DiplomaticConsolidationPanel({ campaign, myPlayer, actingAsPlayerId, players, mapDef, stateById }) {
   const actingPlayerId = actingAsPlayerId ?? myPlayer?.id;
-
   return (
     <div className="p-4 space-y-3">
       <div className="flex items-center gap-2 mb-1">
         <Feather className="w-3.5 h-3.5 text-purple-400" />
         <p className="font-display text-xs tracking-widest uppercase text-purple-400">Diplomatic</p>
       </div>
-
-      {/* 1. Trade Proposals — primary, top, not collapsible */}
-      <TradeProposalsSection
-        campaign={campaign}
-        actingPlayerId={actingPlayerId}
-        players={players}
-        stateById={stateById}
-        mapDef={mapDef}
-      />
-
-      {/* 2. Objective Hand — collapsible */}
+      <TradeProposalsSection campaign={campaign} actingPlayerId={actingPlayerId} players={players} stateById={stateById} mapDef={mapDef} />
       <ObjectiveHandSection campaign={campaign} actingPlayerId={actingPlayerId} />
-
-      {/* 3. Active Effects — collapsible */}
       <ActiveEffectsSection campaign={campaign} actingPlayerId={actingPlayerId} players={players} />
     </div>
   );
