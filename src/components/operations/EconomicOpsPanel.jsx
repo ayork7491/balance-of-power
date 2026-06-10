@@ -1,38 +1,16 @@
 /**
- * EconomicOpsPanel — Sprint 5B.5
+ * EconomicOpsPanel — Sprint 5B.6
  *
  * Economic tab content during Operations Phase.
- * Shows construction project staging only.
- * No activation controls, no logistics, no static ops list.
- *
- * Props:
- *   campaign
- *   myPlayer
- *   actingAsPlayerId
- *   players
- *   mapDef
- *   stateById
- *   operationsStatus    — from OperationsPhaseHeader
- *   onStaged            — called after staging changes
+ * Shows:
+ *   - Resource summary (global + territory storage)
+ *   - Construction project staging with cost preview and affordability validation
  */
 import { useState, useEffect, useCallback } from 'react';
-import { Loader2, RefreshCw, HardHat, X, CheckCircle2, Hammer } from 'lucide-react';
+import { Loader2, RefreshCw, HardHat, X, CheckCircle2, Hammer, AlertCircle } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
-
-// Building definitions for the construction selector
-const BUILDING_OPTIONS = [
-  // Military
-  { type: 'barracks',       label: 'Barracks',        pillar: 'military',   icon: '🏰', description: 'Increases troop training capacity.' },
-  { type: 'war_council',    label: 'War Council',      pillar: 'military',   icon: '⚔️', description: 'Grants +1 attack declaration per round.' },
-  { type: 'logistics_corps',label: 'Logistics Corps',  pillar: 'military',   icon: '🚩', description: 'Extends fortification range.' },
-  // Economic
-  { type: 'marketplace',    label: 'Marketplace',      pillar: 'economic',   icon: '🏪', description: 'Increases resource activation limit.' },
-  { type: 'resource_hub',   label: 'Resource Hub',     pillar: 'economic',   icon: '🏭', description: 'Enables supply route connections.' },
-  { type: 'warehouse',      label: 'Warehouse',        pillar: 'economic',   icon: '📦', description: 'Protects stored resources from raids.' },
-  // Diplomatic
-  { type: 'embassy',        label: 'Embassy',          pillar: 'diplomatic', icon: '🏛️', description: 'Grants +1 spendable influence per round.' },
-  { type: 'monument',       label: 'Monument',         pillar: 'diplomatic', icon: '🗿', description: 'Increases permanent influence in territory.' },
-];
+import { ALL_BUILDING_DEFINITIONS } from '@/config/buildingDefinitions.ts';
+import ResourceSummaryPanel from './ResourceSummaryPanel';
 
 const PILLAR_COLORS = {
   military:   { text: 'text-red-400',    border: 'border-red-500/30',    bg: 'bg-red-500/10' },
@@ -40,11 +18,82 @@ const PILLAR_COLORS = {
   diplomatic: { text: 'text-purple-400', border: 'border-purple-500/30', bg: 'bg-purple-500/10' },
 };
 
+const RESOURCE_ICONS = { gold: '🟡', iron: '⚙️', timber: '🪵', stone: '🪨', food: '🌾' };
+
+// Building options matching the definitions from buildingDefinitions.ts
+const BUILDING_OPTIONS = ALL_BUILDING_DEFINITIONS.map(b => ({
+  type: b.type,
+  label: b.label,
+  pillar: b.pillar,
+  cost: b.cost,
+  rounds: b.rounds,
+  effect: b.effect,
+  icon: {
+    barracks: '🏰', war_council: '⚔️', logistics_corps: '🚩',
+    embassy: '🏛️', council_chamber: '🏛', foreign_office: '🏢', monument: '🗿',
+    marketplace: '🏪', builders_guild: '🔨', trade_network: '🔗',
+    resource_hub: '🏭', supply_route: '🛤️', warehouse: '📦',
+  }[b.type] ?? '🏗️',
+}));
+
+function CostDisplay({ cost, resources }) {
+  const entries = Object.entries(cost).filter(([, v]) => v > 0);
+  if (entries.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {entries.map(([resource, needed]) => {
+        const have = resources[resource] ?? 0;
+        const ok = have >= needed;
+        return (
+          <span key={resource} className={`flex items-center gap-0.5 text-[10px] font-mono px-1.5 py-0.5 rounded border ${
+            ok ? 'border-green-500/30 bg-green-500/10 text-green-400' : 'border-destructive/40 bg-destructive/10 text-destructive'
+          }`}>
+            {RESOURCE_ICONS[resource] ?? resource} {needed}
+            {!ok && <span className="ml-0.5 opacity-70">(have {have})</span>}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function canAffordBuilding(cost, resources) {
+  return Object.entries(cost).every(([r, needed]) => (resources[r] ?? 0) >= needed);
+}
+
+function MissingResources({ cost, resources }) {
+  const missing = Object.entries(cost)
+    .filter(([r, needed]) => (resources[r] ?? 0) < needed)
+    .map(([r, needed]) => ({ resource: r, needed, have: resources[r] ?? 0 }));
+  if (missing.length === 0) return null;
+  return (
+    <div className="rounded border border-destructive/30 bg-destructive/5 px-2 py-1.5 space-y-1">
+      <p className="text-[10px] text-destructive flex items-center gap-1.5">
+        <AlertCircle className="w-3 h-3 shrink-0" /> Not enough resources to build this structure.
+      </p>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px]">
+        <div>
+          <p className="text-muted-foreground mb-0.5">Need:</p>
+          {Object.entries(cost).filter(([, v]) => v > 0).map(([r, v]) => (
+            <p key={r}><span className="text-muted-foreground">{r}</span> <span className="font-mono text-foreground">{v}</span></p>
+          ))}
+        </div>
+        <div>
+          <p className="text-muted-foreground mb-0.5">Available:</p>
+          {Object.entries(cost).filter(([, v]) => v > 0).map(([r]) => (
+            <p key={r}><span className="text-muted-foreground">{r}</span> <span className={`font-mono ${(resources[r] ?? 0) >= cost[r] ? 'text-green-400' : 'text-destructive'}`}>{resources[r] ?? 0}</span></p>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId, players, mapDef, stateById, operationsStatus, onStaged }) {
   const actingPlayerId = actingAsPlayerId ?? myPlayer?.id;
-  const actingPlayer = actingAsPlayerId ? players?.find(p => p.id === actingAsPlayerId) ?? myPlayer : myPlayer;
 
   const [staging, setStaging] = useState(null);
+  const [resources, setResources] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selectedBuilding, setSelectedBuilding] = useState(null);
@@ -65,6 +114,7 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
         acting_as_player_id: actingPlayerId,
       });
       setStaging(res.data?.economic ?? null);
+      setResources(res.data?.economic?.resources ?? {});
     } catch (e) {
       setError(e?.response?.data?.error ?? 'Failed to load economic ops state');
     } finally {
@@ -74,17 +124,22 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
 
   useEffect(() => { load(); }, [load]);
 
-  // Sync from parent status
   useEffect(() => {
-    if (operationsStatus?.economic) setStaging(operationsStatus.economic);
+    if (operationsStatus?.economic) {
+      setStaging(operationsStatus.economic);
+      if (operationsStatus.economic.resources) setResources(operationsStatus.economic.resources);
+    }
   }, [operationsStatus?.economic]);
 
   const myTerritories = Object.values(stateById).filter(s => s.owner_player_id === actingPlayerId);
   const stagedProjects = staging?.staged ?? [];
   const atLimit = stagedProjects.length >= (staging?.projects_limit ?? 1);
 
+  const selectedBuildingDef = BUILDING_OPTIONS.find(b => b.type === selectedBuilding);
+  const canAfford = selectedBuildingDef ? canAffordBuilding(selectedBuildingDef.cost, resources) : false;
+
   const handleStage = async () => {
-    if (!selectedBuilding || !selectedTerritory) return;
+    if (!selectedBuilding || !selectedTerritory || !canAfford) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -123,7 +178,8 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
     }
   };
 
-  const selectedBuildingDef = BUILDING_OPTIONS.find(b => b.type === selectedBuilding);
+  const getTerritoryName = (tid) =>
+    mapDef?.territories?.find(t => t.territory_id === tid)?.name ?? tid;
 
   return (
     <div className="p-3 space-y-3">
@@ -137,6 +193,13 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
           <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
         </button>
       </div>
+
+      {/* Resource summary — always visible, uses acting player context */}
+      <ResourceSummaryPanel
+        resources={resources}
+        stateById={stateById}
+        actingPlayerId={actingPlayerId}
+      />
 
       {error && <p className="text-xs text-destructive">{error}</p>}
       {removeError && <p className="text-xs text-destructive">{removeError}</p>}
@@ -155,16 +218,6 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
             </span>
           </div>
 
-          {/* Resources available */}
-          {staging?.resources && (
-            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
-              <span>Gold <span className="text-amber-400 font-mono">{staging.resources.gold ?? 0}</span></span>
-              <span>Iron <span className="text-foreground font-mono">{staging.resources.iron ?? 0}</span></span>
-              <span>Timber <span className="text-foreground font-mono">{staging.resources.timber ?? 0}</span></span>
-              <span>Stone <span className="text-foreground font-mono">{staging.resources.stone ?? 0}</span></span>
-            </div>
-          )}
-
           {/* Staged projects */}
           {stagedProjects.length > 0 && (
             <div className="space-y-1.5">
@@ -172,7 +225,7 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
               {stagedProjects.map((proj, i) => {
                 const def = BUILDING_OPTIONS.find(b => b.type === proj.building_type);
                 const colors = PILLAR_COLORS[def?.pillar ?? 'economic'];
-                const tname = mapDef?.territories?.find(t => t.territory_id === proj.territory_id)?.name ?? proj.territory_id;
+                const tname = getTerritoryName(proj.territory_id);
                 return (
                   <div key={i} className={`flex items-center gap-2 px-2 py-2 rounded border ${colors.border} ${colors.bg}`}>
                     <span className="text-base">{def?.icon ?? '🏗️'}</span>
@@ -204,23 +257,44 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
             <div className="space-y-2 pt-1 border-t border-border">
               <p className="text-[10px] font-display tracking-wider uppercase text-muted-foreground">Stage a Construction Project</p>
 
-              {/* Building type grid */}
-              <div className="grid grid-cols-2 gap-1.5">
+              {/* Building type grid with cost preview */}
+              <div className="space-y-1.5">
                 {BUILDING_OPTIONS.map(b => {
                   const colors = PILLAR_COLORS[b.pillar];
                   const isSelected = selectedBuilding === b.type;
+                  const affordable = canAffordBuilding(b.cost, resources);
                   return (
                     <button
                       key={b.type}
                       onClick={() => setSelectedBuilding(isSelected ? null : b.type)}
-                      className={`flex items-center gap-2 px-2 py-2 rounded border text-left transition-all ${
-                        isSelected ? `${colors.border} ${colors.bg}` : 'border-border bg-muted/10 hover:border-muted-foreground/30'
+                      className={`w-full flex items-start gap-2 px-2 py-2 rounded border text-left transition-all ${
+                        isSelected
+                          ? `${colors.border} ${colors.bg}`
+                          : affordable
+                          ? 'border-border bg-muted/10 hover:border-muted-foreground/30'
+                          : 'border-border bg-muted/5 opacity-50'
                       }`}
                     >
-                      <span className="text-sm shrink-0">{b.icon}</span>
-                      <div className="min-w-0">
-                        <p className={`text-[10px] font-semibold ${isSelected ? colors.text : 'text-foreground'} truncate`}>{b.label}</p>
-                        <p className="text-[9px] text-muted-foreground capitalize">{b.pillar}</p>
+                      <span className="text-sm shrink-0 mt-0.5">{b.icon}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className={`text-[10px] font-semibold ${isSelected ? colors.text : affordable ? 'text-foreground' : 'text-muted-foreground'} truncate`}>
+                            {b.label}
+                          </p>
+                          <span className={`text-[9px] capitalize px-1 py-0.5 rounded border ${colors.border} ${colors.text}`}>{b.pillar}</span>
+                          {!affordable && <span className="text-[9px] text-destructive">insufficient</span>}
+                        </div>
+                        <div className="flex flex-wrap gap-1 mt-0.5">
+                          {Object.entries(b.cost).filter(([, v]) => v > 0).map(([r, needed]) => {
+                            const have = resources[r] ?? 0;
+                            const ok = have >= needed;
+                            return (
+                              <span key={r} className={`text-[9px] font-mono ${ok ? 'text-muted-foreground' : 'text-destructive'}`}>
+                                {RESOURCE_ICONS[r]}{needed}
+                              </span>
+                            );
+                          })}
+                        </div>
                       </div>
                     </button>
                   );
@@ -228,30 +302,37 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
               </div>
 
               {selectedBuildingDef && (
-                <p className="text-[10px] text-muted-foreground italic">{selectedBuildingDef.description}</p>
-              )}
-
-              {/* Territory selector */}
-              {selectedBuilding && (
                 <div className="space-y-1.5">
-                  <p className="text-[10px] text-muted-foreground">Select territory:</p>
-                  <select
-                    value={selectedTerritory}
-                    onChange={e => setSelectedTerritory(e.target.value)}
-                    className="w-full bg-muted/20 border border-border rounded px-2 py-1.5 text-xs text-foreground"
-                  >
-                    <option value="">— choose territory —</option>
-                    {myTerritories.map(t => {
-                      const name = mapDef?.territories?.find(td => td.territory_id === t.territory_id)?.name ?? t.territory_id;
-                      return <option key={t.territory_id} value={t.territory_id}>{name}</option>;
-                    })}
-                  </select>
+                  <p className="text-[10px] text-muted-foreground italic">{selectedBuildingDef.effect}</p>
+
+                  {/* Full cost preview */}
+                  <div className="panel p-2 space-y-1.5">
+                    <p className="text-[10px] text-muted-foreground">Cost: <span className="text-foreground">{selectedBuildingDef.label}</span></p>
+                    <CostDisplay cost={selectedBuildingDef.cost} resources={resources} />
+                    {!canAfford && <MissingResources cost={selectedBuildingDef.cost} resources={resources} />}
+                  </div>
+
+                  {/* Territory selector */}
+                  <div className="space-y-1">
+                    <p className="text-[10px] text-muted-foreground">Select territory:</p>
+                    <select
+                      value={selectedTerritory}
+                      onChange={e => setSelectedTerritory(e.target.value)}
+                      className="w-full bg-muted/20 border border-border rounded px-2 py-1.5 text-xs text-foreground"
+                    >
+                      <option value="">— choose territory —</option>
+                      {myTerritories.map(t => {
+                        const name = getTerritoryName(t.territory_id);
+                        return <option key={t.territory_id} value={t.territory_id}>{name}</option>;
+                      })}
+                    </select>
+                  </div>
                 </div>
               )}
 
               <button
                 onClick={handleStage}
-                disabled={!selectedBuilding || !selectedTerritory || submitting}
+                disabled={!selectedBuilding || !selectedTerritory || submitting || !canAfford}
                 className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded border border-amber-400/40 bg-amber-400/10 text-amber-400 text-xs font-display tracking-widest uppercase hover:brightness-110 transition-all disabled:opacity-40"
               >
                 {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Hammer className="w-3.5 h-3.5" />}

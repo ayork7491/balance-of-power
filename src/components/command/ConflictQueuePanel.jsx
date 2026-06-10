@@ -11,7 +11,7 @@
  */
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Loader2, RefreshCw, Swords, Globe, CheckCircle2, ChevronRight } from 'lucide-react';
+import { Loader2, RefreshCw, Swords, Globe, CheckCircle2, ChevronRight, ArrowRight } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import BattleTypeTag from '@/components/phases/battle/BattleTypeTag';
 import BattleStatusTag from '@/components/phases/battle/BattleStatusTag';
@@ -89,6 +89,8 @@ export default function ConflictQueuePanel({ campaign, players, myPlayer, mapDef
   const navigate = useNavigate();
   const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [advancing, setAdvancing] = useState(false);
+  const [advanceError, setAdvanceError] = useState(null);
   const [error, setError] = useState(null);
 
   const myId = actingAsPlayerId ?? myPlayer?.id;
@@ -111,6 +113,22 @@ export default function ConflictQueuePanel({ campaign, players, myPlayer, mapDef
 
   const openCard = (battleId) => navigate(`/campaigns/${campaignId}/battles/${battleId}`);
 
+  const handleAdvance = async () => {
+    setAdvancing(true);
+    setAdvanceError(null);
+    try {
+      await base44.functions.invoke('battlePhase', {
+        action: 'processPhaseEnd',
+        campaign_id: campaignId,
+      });
+      onPhaseChanged?.();
+    } catch (e) {
+      setAdvanceError(e?.response?.data?.error ?? 'Failed to advance phase.');
+    } finally {
+      setAdvancing(false);
+    }
+  };
+
   const round = campaign?.current_round ?? 1;
   const roundCards = cards.filter(c => c.round === round);
 
@@ -130,14 +148,66 @@ export default function ConflictQueuePanel({ campaign, players, myPlayer, mapDef
 
   if (error) return <p className="text-xs text-destructive p-4">{error}</p>;
 
+  const totalCards     = roundCards.length;
+  const unresolvedCount = myCards.length + worldCards.length;
+  const resolvedCount  = doneCards.length;
+  const canAdvance     = isAdmin && (totalCards === 0 || unresolvedCount === 0);
+
+  const advanceLabel = totalCards === 0
+    ? 'No Conflicts This Round — Advance Phase'
+    : unresolvedCount === 0
+    ? 'All Conflicts Resolved — Advance Phase'
+    : `${unresolvedCount} conflict${unresolvedCount !== 1 ? 's' : ''} remaining`;
+
   return (
     <div className="flex flex-col">
-      {/* Refresh */}
-      <div className="flex items-center justify-end px-3 py-1.5 border-b border-border">
-        <button onClick={load} className="text-muted-foreground hover:text-foreground transition-colors p-1">
+      {/* Conflict status summary + refresh */}
+      <div className="px-3 py-2 border-b border-border bg-panel-header flex items-center gap-3">
+        <div className="flex-1 min-w-0">
+          {totalCards === 0 ? (
+            <p className="text-[10px] text-muted-foreground italic">No conflicts this round.</p>
+          ) : (
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[10px] text-muted-foreground">
+                Conflicts: <span className="text-foreground font-mono font-bold">{totalCards}</span> total
+              </span>
+              <span className="text-[10px] text-muted-foreground">·</span>
+              <span className={`text-[10px] font-mono font-bold ${unresolvedCount > 0 ? 'text-amber-400' : 'text-muted-foreground'}`}>
+                {unresolvedCount} unresolved
+              </span>
+              <span className="text-[10px] text-muted-foreground">·</span>
+              <span className={`text-[10px] font-mono font-bold ${resolvedCount > 0 ? 'text-green-400' : 'text-muted-foreground'}`}>
+                {resolvedCount} resolved
+              </span>
+            </div>
+          )}
+        </div>
+        <button onClick={load} className="text-muted-foreground hover:text-foreground transition-colors p-1 shrink-0">
           <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
         </button>
       </div>
+
+      {/* Admin advance button — always shown to admins */}
+      {isAdmin && (
+        <div className="px-3 py-2 border-b border-border">
+          {advanceError && <p className="text-[10px] text-destructive mb-1">{advanceError}</p>}
+          <button
+            onClick={handleAdvance}
+            disabled={!canAdvance || advancing}
+            className={`w-full flex items-center justify-center gap-2 px-3 py-2 rounded text-xs font-display tracking-wider uppercase transition-all ${
+              canAdvance
+                ? 'bg-primary text-primary-foreground hover:brightness-110 glow-primary'
+                : 'bg-muted/20 text-muted-foreground border border-border cursor-not-allowed'
+            } disabled:opacity-50`}
+          >
+            {advancing
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <ArrowRight className="w-3.5 h-3.5" />
+            }
+            {advanceLabel}
+          </button>
+        </div>
+      )}
 
       {/* Your Conflicts */}
       <SectionHeader icon={Swords} title="Your Conflicts" count={myCards.length} color="text-red-400" />
@@ -163,7 +233,7 @@ export default function ConflictQueuePanel({ campaign, players, myPlayer, mapDef
         </>
       )}
 
-      {roundCards.length === 0 && (
+      {totalCards === 0 && (
         <div className="px-3 py-6 text-center">
           <Swords className="w-8 h-8 mx-auto text-muted-foreground/40 mb-2" />
           <p className="text-xs text-muted-foreground">No battle cards generated this round.</p>

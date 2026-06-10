@@ -25,6 +25,7 @@ import { Loader2, RefreshCw, Feather, X, CheckCircle2, ChevronDown, ChevronRight
 import { base44 } from '@/api/base44Client';
 import { INFLUENCE_ACTION_DEFINITIONS } from '@/config/influenceActionFramework';
 import { OPERATION_DEFINITIONS } from '@/config/operationsConfig';
+import OpsObjectiveHand from './OpsObjectiveHand';
 
 // All influence actions unified: intel + diplomatic + battle-card-gen
 const ALL_INFLUENCE_ACTIONS = [
@@ -332,6 +333,9 @@ export default function DiplomaticOpsPanel({ campaign, myPlayer, actingAsPlayerI
 
   return (
     <div className="p-3 space-y-3">
+      {/* Read-only objective hand */}
+      <OpsObjectiveHand campaign={campaign} actingPlayerId={actingPlayerId} />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <p className="font-display text-[10px] tracking-widest uppercase text-purple-400 flex items-center gap-1.5">
