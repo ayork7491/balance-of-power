@@ -684,6 +684,25 @@ Deno.serve(async (req) => {
     return Response.json({ success: true });
   }
 
+  // ── ACTION: unlockFortify ─────────────────────────────────────────────────────
+  if (action === 'unlockFortify') {
+    if (campaign.current_phase !== 'fortify') {
+      return Response.json({ error: 'Not in fortify phase' }, { status: 400 });
+    }
+    const decisions = await base44.asServiceRole.entities.PhaseDecision.filter({
+      campaign_id, player_id: actingPlayer.id, phase: 'fortify', round,
+    });
+    const decision = decisions[0];
+    if (!decision?.is_locked) {
+      return Response.json({ success: true, idempotent: true, message: 'Not locked.' });
+    }
+    await base44.asServiceRole.entities.PhaseDecision.update(decision.id, {
+      is_locked: false,
+      locked_at: null,
+    });
+    return Response.json({ success: true, message: `Consolidation unlocked for ${actingPlayer.display_name}.` });
+  }
+
   // ── ACTION: processPhaseEnd ───────────────────────────────────────────────────
   if (action === 'processPhaseEnd') {
     if (campaign.admin_user_id !== user.id) {
@@ -692,6 +711,14 @@ Deno.serve(async (req) => {
     if (campaign.current_phase !== 'fortify') {
       return Response.json({ error: 'Not in fortify phase' }, { status: 400 });
     }
+
+    // Expire stale trade proposals from previous round at start of Consolidation
+    try {
+      await base44.asServiceRole.functions.invoke('diplomaticPhase', {
+        action: 'expireTradeProposals',
+        campaign_id,
+      });
+    } catch (_) { /* non-fatal */ }
 
     // DUPLICATE PHASE-END PROTECTION: Check if already processed
     const existingSnapshot = await base44.asServiceRole.entities.PhaseSnapshot.filter({
