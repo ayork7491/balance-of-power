@@ -862,14 +862,20 @@ Deno.serve(async (req) => {
       }
 
       // Classify stored snapshot schema
-      // v2 = full: has territory_states + at least one rich array (influence/buildings)
-      // v1 = territory-only: has territory_states but no rich arrays
+      // v2_full = has territory_states + at least one rich array (influence/buildings)
+      // v1_territory_only = has territory_states but no rich arrays (legacy, pre-5F.5)
       // empty = no territory_states
       function classifySnapshot(record) {
         if (!record) return 'missing';
         const d = record.data ?? record;
         if (!Array.isArray(d.territory_states) || d.territory_states.length === 0) return 'empty';
-        if (Array.isArray(d.permanent_influence) || Array.isArray(d.buildings)) return 'v2_full';
+        const hasRichFields = (
+          (Array.isArray(d.permanent_influence) && d.permanent_influence.length >= 0) ||
+          (Array.isArray(d.buildings) && d.buildings.length >= 0) ||
+          (Array.isArray(d.supply_routes) && d.supply_routes.length >= 0) ||
+          d._schema_version === 2
+        );
+        if (hasRichFields) return 'v2_full';
         return 'v1_territory_only';
       }
 
@@ -892,11 +898,10 @@ Deno.serve(async (req) => {
         diagnostics.before_snapshot_source = 'stored';
         if (schema === 'v2_full') {
           beforeSource = 'stored_full';
-          diagnostics.before_snapshot_population = 'success';
+          diagnostics.before_snapshot_population = 'full_schema';
         } else if (schema === 'v1_territory_only') {
-          // Authoritative territory data — rich fields absent; no live merge
           beforeSource = 'stored_v1_territory_only';
-          diagnostics.before_snapshot_population = 'v1_territory_only';
+          diagnostics.before_snapshot_population = 'v1_territory_only_legacy';
         } else {
           beforeSource = 'stored_empty';
           diagnostics.before_snapshot_population = 'failed_empty';
@@ -935,10 +940,10 @@ Deno.serve(async (req) => {
         diagnostics.after_snapshot_source = 'stored';
         if (schema === 'v2_full') {
           afterSource = 'stored_full';
-          diagnostics.after_snapshot_population = 'success';
+          diagnostics.after_snapshot_population = 'full_schema';
         } else if (schema === 'v1_territory_only') {
           afterSource = 'stored_v1_territory_only';
-          diagnostics.after_snapshot_population = 'v1_territory_only';
+          diagnostics.after_snapshot_population = 'v1_territory_only_legacy';
         } else {
           afterSource = 'stored_empty';
           diagnostics.after_snapshot_population = 'failed_empty';
@@ -952,10 +957,10 @@ Deno.serve(async (req) => {
         diagnostics.after_snapshot_source = 'stored_next_phase_start';
         if (schema === 'v2_full') {
           afterSource = 'next_phase_before_snapshot_full';
-          diagnostics.after_snapshot_population = 'success';
+          diagnostics.after_snapshot_population = 'full_schema';
         } else if (schema === 'v1_territory_only') {
           afterSource = 'next_phase_before_snapshot_v1_territory_only';
-          diagnostics.after_snapshot_population = 'v1_territory_only';
+          diagnostics.after_snapshot_population = 'v1_territory_only_legacy';
         } else {
           afterSource = 'next_phase_before_snapshot_empty';
           diagnostics.after_snapshot_population = 'failed_empty';
@@ -1097,16 +1102,6 @@ Deno.serve(async (req) => {
       if (diagnostics.before_snapshot_source === 'live_fallback') {
         validationWarnings.push({ type: 'before_snapshot_is_live', severity: 'low',
           message: 'Before snapshot uses live state (current phase — no stored start snapshot yet).' });
-      }
-
-      // v1 schema warnings (territory-only, no rich fields)
-      if (diagnostics.before_snapshot_population === 'v1_territory_only') {
-        validationWarnings.push({ type: 'before_snapshot_v1_schema', severity: 'medium',
-          message: 'Before snapshot uses v1 schema (territory/ownership only). Influence, buildings, and resources are not captured in this snapshot.' });
-      }
-      if (diagnostics.after_snapshot_population === 'v1_territory_only') {
-        validationWarnings.push({ type: 'after_snapshot_v1_schema', severity: 'medium',
-          message: 'After snapshot uses v1 schema (territory/ownership only). Influence, buildings, and resources are not captured in this snapshot.' });
       }
 
       // Ownership changes: battle audit expects changes but ownership_changes is empty

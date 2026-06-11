@@ -717,17 +717,34 @@ Deno.serve(async (req) => {
       campaign_id, round, phase: 'fortify', snapshot_type: 'phase_start',
     });
     if (existingBeforeSnapsF.length === 0) {
-      const beforeStatesF = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+      const [beforeStatesF, fortInfluence, fortRegionalPools, fortBuildings, fortSupplyRoutes, fortObjectives, fortVictory] = await Promise.all([
+        base44.asServiceRole.entities.TerritoryState.filter({ campaign_id }),
+        base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id }),
+        base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id }),
+        base44.asServiceRole.entities.TerritoryBuilding.filter({ campaign_id }),
+        base44.asServiceRole.entities.SupplyRoute.filter({ campaign_id }),
+        base44.asServiceRole.entities.PlayerInfluenceLedger.filter({ campaign_id }),
+        base44.asServiceRole.entities.VictoryTracker.filter({ campaign_id }),
+      ]);
       const activePBeforeF = players.filter(p => !p.is_eliminated);
       await base44.asServiceRole.entities.PhaseSnapshot.create({
         campaign_id, round, phase: 'fortify', snapshot_type: 'phase_start',
+        _schema_version: 2,
         territory_states: beforeStatesF.map(ts => ({
-          territory_id: ts.territory_id, owner_player_id: ts.owner_player_id ?? null, troop_count: ts.troop_count ?? 0, structures: ts.structures ?? [],
+          territory_id: ts.territory_id, owner_player_id: ts.owner_player_id ?? null, troop_count: ts.troop_count ?? 0,
+          resource_storage: ts.resource_storage ?? {}, has_resource_hub: ts.has_resource_hub ?? false,
+          structures: ts.structures ?? [], resource_type: ts.resource_type ?? null,
         })),
         player_standings: activePBeforeF.map(p => {
           const owned = beforeStatesF.filter(ts => ts.owner_player_id === p.id);
           return { player_id: p.id, display_name: p.display_name, territory_count: owned.length, troop_total: owned.reduce((s, ts) => s + (ts.troop_count || 0), 0), is_eliminated: p.is_eliminated ?? false };
         }),
+        permanent_influence: fortInfluence.map(i => ({ territory_id: i.territory_id, player_id: i.player_id, influence_amount: i.influence_amount ?? 0 })),
+        spendable_influence: fortRegionalPools.map(p => ({ region_id: p.region_id, player_id: p.player_id, spendable_influence: p.spendable_influence ?? 0 })),
+        buildings: fortBuildings.map(b => ({ territory_id: b.territory_id, player_id: b.player_id, building_type: b.building_type, pillar_type: b.pillar_type, status: b.status, started_round: b.started_round, completed_round: b.completed_round, construction_progress: b.construction_progress ?? 0 })),
+        supply_routes: fortSupplyRoutes.map(r => ({ id: r.id, owner_player_id: r.owner_player_id, hub_territory_id: r.hub_territory_id, source_territory_id: r.source_territory_id, route_status: r.route_status, resource_type: r.resource_type, created_round: r.created_round })),
+        objectives: fortObjectives.map(o => ({ player_id: o.player_id, global_influence: o.global_influence ?? 0, objective_cards: o.objective_cards_json ?? {} })),
+        victory_scores: fortVictory.map(v => ({ player_id: v.player_id, occupancy_score: v.occupancy_score ?? 0, wealth_score: v.wealth_score ?? 0, influence_score: v.influence_score ?? 0, has_won: v.has_won ?? false, winning_condition: v.winning_condition ?? null })),
       });
     }
 
@@ -917,29 +934,34 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Phase snapshot
-    const finalStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+    // Phase snapshot — full v2 schema
+    const [finalStates, fortEndInfluence, fortEndRegionalPools, fortEndBuildings, fortEndSupplyRoutes, fortEndObjectives, fortEndVictory] = await Promise.all([
+      base44.asServiceRole.entities.TerritoryState.filter({ campaign_id }),
+      base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id }),
+      base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id }),
+      base44.asServiceRole.entities.TerritoryBuilding.filter({ campaign_id }),
+      base44.asServiceRole.entities.SupplyRoute.filter({ campaign_id }),
+      base44.asServiceRole.entities.PlayerInfluenceLedger.filter({ campaign_id }),
+      base44.asServiceRole.entities.VictoryTracker.filter({ campaign_id }),
+    ]);
     await base44.asServiceRole.entities.PhaseSnapshot.create({
-      campaign_id,
-      round,
-      phase: 'fortify',
-      snapshot_type: 'phase_end',
+      campaign_id, round, phase: 'fortify', snapshot_type: 'phase_end',
+      _schema_version: 2,
       territory_states: finalStates.map(ts => ({
-        territory_id: ts.territory_id,
-        owner_player_id: ts.owner_player_id ?? null,
-        troop_count: ts.troop_count ?? 0,
-        structures: ts.structures ?? [],
+        territory_id: ts.territory_id, owner_player_id: ts.owner_player_id ?? null, troop_count: ts.troop_count ?? 0,
+        resource_storage: ts.resource_storage ?? {}, has_resource_hub: ts.has_resource_hub ?? false,
+        structures: ts.structures ?? [], resource_type: ts.resource_type ?? null,
       })),
       player_standings: activePlayers.map(p => {
         const owned = finalStates.filter(ts => ts.owner_player_id === p.id);
-        return {
-          player_id: p.id,
-          display_name: p.display_name,
-          territory_count: owned.length,
-          troop_total: owned.reduce((s, ts) => s + (ts.troop_count || 0), 0),
-          is_eliminated: p.is_eliminated ?? false,
-        };
+        return { player_id: p.id, display_name: p.display_name, territory_count: owned.length, troop_total: owned.reduce((s, ts) => s + (ts.troop_count || 0), 0), is_eliminated: p.is_eliminated ?? false };
       }),
+      permanent_influence: fortEndInfluence.map(i => ({ territory_id: i.territory_id, player_id: i.player_id, influence_amount: i.influence_amount ?? 0 })),
+      spendable_influence: fortEndRegionalPools.map(p => ({ region_id: p.region_id, player_id: p.player_id, spendable_influence: p.spendable_influence ?? 0 })),
+      buildings: fortEndBuildings.map(b => ({ territory_id: b.territory_id, player_id: b.player_id, building_type: b.building_type, pillar_type: b.pillar_type, status: b.status, started_round: b.started_round, completed_round: b.completed_round, construction_progress: b.construction_progress ?? 0 })),
+      supply_routes: fortEndSupplyRoutes.map(r => ({ id: r.id, owner_player_id: r.owner_player_id, hub_territory_id: r.hub_territory_id, source_territory_id: r.source_territory_id, route_status: r.route_status, resource_type: r.resource_type, created_round: r.created_round })),
+      objectives: fortEndObjectives.map(o => ({ player_id: o.player_id, global_influence: o.global_influence ?? 0, objective_cards: o.objective_cards_json ?? {} })),
+      victory_scores: fortEndVictory.map(v => ({ player_id: v.player_id, occupancy_score: v.occupancy_score ?? 0, wealth_score: v.wealth_score ?? 0, influence_score: v.influence_score ?? 0, has_won: v.has_won ?? false, winning_condition: v.winning_condition ?? null })),
     });
 
     await log(base44, campaign_id, round, phase, 'phase_advanced', null, {
