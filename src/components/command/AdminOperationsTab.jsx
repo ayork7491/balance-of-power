@@ -9,6 +9,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Loader2, RefreshCw, Check, Users, Lock, AlertCircle, Shield, Coins, Feather } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
+import PhaseAuditExport from '@/components/command/PhaseAuditExport';
 
 export default function AdminOperationsTab({ campaign, players, advancing, onProcessEnd }) {
   const [opsStatus, setOpsStatus] = useState(null);
@@ -144,6 +145,11 @@ export default function AdminOperationsTab({ campaign, players, advancing, onPro
             )}
           </>
         )}
+      </div>
+
+      {/* Audit Export */}
+      <div className="pt-1 border-t border-border">
+        <PhaseAuditExport campaign={campaign} />
       </div>
     </div>
   );
