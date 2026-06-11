@@ -4,7 +4,7 @@
  * Hook for all Campaign + CampaignPlayer + CampaignInvite operations.
  * Pages import this hook — never call base44 entities directly from pages.
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { base44 } from '@/api/base44Client';
 import { DEFAULT_CAMPAIGN_SETTINGS } from './types';
 
@@ -19,28 +19,38 @@ export function useMyCampaigns() {
   const [players, setPlayers] = useState([]); // my CampaignPlayer records
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const hasDataRef = useRef(false);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    if (!hasDataRef.current) setLoading(true);
     setError(null);
     try {
       const user = await base44.auth.me();
       // All CampaignPlayer records for me
       const myPlayerRecords = await base44.entities.CampaignPlayer.filter({ user_id: user.id });
       setPlayers(myPlayerRecords);
-      if (myPlayerRecords.length === 0) { setCampaigns([]); setLoading(false); return; }
-      // Load the campaigns themselves
+      if (myPlayerRecords.length === 0) {
+        setCampaigns([]);
+        hasDataRef.current = true;
+        setLoading(false);
+        return;
+      }
+      // Load all campaigns in one parallel batch; silently skip any that 404
       const campaignIds = [...new Set(myPlayerRecords.map(p => p.campaign_id))];
-      const all = await Promise.all(
-        campaignIds.map(id => base44.entities.Campaign.filter({ id }).then(r => r[0]).catch(() => null))
+      const results = await Promise.allSettled(
+        campaignIds.map(id => base44.entities.Campaign.filter({ id }).then(r => r[0] ?? null))
       );
       const HIDDEN = new Set(['archived', 'deleted']);
-      setCampaigns(
-        all.filter(c => c && !HIDDEN.has(c.status))
-           .sort((a, b) => new Date(b.updated_date) - new Date(a.updated_date))
-      );
+      const all = results
+        .filter(r => r.status === 'fulfilled' && r.value)
+        .map(r => r.value)
+        .filter(c => !HIDDEN.has(c.status))
+        .sort((a, b) => new Date(b.updated_date) - new Date(a.updated_date));
+      setCampaigns(all);
+      hasDataRef.current = true;
     } catch {
-      setError('Failed to load campaigns.');
+      // Don't wipe cached data on transient failure
+      if (!hasDataRef.current) setError('Failed to load campaigns.');
     } finally {
       setLoading(false);
     }

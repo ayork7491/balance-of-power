@@ -266,7 +266,10 @@ function ActiveCampaignContent() {
 
 
 
-  const displayCampaign = campaign ?? { name: 'Loading…', current_round: 0, current_phase: 'faction_selection', phase_deadline: null };
+  // Use cached campaign — never fall back to a fake 'faction_selection' stub
+  // which causes the map to render in a broken setup state during reloads.
+  // If campaign is null and still loading, the loading overlay handles display.
+  const displayCampaign = campaign;
 
   // ── Map interaction callbacks ──────────────────────────────────────────────
 
@@ -321,6 +324,18 @@ function ActiveCampaignContent() {
     const neighbors = adjacencyMap[originId] ?? new Set();
     return new Set([...neighbors].filter(tid => stateById[tid]?.owner_player_id !== effectivePlayer.id));
   }, [phase, attackOriginId, selectedTerritoryId, effectivePlayer, mapDef, stateById, adjacencyMap]);
+
+  // Still loading initial data — show full-screen spinner, don't render broken state
+  if (loadingCampaign && !campaign) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-background">
+        <div className="flex items-center gap-3 text-muted-foreground text-sm">
+          <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          <span className="font-display text-xs tracking-widest uppercase">Loading campaign…</span>
+        </div>
+      </div>
+    );
+  }
 
   // Victory screen overrides everything
   if (phase === 'complete') {
