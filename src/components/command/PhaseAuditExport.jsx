@@ -11,7 +11,7 @@
  *   - Error display
  */
 import { useState } from 'react';
-import { Clipboard, ClipboardCheck, FileJson, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Download, FileJson, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 
 const ALL_PHASES = [
@@ -46,7 +46,6 @@ export default function PhaseAuditExport({ campaign }) {
   const [filename, setFilename] = useState(null);
   const [warnings, setWarnings] = useState(0);
   const [bundleStatus, setBundleStatus] = useState(null);
-  const [copied, setCopied] = useState(false);
 
   const maxRound = currentRound;
 
@@ -55,7 +54,6 @@ export default function PhaseAuditExport({ campaign }) {
     setError(null);
     setBundleJson(null);
     setFilename(null);
-    setCopied(false);
 
     try {
       const res = await base44.functions.invoke('exportPhaseAudit', {
@@ -105,7 +103,7 @@ export default function PhaseAuditExport({ campaign }) {
             <label className="text-[10px] text-muted-foreground font-display tracking-wider uppercase">Round</label>
             <select
               value={round}
-              onChange={e => { setRound(e.target.value); setBundleJson(null); setCopied(false); }}
+              onChange={e => { setRound(e.target.value); setBundleJson(null); }}
               className="w-full bg-muted/20 border border-border rounded px-2 py-1.5 text-xs text-foreground"
             >
               {roundOptions.map(r => (
@@ -117,7 +115,7 @@ export default function PhaseAuditExport({ campaign }) {
             <label className="text-[10px] text-muted-foreground font-display tracking-wider uppercase">Phase</label>
             <select
               value={phase}
-              onChange={e => { setPhase(e.target.value); setBundleJson(null); setCopied(false); }}
+              onChange={e => { setPhase(e.target.value); setBundleJson(null); }}
               className="w-full bg-muted/20 border border-border rounded px-2 py-1.5 text-xs text-foreground"
             >
               {ALL_PHASES.map(p => (
@@ -171,19 +169,13 @@ export default function PhaseAuditExport({ campaign }) {
               )}
             </div>
 
-            <button
-              onClick={() => { navigator.clipboard.writeText(bundleJson); setCopied(true); }}
-              className={`w-full flex items-center justify-center gap-2 px-4 py-2 rounded text-xs font-display tracking-wider uppercase hover:brightness-110 transition-all ${
-                copied
-                  ? 'bg-green-600 text-white'
-                  : 'bg-primary text-primary-foreground'
-              }`}
+            <a
+              href={URL.createObjectURL(new Blob([bundleJson], { type: 'application/json' }))}
+              download={filename}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded text-xs font-display tracking-wider uppercase hover:brightness-110 transition-all bg-primary text-primary-foreground"
             >
-              {copied
-                ? <><ClipboardCheck className="w-3.5 h-3.5" /> Copied!</>
-                : <><Clipboard className="w-3.5 h-3.5" /> Copy to Clipboard</>
-              }
-            </button>
+              <Download className="w-3.5 h-3.5" /> Download {filename}
+            </a>
 
             <p className="text-[10px] text-muted-foreground text-center">
               JSON · Round {round} · {ALL_PHASES.find(p => p.value === phase)?.label ?? phase}
