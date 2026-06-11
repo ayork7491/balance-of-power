@@ -1,11 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { base44 } from '@/api/base44Client';
 
 export function useLeaderboard(campaignId, enabled = true) {
   const [leaderboard, setLeaderboard] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
-  const debounceRef = useRef(null);
 
   const fetchLeaderboard = useCallback(async () => {
     if (!campaignId || !enabled) return;
@@ -30,37 +29,9 @@ export function useLeaderboard(campaignId, enabled = true) {
     fetchLeaderboard();
   }, [fetchLeaderboard]);
 
-  // Issue 5: auto-refresh standings on real-time entity changes
-  useEffect(() => {
-    if (!campaignId || !enabled) return;
-
-    const debouncedRefresh = () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => fetchLeaderboard(), 800);
-    };
-
-    const unsubTerritory = base44.entities.TerritoryState.subscribe((event) => {
-      if (event.data?.campaign_id !== campaignId) return;
-      debouncedRefresh();
-    });
-
-    const unsubCampaign = base44.entities.Campaign.subscribe((event) => {
-      if (event.id !== campaignId && event.data?.id !== campaignId) return;
-      debouncedRefresh();
-    });
-
-    const unsubPlayer = base44.entities.CampaignPlayer.subscribe((event) => {
-      if (event.data?.campaign_id !== campaignId) return;
-      debouncedRefresh();
-    });
-
-    return () => {
-      unsubTerritory();
-      unsubCampaign();
-      unsubPlayer();
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [campaignId, enabled, fetchLeaderboard]);
+  // Leaderboard refreshes only on explicit reload() — no broad subscriptions during play.
+  // Broad TerritoryState/CampaignPlayer subscriptions during active phases caused excessive
+  // backend polling and rate-limit errors. Consumers should call reload() after phase advances.
 
   return { leaderboard, isLoading, error, reload: fetchLeaderboard };
 }

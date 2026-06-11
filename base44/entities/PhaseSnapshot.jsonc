@@ -1,6 +1,7 @@
 {
   "name": "PhaseSnapshot",
   "type": "object",
+  "description": "Full game-state snapshot taken at the start or end of a phase. v2 snapshots include enriched influence, buildings, supply routes, objectives, and victory scores. Used for phase audit exports and delta calculations.",
   "properties": {
     "campaign_id": {
       "type": "string",
@@ -13,7 +14,7 @@
     },
     "phase": {
       "type": "string",
-      "description": "Phase name at snapshot time."
+      "description": "Phase name at snapshot time (e.g. 'deploy', 'attack', 'battle', 'fortify')."
     },
     "snapshot_type": {
       "type": "string",
@@ -23,9 +24,14 @@
       ],
       "description": "Whether this was taken at the start or end of the phase."
     },
+    "_schema_version": {
+      "type": "number",
+      "default": 1,
+      "description": "Schema version. 1 = legacy territory_states only. 2 = full enriched game state including influence, buildings, supply routes, objectives, victory scores."
+    },
     "territory_states": {
       "type": "array",
-      "description": "Snapshot of all territory ownership + troop counts at this moment.",
+      "description": "Snapshot of all territory ownership, troop counts, and resource state at this moment.",
       "items": {
         "type": "object",
         "properties": {
@@ -37,6 +43,28 @@
           },
           "troop_count": {
             "type": "number"
+          },
+          "resource_storage": {
+            "type": "object",
+            "description": "{ gold, iron, timber, stone, food } stored in this territory.",
+            "default": {}
+          },
+          "resource_type": {
+            "type": "string",
+            "description": "Primary resource type this territory produces."
+          },
+          "has_resource_hub": {
+            "type": "boolean",
+            "description": "True if a Resource Hub building is active here.",
+            "default": false
+          },
+          "structures": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Legacy V1 structure keys.",
+            "default": []
           }
         }
       },
@@ -74,6 +102,187 @@
       "type": "object",
       "description": "Map of player_id \u2192 { territory_bonus, region_bonus, continent_bonus, total }",
       "default": {}
+    },
+    "permanent_influence": {
+      "type": "array",
+      "description": "Snapshot of all TerritoryInfluence records at this moment.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "territory_id": {
+            "type": "string"
+          },
+          "player_id": {
+            "type": "string"
+          },
+          "influence_amount": {
+            "type": "number"
+          }
+        }
+      },
+      "default": []
+    },
+    "spendable_influence": {
+      "type": "array",
+      "description": "Snapshot of all RegionalInfluencePool records at this moment.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "region_id": {
+            "type": "string"
+          },
+          "player_id": {
+            "type": "string"
+          },
+          "spendable_influence": {
+            "type": "number"
+          }
+        }
+      },
+      "default": []
+    },
+    "buildings": {
+      "type": "array",
+      "description": "Snapshot of all TerritoryBuilding records at this moment.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "territory_id": {
+            "type": "string"
+          },
+          "player_id": {
+            "type": "string"
+          },
+          "building_type": {
+            "type": "string"
+          },
+          "pillar_type": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "started_round": {
+            "type": "number"
+          },
+          "completed_round": {
+            "type": "number"
+          }
+        }
+      },
+      "default": []
+    },
+    "supply_routes": {
+      "type": "array",
+      "description": "Snapshot of all SupplyRoute records at this moment.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "owner_player_id": {
+            "type": "string"
+          },
+          "hub_territory_id": {
+            "type": "string"
+          },
+          "source_territory_id": {
+            "type": "string"
+          },
+          "route_status": {
+            "type": "string"
+          },
+          "resource_type": {
+            "type": "string"
+          },
+          "created_round": {
+            "type": "number"
+          }
+        }
+      },
+      "default": []
+    },
+    "objectives": {
+      "type": "array",
+      "description": "Snapshot of each player's objective card state from PlayerInfluenceLedger.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "player_id": {
+            "type": "string"
+          },
+          "global_influence": {
+            "type": "number"
+          },
+          "objective_cards": {
+            "type": "object",
+            "default": {}
+          }
+        }
+      },
+      "default": []
+    },
+    "victory_scores": {
+      "type": "array",
+      "description": "Snapshot of each player's VictoryTracker scores at this moment.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "player_id": {
+            "type": "string"
+          },
+          "occupancy_score": {
+            "type": "number"
+          },
+          "wealth_score": {
+            "type": "number"
+          },
+          "influence_score": {
+            "type": "number"
+          },
+          "has_won": {
+            "type": "boolean"
+          },
+          "winning_condition": {
+            "type": "string"
+          }
+        }
+      },
+      "default": []
+    },
+    "phase_lock_states": {
+      "type": "array",
+      "description": "Snapshot of per-player phase lock status at the time of this snapshot.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "player_id": {
+            "type": "string"
+          },
+          "phase": {
+            "type": "string"
+          },
+          "round": {
+            "type": "number"
+          },
+          "is_locked": {
+            "type": "boolean"
+          },
+          "locked_at": {
+            "type": "string"
+          }
+        }
+      },
+      "default": []
+    },
+    "locked_by_player_id": {
+      "type": "string",
+      "description": "For per-player phase_end snapshots (Planning phase): the player whose lock triggered this snapshot."
+    },
+    "locked_at": {
+      "type": "string",
+      "description": "ISO timestamp when the lock that triggered this snapshot occurred."
     }
   },
   "required": [

@@ -74,17 +74,8 @@ export function useDeployPhase({ campaign, myPlayer, myTerritories }) {
 
   useEffect(() => { reload(); }, [reload]);
 
-  // Real-time: refresh if acting player's decision updates (e.g. admin processPhaseEnd)
-  useEffect(() => {
-    if (!campaign?.id || !actingPlayer?.id) return;
-    const unsub = base44.entities.PhaseDecision.subscribe((event) => {
-      if (event.data?.campaign_id !== campaign.id) return;
-      if (event.data?.player_id   !== actingPlayer.id) return;
-      if (event.data?.phase       !== 'deploy') return;
-      reload();
-    });
-    return unsub;
-  }, [campaign?.id, actingPlayer?.id, reload]);
+  // No broad PhaseDecision subscription — decisions are loaded once at phase start.
+  // Reload is triggered explicitly after lock/save actions to avoid polling storms.
 
   const handleChange = useCallback((tid, value) => {
     const n = Math.max(0, parseInt(value) || 0);

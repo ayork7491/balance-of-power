@@ -62,7 +62,7 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
     setError(null);
     if (!status) setLoading(true);
     try {
-      const [statusRes, adminRes] = await Promise.all([
+      const [statusRes, adminRes] = await Promise.allSettled([
         base44.functions.invoke('planningPhase', {
           action: 'getPlanningStatus',
           campaign_id: campaign.id,
@@ -73,19 +73,21 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
           campaign_id: campaign.id,
         }),
       ]);
-      setStatus(statusRes.data);
-      setAdminStatus(adminRes.data);
-      onStatusLoaded?.(statusRes.data);
-    } catch (e) {
-      setError(e?.response?.data?.error ?? 'Failed to load planning status.');
+      if (statusRes.status === 'fulfilled') {
+        setStatus(statusRes.value.data);
+        onStatusLoaded?.(statusRes.value.data);
+        setError(null);
+      } else if (!status) {
+        setError(statusRes.reason?.response?.data?.error ?? 'Failed to load planning status.');
+      }
+      // Keep stale admin status on failure — dot indicators stay as-is
+      if (adminRes.status === 'fulfilled') setAdminStatus(adminRes.value.data);
     } finally {
       setLoading(false);
     }
   }, [campaign?.id, myPlayer?.id, actingAsPlayerId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load(); }, [load]);
-  // Auto-refresh when parent signals a staging change
-  useEffect(() => { if (refreshTrigger) load(); }, [refreshTrigger]);
 
   const handleUnlock = async () => {
     if (!campaign?.id) return;

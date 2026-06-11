@@ -41,17 +41,8 @@ export function useAttackPhase({ campaign, myPlayer }) {
 
   useEffect(() => { reload(); }, [reload]);
 
-  // Real-time: acting player's decision only.
-  useEffect(() => {
-    if (!campaign?.id || !actingPlayer?.id) return;
-    const unsub = base44.entities.PhaseDecision.subscribe((event) => {
-      if (event.data?.campaign_id !== campaign.id) return;
-      if (event.data?.player_id   !== actingPlayer.id) return;
-      if (event.data?.phase       !== 'attack') return;
-      reload();
-    });
-    return unsub;
-  }, [campaign?.id, actingPlayer?.id, reload]);
+  // No broad PhaseDecision subscription — decisions are loaded once at phase start.
+  // Reload is triggered explicitly after stage/delete/lock actions.
 
   const handleStageAttack = useCallback(async ({ origin_territory_id, target_territory_id, committed_troops }) => {
     setSubmitting(true);

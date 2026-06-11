@@ -525,6 +525,47 @@ Deno.serve(async (req) => {
       const existingIncomes = await base44.asServiceRole.entities.DeployIncome.filter({ campaign_id, round });
       const incomesMap = {};
       for (const inc of existingIncomes) incomesMap[inc.player_id] = inc;
+
+      // ── Snapshot repair: if phase_start is missing, create it now ──────────
+      // This fixes the "before_snapshot: missing_no_stored_snapshot" audit failure
+      // that occurs when startDeploy was called, returned early, and never wrote a snapshot.
+      const existingSnapshots = await base44.asServiceRole.entities.PhaseSnapshot.filter({
+        campaign_id, round, phase: 'deploy',
+      });
+      const hasPhaseStart = existingSnapshots.some(s =>
+        ['phase_start', 'start', 'before', 'phase_before'].includes(s.snapshot_type)
+      );
+      if (!hasPhaseStart) {
+        console.log('[startDeploy] Repairing missing phase_start snapshot for round', round);
+        const [repairStates, repairInfluence, repairPools, repairBuildings, repairRoutes, repairObjectives, repairVictory] = await Promise.all([
+          base44.asServiceRole.entities.TerritoryState.filter({ campaign_id }),
+          base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id }),
+          base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id }),
+          base44.asServiceRole.entities.TerritoryBuilding.filter({ campaign_id }),
+          base44.asServiceRole.entities.SupplyRoute.filter({ campaign_id }),
+          base44.asServiceRole.entities.PlayerInfluenceLedger.filter({ campaign_id }),
+          base44.asServiceRole.entities.VictoryTracker.filter({ campaign_id }),
+        ]);
+        const activePlayers = players.filter(p => !p.is_eliminated);
+        const repairSnapshot = buildSnapshot({
+          campaignId: campaign_id, round, phase: 'deploy', snapshotType: 'phase_start',
+          territoryStates: repairStates, activePlayers, deployIncomes: incomesMap,
+          enrichedData: {
+            influence: repairInfluence, regionalPools: repairPools, buildings: repairBuildings,
+            supplyRoutes: repairRoutes, objectives: repairObjectives, victoryTrackers: repairVictory,
+          },
+        });
+        await base44.asServiceRole.entities.PhaseSnapshot.create(repairSnapshot);
+        await base44.asServiceRole.entities.SetupLog.create({
+          campaign_id, phase: 'deploy', round,
+          event_type: 'phase_start_snapshot_repaired',
+          player_id: null,
+          payload: { reason: 'idempotent_startDeploy_missing_snapshot' },
+          is_public: false,
+        });
+        console.log('[startDeploy] phase_start snapshot repaired.');
+      }
+
       return Response.json({ success: true, idempotent: true, incomes: incomesMap });
     }
 
