@@ -712,6 +712,25 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Not in fortify phase' }, { status: 400 });
     }
 
+    // ── Write authoritative before-snapshot for the fortify/consolidation phase ─
+    const existingBeforeSnapsF = await base44.asServiceRole.entities.PhaseSnapshot.filter({
+      campaign_id, round, phase: 'fortify', snapshot_type: 'phase_start',
+    });
+    if (existingBeforeSnapsF.length === 0) {
+      const beforeStatesF = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+      const activePBeforeF = players.filter(p => !p.is_eliminated);
+      await base44.asServiceRole.entities.PhaseSnapshot.create({
+        campaign_id, round, phase: 'fortify', snapshot_type: 'phase_start',
+        territory_states: beforeStatesF.map(ts => ({
+          territory_id: ts.territory_id, owner_player_id: ts.owner_player_id ?? null, troop_count: ts.troop_count ?? 0, structures: ts.structures ?? [],
+        })),
+        player_standings: activePBeforeF.map(p => {
+          const owned = beforeStatesF.filter(ts => ts.owner_player_id === p.id);
+          return { player_id: p.id, display_name: p.display_name, territory_count: owned.length, troop_total: owned.reduce((s, ts) => s + (ts.troop_count || 0), 0), is_eliminated: p.is_eliminated ?? false };
+        }),
+      });
+    }
+
     // Expire stale trade proposals from previous round at start of Consolidation
     try {
       await base44.asServiceRole.functions.invoke('diplomaticPhase', {

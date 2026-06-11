@@ -1788,6 +1788,25 @@ Deno.serve(async (req) => {
     if (!isAdmin) return Response.json({ error: 'Admin only' }, { status: 403 });
     if (campaign.current_phase !== 'battle') return Response.json({ error: 'Not in battle phase' }, { status: 400 });
 
+    // ── Write authoritative before-snapshot for the battle phase ─────────────
+    const existingBeforeSnaps = await base44.asServiceRole.entities.PhaseSnapshot.filter({
+      campaign_id, round, phase: 'battle', snapshot_type: 'phase_start',
+    });
+    if (existingBeforeSnaps.length === 0) {
+      const beforeStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+      const activePBefore = players.filter(p => !p.is_eliminated);
+      await base44.asServiceRole.entities.PhaseSnapshot.create({
+        campaign_id, round, phase: 'battle', snapshot_type: 'phase_start',
+        territory_states: beforeStates.map(ts => ({
+          territory_id: ts.territory_id, owner_player_id: ts.owner_player_id ?? null, troop_count: ts.troop_count ?? 0,
+        })),
+        player_standings: activePBefore.map(p => {
+          const owned = beforeStates.filter(ts => ts.owner_player_id === p.id);
+          return { player_id: p.id, display_name: p.display_name, territory_count: owned.length, troop_total: owned.reduce((s, ts) => s + (ts.troop_count || 0), 0), is_eliminated: p.is_eliminated ?? false };
+        }),
+      });
+    }
+
     const currentRoundCards = await base44.asServiceRole.entities.BattleCard.filter({ campaign_id, round });
 
     // Collect all unresolved carryover cards

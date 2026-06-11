@@ -529,6 +529,26 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Not in attack phase' }, { status: 400 });
     }
 
+    // ── Write authoritative before-snapshot for the attack phase ─────────────
+    // Idempotent: only write if no before-snapshot exists for this round/phase.
+    const existingBeforeSnapshots = await base44.asServiceRole.entities.PhaseSnapshot.filter({
+      campaign_id, round, phase: 'attack', snapshot_type: 'phase_start',
+    });
+    if (existingBeforeSnapshots.length === 0) {
+      const beforeStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+      const activePBefore = players.filter(p => !p.is_eliminated);
+      await base44.asServiceRole.entities.PhaseSnapshot.create({
+        campaign_id, round, phase: 'attack', snapshot_type: 'phase_start',
+        territory_states: beforeStates.map(ts => ({
+          territory_id: ts.territory_id, owner_player_id: ts.owner_player_id ?? null, troop_count: ts.troop_count ?? 0,
+        })),
+        player_standings: activePBefore.map(p => {
+          const owned = beforeStates.filter(ts => ts.owner_player_id === p.id);
+          return { player_id: p.id, display_name: p.display_name, territory_count: owned.length, troop_total: owned.reduce((s, ts) => s + (ts.troop_count || 0), 0), is_eliminated: p.is_eliminated ?? false };
+        }),
+      });
+    }
+
     const activePlayers = players.filter(p => !p.is_eliminated);
     const allDecisions  = await base44.asServiceRole.entities.PhaseDecision.filter({
       campaign_id, phase: 'attack', round,

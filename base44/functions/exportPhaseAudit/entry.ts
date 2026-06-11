@@ -480,8 +480,12 @@ function nextPhase(phase) {
   return PHASE_ORDER[idx + 1];
 }
 
+// All known snapshot_type values that mean "start of phase" (before effects)
+const BEFORE_TYPES = new Set(['before', 'start', 'phase_start', 'phase_before']);
+// All known snapshot_type values that mean "end of phase" (after effects)
+const AFTER_TYPES  = new Set(['after', 'end', 'phase_end', 'phase_after']);
+
 async function getPhaseSnapshotData(base44, campaignId, round, phase) {
-  // Look for stored PhaseSnapshot records (before/after) for this exact phase
   const snapshots = await base44.asServiceRole.entities.PhaseSnapshot.filter({
     campaign_id: campaignId,
     round,
@@ -495,15 +499,12 @@ async function getNextPhaseBeforeSnapshot(base44, campaignId, round, phase) {
   const next = nextPhase(phase);
   if (!next) return null;
 
-  // Try same round first
   const snapshots = await base44.asServiceRole.entities.PhaseSnapshot.filter({
     campaign_id: campaignId,
     round,
     phase: next,
   });
-  const beforeRecord = snapshots.find(s =>
-    s.snapshot_type === 'before' || s.type === 'before' || s.snapshot_type === 'start'
-  );
+  const beforeRecord = snapshots.find(s => BEFORE_TYPES.has(s.snapshot_type ?? s.type));
   if (beforeRecord) return beforeRecord;
 
   // If phase was fortify (end of round), try round+1 deploy
@@ -513,11 +514,283 @@ async function getNextPhaseBeforeSnapshot(base44, campaignId, round, phase) {
       round: round + 1,
       phase: 'deploy',
     });
-    return nextRoundSnaps.find(s =>
-      s.snapshot_type === 'before' || s.type === 'before' || s.snapshot_type === 'start'
-    ) ?? null;
+    return nextRoundSnaps.find(s => BEFORE_TYPES.has(s.snapshot_type ?? s.type)) ?? null;
   }
   return null;
+}
+
+// ── Battle Resolution Audit ───────────────────────────────────────────────────
+
+async function getBattleResolutionAudit(base44, campaignId, round, playerMap) {
+  const allCards = await base44.asServiceRole.entities.BattleCard.filter({
+    campaign_id: campaignId,
+    round,
+  });
+
+  const resolved = allCards.filter(bc => bc.result_applied === true);
+  const audit = [];
+
+  for (const bc of resolved) {
+    const result = bc.result ?? {};
+    const winnerPlayerId = result.winner_player_id ?? null;
+    const winnerName = winnerPlayerId ? (playerMap[winnerPlayerId]?.display_name ?? winnerPlayerId) : null;
+
+    const attackerEntries = (bc.attackers ?? []).map(a => ({
+      player_id:        a.player_id,
+      player_name:      playerMap[a.player_id]?.display_name ?? a.player_id,
+      origin:           tEnrich(a.origin_territory_id),
+      committed_troops: a.committed_troops ?? 0,
+    }));
+
+    // Determine effects
+    const effects = [];
+    if (winnerPlayerId) {
+      const attackerIds = new Set((bc.attackers ?? []).map(a => a.player_id));
+      const attackerWon = attackerIds.has(winnerPlayerId);
+      if (attackerWon && !bc.is_mutual) effects.push('territory_captured');
+      if (bc.is_mutual && attackerWon) effects.push('bloodbath_won');
+      if (!attackerWon) effects.push('territory_defended');
+    }
+    if (bc.battle_type === 'double_siege' && result.double_siege_result?.defender_held === false) {
+      effects.push('territory_unclaimed');
+    }
+    if (result.result_source === 'auto') effects.push('auto_resolved');
+    if (result.result_source === 'forfeit') effects.push('forfeit');
+    if (bc.battle_type === 'skirmish') effects.push('skirmish_auto_captured');
+    if (['uprising','labor_strike','tax_protest','manufactured_crisis'].includes(bc.battle_type)) {
+      effects.push(`${bc.battle_type}_applied`);
+    }
+    if (['supply_route_establishment','supply_route_race','supply_raid','supply_caravan_escort'].includes(bc.battle_type)) {
+      effects.push(`${bc.battle_type}_applied`);
+    }
+
+    audit.push({
+      battle_card_id:   bc.id,
+      battle_type:      bc.battle_type,
+      battle_pillar:    bc.battle_pillar ?? 'military',
+      target:           tEnrich(bc.target_territory_id),
+      attacker:         attackerEntries[0]?.player_name ?? null,
+      attacker_entries: attackerEntries,
+      defender:         bc.defender_player_id ? (playerMap[bc.defender_player_id]?.display_name ?? bc.defender_player_id) : null,
+      defender_player_id: bc.defender_player_id ?? null,
+
+      starting_state: {
+        owner:  bc.defender_player_id ? (playerMap[bc.defender_player_id]?.display_name ?? bc.defender_player_id) : 'unoccupied',
+        troops: bc.defender_troops ?? 0,
+        attacking_troops: bc.total_attacking_troops ?? 0,
+        total_troops: bc.total_troops_in_battle ?? 0,
+      },
+
+      ending_state: {
+        owner:  winnerName ?? 'unclaimed',
+        owner_player_id: winnerPlayerId,
+        troops: result.winner_bop_survivors ?? null,
+        surviving_tabletop: result.surviving_tabletop_troops ?? null,
+      },
+
+      winner:       winnerName,
+      winner_player_id: winnerPlayerId,
+      effects,
+
+      resolution: {
+        source:       result.result_source ?? 'manual',
+        submitted_at: result.submitted_at ?? null,
+        applied_at:   result.applied_at ?? null,
+        notes:        result.notes ?? '',
+        double_siege: result.double_siege_result ?? null,
+      },
+
+      tabletop_size:  bc.tabletop_size ?? 0,
+      scale_factor:   bc.scale_factor ?? 1,
+      resolved_at:    bc.resolved_at ?? null,
+      status:         bc.status,
+    });
+  }
+
+  return audit;
+}
+
+// ── Enriched submitted actions per pillar ─────────────────────────────────────
+
+async function getEnrichedSubmittedActions(base44, campaignId, round, phase, playerMap) {
+  const military = [];
+  const economic = [];
+  const diplomatic = [];
+
+  // ── Military: attack declarations (from AttackReveal) ──
+  if (phase === 'attack' || phase === 'deploy') {
+    const attacks = await base44.asServiceRole.entities.AttackReveal.filter({
+      campaign_id: campaignId,
+      round,
+    });
+    for (const a of attacks) {
+      military.push({
+        pillar:        'military',
+        action_type:   'attack',
+        player_id:     a.player_id,
+        player:        playerMap[a.player_id]?.display_name ?? a.player_id,
+        source:        tEnrich(a.origin_territory_id),
+        target:        tEnrich(a.target_territory_id),
+        troops:        a.committed_troops ?? 0,
+        timestamp:     a.created_date ?? null,
+        round,
+        phase,
+      });
+    }
+  }
+
+  // ── Military: troop deployments (from PhaseDecision for deploy phase) ──
+  if (phase === 'deploy') {
+    const decisions = await base44.asServiceRole.entities.PhaseDecision.filter({
+      campaign_id: campaignId, phase: 'deploy', round,
+    });
+    for (const d of decisions) {
+      const placements = d.data?.placements ?? {};
+      const total = Object.values(placements).reduce((s, v) => s + v, 0);
+      if (total > 0) {
+        military.push({
+          pillar:             'military',
+          action_type:        'deploy_troops',
+          player_id:          d.player_id,
+          player:             playerMap[d.player_id]?.display_name ?? d.player_id,
+          territories_placed: Object.entries(placements).map(([tid, cnt]) => ({ ...tEnrich(tid), troops: cnt })),
+          total_troops:       total,
+          is_auto_submitted:  d.is_auto_submitted ?? false,
+          locked_at:          d.locked_at ?? null,
+          timestamp:          d.locked_at ?? d.updated_date ?? null,
+          round,
+          phase,
+        });
+      }
+    }
+  }
+
+  // ── Military: fortifications (from PhaseDecision for fortify phase) ──
+  if (phase === 'fortify') {
+    const decisions = await base44.asServiceRole.entities.PhaseDecision.filter({
+      campaign_id: campaignId, phase: 'fortify', round,
+    });
+    for (const d of decisions) {
+      const movements = d.data?.movements ?? [];
+      for (const m of movements) {
+        military.push({
+          pillar:       'military',
+          action_type:  'fortify',
+          player_id:    d.player_id,
+          player:       playerMap[d.player_id]?.display_name ?? d.player_id,
+          source:       tEnrich(m.origin_territory_id),
+          target:       tEnrich(m.destination_territory_id),
+          troops:       m.committed_troops ?? 0,
+          timestamp:    d.locked_at ?? d.updated_date ?? null,
+          round,
+          phase,
+        });
+      }
+      // Construction
+      const construction = d.data?.construction;
+      if (construction?.territory_id) {
+        economic.push({
+          pillar:         'economic',
+          action_type:    'start_construction',
+          player_id:      d.player_id,
+          player:         playerMap[d.player_id]?.display_name ?? d.player_id,
+          territory:      tEnrich(construction.territory_id),
+          building_type:  construction.structure_type,
+          pillar_type:    construction.pillar,
+          timestamp:      construction.staged_at ?? d.locked_at ?? null,
+          round,
+          phase,
+        });
+      }
+    }
+  }
+
+  // ── Economic: resource activations (from operations staging decisions) ──
+  if (phase === 'deploy') {
+    const stagingDecisions = await base44.asServiceRole.entities.PhaseDecision.filter({
+      campaign_id: campaignId, phase: 'planning_stage', round,
+    });
+    for (const d of stagingDecisions) {
+      const staged = d.data?.economic_staged ?? [];
+      if (staged.length > 0) {
+        economic.push({
+          pillar:            'economic',
+          action_type:       'activate_resources',
+          player_id:         d.player_id,
+          player:            playerMap[d.player_id]?.display_name ?? d.player_id,
+          territories:       staged.map(tid => tEnrich(tid)),
+          territory_count:   staged.length,
+          timestamp:         d.data?.locked_at ?? d.updated_date ?? null,
+          round,
+          phase,
+        });
+      }
+    }
+  }
+
+  // ── Economic: construction projects started this round ──
+  const buildings = await base44.asServiceRole.entities.TerritoryBuilding.filter({
+    campaign_id: campaignId, started_round: round,
+  });
+  for (const b of buildings) {
+    economic.push({
+      pillar:        'economic',
+      action_type:   'build_' + b.building_type,
+      player_id:     b.player_id,
+      player:        playerMap[b.player_id]?.display_name ?? b.player_id,
+      territory:     tEnrich(b.territory_id),
+      building_type: b.building_type,
+      status:        b.status,
+      timestamp:     b.created_date ?? null,
+      round,
+      phase,
+    });
+  }
+
+  // ── Diplomatic: all DiplomaticActions this round ──
+  const dipActions = await base44.asServiceRole.entities.DiplomaticAction.filter({
+    campaign_id: campaignId, round,
+  });
+  for (const a of dipActions) {
+    diplomatic.push({
+      pillar:              'diplomatic',
+      action_type:         a.action_type,
+      player_id:           a.player_id,
+      player:              playerMap[a.player_id]?.display_name ?? a.player_id,
+      region_id:           a.region_id,
+      influence_spent:     a.influence_spent ?? 0,
+      target_territory:    a.target_territory_id ? tEnrich(a.target_territory_id) : null,
+      target_player_id:    a.target_player_id ?? null,
+      target_player:       a.target_player_id ? (playerMap[a.target_player_id]?.display_name ?? a.target_player_id) : null,
+      status:              a.status,
+      timestamp:           a.created_date ?? null,
+      round,
+      phase,
+    });
+  }
+
+  // ── Diplomatic: intelligence reports this round ──
+  const intelReports = await base44.asServiceRole.entities.IntelligenceReport.filter({
+    campaign_id: campaignId, generated_round: round,
+  });
+  for (const r of intelReports) {
+    diplomatic.push({
+      pillar:            'diplomatic',
+      action_type:       r.report_type,
+      player_id:         r.viewer_player_id,
+      player:            playerMap[r.viewer_player_id]?.display_name ?? r.viewer_player_id,
+      target_territory:  r.target_territory_id ? tEnrich(r.target_territory_id) : null,
+      target_player_id:  r.target_player_id ?? null,
+      target_player:     r.target_player_id ? (playerMap[r.target_player_id]?.display_name ?? r.target_player_id) : null,
+      influence_spent:   r.influence_spent ?? 0,
+      generated_phase:   r.generated_phase,
+      timestamp:         r.generated_at ?? r.created_date ?? null,
+      round,
+      phase,
+    });
+  }
+
+  return { military, economic, diplomatic, all: [...military, ...economic, ...diplomatic] };
 }
 
 // ── Submitted actions assembler ───────────────────────────────────────────────
@@ -725,17 +998,27 @@ Deno.serve(async (req) => {
         targetPhase === campaign.current_phase
       );
 
+      // ── Diagnostics tracker ─────────────────────────────────────────────
+      const diagnostics = {
+        before_snapshot_source: 'pending',
+        after_snapshot_source:  'pending',
+        delta_generation:       'pending',
+        battle_audit_generation: 'pending',
+        action_log_generation:  'pending',
+      };
+
       // ── Snapshot resolution strategy ────────────────────────────────────
       //
-      // before_snapshot: the stored "before" PhaseSnapshot for this phase.
-      //   Represents state AT THE START of the phase, before any effects.
-      //   Fallback: live state (current phase only).
+      // PHASE_START / phase_start snapshots: written by phase functions at the
+      //   very beginning of a phase (before any player actions take effect).
+      //   These are the authoritative "before" state.
       //
-      // after_snapshot:
-      //   For COMPLETED phases: the stored "after" PhaseSnapshot, OR the
-      //   "before" snapshot of the NEXT phase (same data, different label).
-      //   This represents the world AFTER effects have been applied.
-      //   For IN-PROGRESS phases: live state (clearly labelled).
+      // PHASE_END / phase_end snapshots: written by processPhaseEnd immediately
+      //   after all effects are applied. These are the authoritative "after" state.
+      //
+      // Fallback chain:
+      //   before = stored phase_start → live state (current phase only)
+      //   after  = stored phase_end → next-phase phase_start → live state (in-progress only)
       //
       const [storedSnapshots, nextPhaseBeforeRecord, liveSnapshot] = await Promise.all([
         getPhaseSnapshotData(base44, campaign_id, targetRound, targetPhase),
@@ -743,47 +1026,123 @@ Deno.serve(async (req) => {
         buildSnapshot(base44, campaign_id, playerMap),
       ]);
 
-      const beforeRecord = storedSnapshots.find(s =>
-        s.snapshot_type === 'before' || s.type === 'before' || s.snapshot_type === 'start'
-      );
-      const afterRecord = storedSnapshots.find(s =>
-        s.snapshot_type === 'after' || s.type === 'after' || s.snapshot_type === 'end'
-      );
+      const beforeRecord = storedSnapshots.find(s => BEFORE_TYPES.has(s.snapshot_type ?? s.type));
+      const afterRecord  = storedSnapshots.find(s => AFTER_TYPES.has(s.snapshot_type ?? s.type));
 
-      // Determine before snapshot and its metadata
-      const beforeSnapshotData = beforeRecord?.data ?? liveSnapshot;
-      const beforeCapturedAt   = beforeRecord?.created_date ?? null;
-      const beforeSource = beforeRecord
-        ? 'stored_phase_snapshot'
-        : (isCurrentPhase ? 'live_state_at_export_time' : 'live_state_fallback_no_stored_snapshot');
+      // ── Resolve before snapshot ──────────────────────────────────────────
+      let beforeSnapshotData, beforeCapturedAt, beforeSource;
 
-      // Determine after snapshot and its metadata
-      // Priority: explicit after record > next-phase before record > live (in-progress only)
+      // A stored before-snapshot has all the minimal fields (territory_states,
+      // player_standings). We merge with a live buildSnapshot to ensure rich fields
+      // (resources, influence, buildings, etc.) are present when the stored record
+      // uses the old minimal schema.
+      if (beforeRecord) {
+        // Prefer stored record's territory_states/player_standings but fill in rich
+        // fields from liveSnapshot if missing (live is good enough for before-rich context
+        // since these fields don't change rapidly).
+        const stored = beforeRecord.data ?? {};
+        if (stored.territory_states && !stored.permanent_influence) {
+          // Old minimal schema — enrich territory_states with canonical names
+          const enrichedTS = (stored.territory_states ?? []).map(t => ({
+            ...tEnrich(t.territory_id),
+            owner_player_id: t.owner_player_id ?? null,
+            owner_name: t.owner_player_id ? (playerMap[t.owner_player_id]?.display_name ?? t.owner_player_id) : null,
+            troop_count: t.troop_count ?? 0,
+            resource_storage: t.resource_storage ?? {},
+            has_resource_hub: t.has_resource_hub ?? false,
+            structures: t.structures ?? [],
+          }));
+          beforeSnapshotData = {
+            ...liveSnapshot,        // rich fields from live (best available for before context)
+            territory_states: enrichedTS,    // authoritative: from stored record
+            player_standings: stored.player_standings ?? liveSnapshot.player_standings,
+          };
+          beforeSource = 'stored_phase_snapshot_minimal_enriched';
+        } else {
+          beforeSnapshotData = stored;
+          beforeSource = 'stored';
+        }
+        beforeCapturedAt = beforeRecord.created_date ?? null;
+        diagnostics.before_snapshot_source = 'stored';
+      } else if (isCurrentPhase) {
+        beforeSnapshotData = liveSnapshot;
+        beforeCapturedAt   = new Date().toISOString();
+        beforeSource       = 'live_state_at_export_time';
+        diagnostics.before_snapshot_source = 'live_fallback';
+      } else {
+        // Completed phase but no stored before — use live (contaminated but best available)
+        beforeSnapshotData = liveSnapshot;
+        beforeCapturedAt   = new Date().toISOString();
+        beforeSource       = 'live_state_fallback_no_stored_snapshot';
+        diagnostics.before_snapshot_source = 'live_fallback_missing';
+      }
+
+      // ── Resolve after snapshot ───────────────────────────────────────────
       let afterSnapshotData, afterCapturedAt, afterSource, phaseCompletionState;
 
       if (isCurrentPhase) {
-        // Phase still active — use live state, clearly marked
         afterSnapshotData    = liveSnapshot;
         afterCapturedAt      = new Date().toISOString();
         afterSource          = 'current_in_progress_state_only';
         phaseCompletionState = 'in_progress';
+        diagnostics.after_snapshot_source = 'live_in_progress';
       } else if (afterRecord) {
-        afterSnapshotData    = afterRecord.data;
+        // Full authoritative stored after-snapshot
+        const stored = afterRecord.data ?? {};
+        if (stored.territory_states && !stored.permanent_influence) {
+          const enrichedTS = (stored.territory_states ?? []).map(t => ({
+            ...tEnrich(t.territory_id),
+            owner_player_id: t.owner_player_id ?? null,
+            owner_name: t.owner_player_id ? (playerMap[t.owner_player_id]?.display_name ?? t.owner_player_id) : null,
+            troop_count: t.troop_count ?? 0,
+            resource_storage: t.resource_storage ?? {},
+            has_resource_hub: t.has_resource_hub ?? false,
+            structures: t.structures ?? [],
+          }));
+          afterSnapshotData = {
+            ...liveSnapshot,
+            territory_states: enrichedTS,
+            player_standings: stored.player_standings ?? liveSnapshot.player_standings,
+          };
+          afterSource = 'stored_after_minimal_enriched';
+        } else {
+          afterSnapshotData = stored;
+          afterSource = 'stored';
+        }
         afterCapturedAt      = afterRecord.created_date ?? null;
-        afterSource          = 'stored_phase_snapshot_after';
         phaseCompletionState = 'completed';
+        diagnostics.after_snapshot_source = 'stored';
       } else if (nextPhaseBeforeRecord) {
-        // The before-snapshot of the next phase IS the after-state of this phase
-        afterSnapshotData    = nextPhaseBeforeRecord.data;
+        const stored = nextPhaseBeforeRecord.data ?? {};
+        if (stored.territory_states && !stored.permanent_influence) {
+          const enrichedTS = (stored.territory_states ?? []).map(t => ({
+            ...tEnrich(t.territory_id),
+            owner_player_id: t.owner_player_id ?? null,
+            owner_name: t.owner_player_id ? (playerMap[t.owner_player_id]?.display_name ?? t.owner_player_id) : null,
+            troop_count: t.troop_count ?? 0,
+            resource_storage: t.resource_storage ?? {},
+            has_resource_hub: t.has_resource_hub ?? false,
+            structures: t.structures ?? [],
+          }));
+          afterSnapshotData = {
+            ...liveSnapshot,
+            territory_states: enrichedTS,
+            player_standings: stored.player_standings ?? liveSnapshot.player_standings,
+          };
+          afterSource = 'next_phase_before_snapshot_minimal_enriched';
+        } else {
+          afterSnapshotData = nextPhaseBeforeRecord.data;
+          afterSource = 'next_phase_before_snapshot_equals_after';
+        }
         afterCapturedAt      = nextPhaseBeforeRecord.created_date ?? null;
-        afterSource          = 'next_phase_before_snapshot_equals_after';
         phaseCompletionState = 'completed';
+        diagnostics.after_snapshot_source = 'stored_next_phase_start';
       } else {
-        // No stored records — use live state, warn that it may not reflect this phase's resolution
         afterSnapshotData    = liveSnapshot;
         afterCapturedAt      = new Date().toISOString();
         afterSource          = 'live_state_fallback_no_stored_after_snapshot';
         phaseCompletionState = 'completed_no_stored_snapshot';
+        diagnostics.after_snapshot_source = 'live_fallback_missing';
       }
 
       // Phase timing from SetupLog events (best-effort; null if not recorded)
@@ -792,91 +1151,129 @@ Deno.serve(async (req) => {
         phase: targetPhase,
         round: targetRound,
       });
-      const startLog = phaseLogs.find(l => l.event_type === 'phase_started' || l.event_type === 'deploy_started' || l.event_type === 'attack_started' || l.event_type === 'fortify_started');
-      const endLog   = phaseLogs.find(l => l.event_type === 'phase_ended' || l.event_type === 'phase_advanced' || l.event_type === 'phase_complete');
-      const phaseStartedAt    = startLog?.created_date ?? null;
-      const phaseCompletedAt  = endLog?.created_date ?? null;
+      const startLog = phaseLogs.find(l => ['phase_started','deploy_started','attack_started','fortify_started'].includes(l.event_type));
+      const endLog   = phaseLogs.find(l => ['phase_ended','phase_advanced','phase_complete'].includes(l.event_type));
+      const phaseStartedAt   = startLog?.created_date ?? null;
+      const phaseCompletedAt = endLog?.created_date ?? null;
 
-      // ── Submitted actions ───────────────────────────────────────────────
+      // ── Enriched submitted actions (per pillar) ─────────────────────────
+      let enrichedActions = { military: [], economic: [], diplomatic: [], all: [] };
+      try {
+        enrichedActions = await getEnrichedSubmittedActions(base44, campaign_id, targetRound, targetPhase, playerMap);
+        diagnostics.action_log_generation = 'success';
+      } catch (e) {
+        diagnostics.action_log_generation = `error: ${e.message}`;
+      }
+
+      // ── Legacy flat submitted actions (kept for backward compat) ───────
       const submittedActions = await getSubmittedActions(base44, campaign_id, targetRound, targetPhase, playerMap);
 
       // ── Generated artifacts ─────────────────────────────────────────────
       const generatedArtifacts = await getGeneratedArtifacts(base44, campaign_id, targetRound, playerMap);
 
+      // ── Battle resolution audit ─────────────────────────────────────────
+      let battleAudit = [];
+      try {
+        battleAudit = await getBattleResolutionAudit(base44, campaign_id, targetRound, playerMap);
+        diagnostics.battle_audit_generation = 'success';
+      } catch (e) {
+        diagnostics.battle_audit_generation = `error: ${e.message}`;
+      }
+
       // ── Delta: compare true before vs true after ────────────────────────
-      const deltaReport = calcDeltas(beforeSnapshotData, afterSnapshotData, playerMap);
+      let deltaReport = { troop_deltas: [], resource_deltas: [], permanent_influence_deltas: [], spendable_influence_deltas: [], victory_score_deltas: [], structure_changes: [], battle_card_changes: [], trade_state_changes: [], phase_lock_changes: [] };
+      try {
+        deltaReport = calcDeltas(beforeSnapshotData, afterSnapshotData, playerMap);
+        diagnostics.delta_generation = 'success';
+      } catch (e) {
+        diagnostics.delta_generation = `error: ${e.message}`;
+      }
+
+      // ── Ownership changes with cause attribution ────────────────────────
+      const ownershipChanges = (deltaReport.troop_deltas ?? [])
+        .filter(d => d.ownership_changed)
+        .map(d => {
+          // Try to find which battle card caused this ownership change
+          const battle = battleAudit.find(b =>
+            b.target?.territory_id === d.territory_id && b.ending_state?.owner_player_id === (d.owner_after ? players.find(p => p.display_name === d.owner_after)?.id : null)
+          );
+          // Try to find which attack caused it
+          const attack = enrichedActions.military.find(a =>
+            a.action_type === 'attack' && a.target?.territory_id === d.territory_id
+          );
+          const cause = battle
+            ? `${battle.battle_type.replace(/_/g, ' ')} — ${battle.winner ?? 'unknown'} won`
+            : (attack ? `attack by ${attack.player}` : 'unknown');
+          return {
+            territory:    d.territory_name ?? d.territory_id,
+            territory_id: d.territory_id,
+            from:         d.owner_before ?? 'unoccupied',
+            to:           d.owner_after  ?? 'unoccupied',
+            cause,
+          };
+        });
 
       // ── Validation warnings ─────────────────────────────────────────────
       const validationWarnings = [];
+      let exportValidationStatus = 'passed';
 
-      // Warn if after snapshot is not authoritative
-      if (afterSource === 'live_state_fallback_no_stored_after_snapshot') {
-        validationWarnings.push({
-          type: 'after_snapshot_not_authoritative',
-          message: 'No stored after-snapshot found for this phase. After snapshot reflects current live state, which may include changes from later phases.',
-          severity: 'high',
-        });
+      if (diagnostics.before_snapshot_source.includes('missing')) {
+        validationWarnings.push({ type: 'before_snapshot_not_authoritative', severity: 'high',
+          message: 'No stored before-snapshot found. Before snapshot reflects current live state.' });
+        exportValidationStatus = 'failed';
       }
-      if (afterSource === 'live_state_fallback_no_stored_snapshot') {
-        validationWarnings.push({
-          type: 'before_snapshot_not_authoritative',
-          message: 'No stored before-snapshot found for this phase. Before snapshot reflects current live state.',
-          severity: 'high',
-        });
+      if (diagnostics.after_snapshot_source.includes('missing')) {
+        validationWarnings.push({ type: 'after_snapshot_not_authoritative', severity: 'high',
+          message: 'No stored after-snapshot found. After snapshot reflects current live state.' });
+        exportValidationStatus = 'failed';
+      }
+
+      // Ownership changed but no ownership_changes populated
+      const troopDeltasWithOwnerChange = (deltaReport.troop_deltas ?? []).filter(d => d.ownership_changed);
+      if (troopDeltasWithOwnerChange.length > 0 && ownershipChanges.length === 0) {
+        validationWarnings.push({ type: 'ownership_changes_expected_but_empty', severity: 'medium',
+          message: `${troopDeltasWithOwnerChange.length} territory ownership change(s) detected but no changes populated.` });
+      }
+
+      // Troop changes but empty troop_deltas
+      const troopDeltasNonZero = (deltaReport.troop_deltas ?? []).filter(d => d.troop_delta !== 0);
+      if (troopDeltasNonZero.length === 0 && enrichedActions.military.some(a => a.action_type === 'deploy_troops' || a.action_type === 'attack')) {
+        validationWarnings.push({ type: 'troop_changes_expected_but_empty', severity: 'medium',
+          message: 'Military actions submitted but no troop deltas detected. Snapshots may not be authoritative.' });
+      }
+
+      // Battle resolved but no battle_results
+      const resolvedBattleCount = battleAudit.filter(b => b.resolution?.applied_at).length;
+      if (resolvedBattleCount > 0 && battleAudit.length === 0) {
+        validationWarnings.push({ type: 'battle_results_expected_but_empty', severity: 'high',
+          message: 'Battle cards resolved but battle_results is empty.' });
+        exportValidationStatus = 'failed';
       }
 
       // Phase lock missing for any active player
       const activePlayers = players.filter(p => !p.is_eliminated);
-      const lockStates = afterSnapshotData.phase_lock_states ?? [];
-      for (const p of activePlayers) {
-        const lock = lockStates.find(l => l.player_id === p.id && l.phase === targetPhase && l.round === targetRound);
-        if (!lock) {
-          validationWarnings.push({
-            type: 'phase_lock_missing',
-            player_id: p.id,
-            player_name: p.display_name,
-            phase: targetPhase,
-            round: targetRound,
-          });
-        }
-      }
 
-      // Duplicate objective opportunity same round
-      const objActions = submittedActions.filter(a => a.action_type === 'phase_staging' && a.payload?.objective_dealt);
-      const seenObj = new Set();
-      for (const a of objActions) {
-        if (seenObj.has(a.player_id)) {
-          validationWarnings.push({ type: 'duplicate_objective_opportunity', player_id: a.player_id, player_name: a.player_name });
-        }
-        seenObj.add(a.player_id);
-      }
-
-      // Duplicate phase lock execution
-      const lockActions = submittedActions.filter(a => a.is_locked);
-      const seenLock = {};
-      for (const a of lockActions) {
-        const key = `${a.player_id}|${targetPhase}`;
-        seenLock[key] = (seenLock[key] ?? 0) + 1;
-        if (seenLock[key] > 1) {
-          validationWarnings.push({ type: 'duplicate_phase_lock', player_id: a.player_id, player_name: a.player_name });
-        }
-      }
-
-      // Negative resource totals in after snapshot
+      // Negative resources
       for (const t of (afterSnapshotData.territory_states ?? [])) {
         for (const [res, val] of Object.entries(t.resource_storage ?? {})) {
           if ((val ?? 0) < 0) {
-            validationWarnings.push({ type: 'resource_total_negative', ...tEnrich(t.territory_id), resource: res, value: val });
+            validationWarnings.push({ type: 'resource_total_negative', ...tEnrich(t.territory_id), resource: res, value: val, severity: 'high' });
+            exportValidationStatus = 'failed';
           }
         }
       }
-
-      // Negative spendable influence in after snapshot
       for (const p of (afterSnapshotData.spendable_influence ?? [])) {
         if ((p.spendable_influence ?? 0) < 0) {
-          validationWarnings.push({ type: 'spendable_influence_negative', player_id: p.player_id, player_name: p.player_name, region_id: p.region_id, value: p.spendable_influence });
+          validationWarnings.push({ type: 'spendable_influence_negative', player_id: p.player_id, player_name: p.player_name, region_id: p.region_id, value: p.spendable_influence, severity: 'high' });
+          exportValidationStatus = 'failed';
         }
       }
+
+      // delta_generation or battle_audit errors
+      if (diagnostics.delta_generation !== 'success') exportValidationStatus = 'failed';
+      if (diagnostics.battle_audit_generation !== 'success') exportValidationStatus = 'warning';
+
+      diagnostics.export_validation = exportValidationStatus;
 
       // ── Assemble bundle ─────────────────────────────────────────────────
       const bundleStatus = isCurrentPhase ? 'in_progress' : 'completed';
@@ -893,37 +1290,52 @@ Deno.serve(async (req) => {
           exported_by_user_id: user.id,
           exported_by_name: user.full_name ?? user.email,
           bundle_status: bundleStatus,
-          game_version: '5F.1',
+          game_version: '5F.2',
           active_win_conditions: campaign.settings?.active_win_conditions ?? [],
-          // ── Snapshot timing ──────────────────────────────────────────
           phase_started_at:              phaseStartedAt,
           phase_completed_at:            phaseCompletedAt,
           before_snapshot_captured_at:   beforeCapturedAt,
           after_snapshot_captured_at:    afterCapturedAt,
-          // ── Snapshot status clarity ──────────────────────────────────
           snapshot_status: {
-            before_snapshot:       beforeSource,
-            after_snapshot:        afterSource,
+            before_snapshot:        beforeSource,
+            after_snapshot:         afterSource,
             phase_completion_state: phaseCompletionState,
-            delta_report:          isCurrentPhase ? 'preliminary' : 'authoritative',
+            delta_report:           isCurrentPhase ? 'preliminary' : (diagnostics.delta_generation === 'success' ? 'authoritative' : 'error'),
           },
+          export_validation: exportValidationStatus,
         },
+
+        diagnostics,
+
         before_snapshot: beforeSnapshotData,
-        submitted_actions: submittedActions,
+
+        submitted_actions: {
+          military:   enrichedActions.military,
+          economic:   enrichedActions.economic,
+          diplomatic: enrichedActions.diplomatic,
+          all:        enrichedActions.all,
+          _legacy:    submittedActions,
+        },
+
         generated_artifacts: generatedArtifacts,
+
+        battle_results: battleAudit,
+
         resolution_results: {
-          note: 'Derived from delta between before_snapshot and after_snapshot. Submitted actions explain why changes occurred.',
-          troop_movements:             deltaReport.troop_deltas?.filter(d => d.troop_delta !== 0) ?? [],
-          ownership_changes:           deltaReport.troop_deltas?.filter(d => d.ownership_changed) ?? [],
+          ownership_changes:           ownershipChanges,
+          troop_movements:             troopDeltasNonZero,
           resource_changes:            deltaReport.resource_deltas ?? [],
           influence_changes:           [...(deltaReport.permanent_influence_deltas ?? []), ...(deltaReport.spendable_influence_deltas ?? [])],
           structure_changes:           deltaReport.structure_changes ?? [],
-          battle_card_results:         deltaReport.battle_card_changes ?? [],
+          battle_card_changes:         deltaReport.battle_card_changes ?? [],
           trade_results:               deltaReport.trade_state_changes ?? [],
-          victory_score_recalculations: deltaReport.victory_score_deltas ?? [],
+          victory_score_changes:       deltaReport.victory_score_deltas ?? [],
         },
+
         after_snapshot: afterSnapshotData,
+
         delta_report: deltaReport,
+
         validation_warnings: validationWarnings,
       };
 
