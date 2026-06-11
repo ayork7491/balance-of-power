@@ -102,6 +102,25 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
     }
   };
 
+  const handleUnlock = async () => {
+    if (!campaign?.id) return;
+    setLocking(true);
+    setError(null);
+    try {
+      await base44.functions.invoke('operationsLockPhase', {
+        action: 'unlockOperationsPhase',
+        campaign_id: campaign.id,
+        acting_as_player_id: actingAsPlayerId ?? undefined,
+      });
+      await load();
+      onLocked?.();
+    } catch (e) {
+      setError(e?.response?.data?.error ?? 'Failed to unlock operations phase.');
+    } finally {
+      setLocking(false);
+    }
+  };
+
   if (loading && !status) {
     return (
       <div className="border-b border-border bg-panel-header px-3 py-2 flex items-center gap-2 text-xs text-muted-foreground">
@@ -145,9 +164,19 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
 
       <div className="flex items-center gap-2">
         {operations_locked ? (
-          <div className="flex items-center gap-2 flex-1 px-3 py-2 rounded border border-green-500/30 bg-green-500/10 text-xs text-green-400">
-            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-            Operations Phase Locked
+          <div className="flex items-center gap-2 flex-1">
+            <div className="flex items-center gap-2 px-3 py-2 rounded border border-green-500/30 bg-green-500/10 text-xs text-green-400 flex-1">
+              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+              Operations Phase Locked
+            </div>
+            <button
+              onClick={handleUnlock}
+              disabled={locking}
+              className="px-2 py-2 rounded border border-border text-xs text-muted-foreground hover:text-foreground hover:border-destructive/40 transition-colors disabled:opacity-40 shrink-0"
+              title="Unlock to edit staged choices"
+            >
+              {locking ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Unlock'}
+            </button>
           </div>
         ) : (
           <>

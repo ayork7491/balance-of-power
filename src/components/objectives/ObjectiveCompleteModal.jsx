@@ -1,6 +1,10 @@
 /**
- * ObjectiveCompleteModal — dialog for marking an objective complete.
- * Requires player to select a placement territory (for influence reward).
+ * ObjectiveCompleteModal — ADMIN/DEBUG ONLY.
+ *
+ * ⚠️  This modal calls completeObjective (now admin-gated on the backend).
+ *     Normal players receive a 403 if they somehow reach this UI.
+ *     This component should only be rendered inside admin-only UI sections.
+ *     Do NOT import this in player-facing panels.
  *
  * Props:
  *   cardDef           — SecretObjectiveCard definition

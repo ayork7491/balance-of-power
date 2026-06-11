@@ -566,6 +566,52 @@ Deno.serve(async (req) => {
     return Response.json({ success: true, locked_at: lockedAt, player_id: actingPlayer.id, results });
   }
 
+  // ── ACTION: unlockOperationsPhase ─────────────────────────────────────────
+  // Allows a player to undo their operations lock while still in Operations Phase,
+  // as long as admin has not yet advanced the phase.
+  // Admin can unlock any player via acting_as_player_id.
+  if (action === 'unlockOperationsPhase') {
+    if (campaign.current_phase !== 'attack') {
+      return Response.json({ error: 'Not in Operations (attack) Phase' }, { status: 400 });
+    }
+
+    const staging = await getStagingDecision(base44, campaign_id, actingPlayer.id, round);
+    if (!staging?.data?.locked_at) {
+      return Response.json({ success: true, idempotent: true, message: 'Operations phase is not locked.' });
+    }
+
+    // Reset staging lock — keep staged items so the player can review/edit
+    await upsertStagingDecision(base44, campaign_id, actingPlayer.id, round, {
+      military_locked: false,
+      economic_locked: false,
+      diplomatic_locked: false,
+      locked_at: null,
+    });
+
+    // Also unlock the attack PhaseDecision so the player can re-stage attacks
+    const attackDecision = await getAttackDecision(base44, campaign_id, actingPlayer.id, round);
+    if (attackDecision?.is_locked) {
+      await base44.asServiceRole.entities.PhaseDecision.update(attackDecision.id, {
+        is_locked: false,
+        locked_at: null,
+      });
+    }
+
+    await base44.asServiceRole.entities.SetupLog.create({
+      campaign_id, phase: 'attack', round,
+      event_type: 'operations_phase_unlocked',
+      player_id: actingPlayer.id,
+      payload: { display_name: actingPlayer.display_name, unlocked_by: myPlayer.id },
+      is_public: true,
+    });
+
+    return Response.json({
+      success: true,
+      message: `Operations phase unlocked for ${actingPlayer.display_name}.`,
+      player_id: actingPlayer.id,
+    });
+  }
+
   // ── ACTION: getAdminLockStatus ─────────────────────────────────────────────
   if (action === 'getAdminLockStatus') {
     const activePlayers = players.filter(p => !p.is_eliminated);

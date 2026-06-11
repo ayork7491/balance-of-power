@@ -557,163 +557,206 @@ Deno.serve(async (req) => {
     const proposerId = proposal.player_id;
     const acceptorId = actingPlayer.id;
 
+    // Re-fetch live territory states for accurate balances (stale snapshot risk)
     const allTerritoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+    // Build mutable in-memory deltas to validate ALL transfers before writing any
+    // delta[territory_id][resource] = signed change amount
+    const resourceDelta = {};   // territory → resource → net change
+    const troopDelta    = {};   // territory → net troop change
+    // Influence delta: player → region → net change
+    const influenceDelta = {};  // `${playerId}|${region}` → net change
 
-    // receiver_destinations: where acceptor wants to receive offered assets
-    // { resources: { resource: territory_id }, troops: territory_id, influence: { region: region_id } }
+    function applyResourceDelta(tid, resource, amount) {
+      if (!resourceDelta[tid]) resourceDelta[tid] = {};
+      resourceDelta[tid][resource] = (resourceDelta[tid][resource] ?? 0) + amount;
+    }
+    function applyTroopDelta(tid, amount) {
+      troopDelta[tid] = (troopDelta[tid] ?? 0) + amount;
+    }
+    function applyInfluenceDelta(playerId, region, amount) {
+      const key = `${playerId}|${region}`;
+      influenceDelta[key] = (influenceDelta[key] ?? 0) + amount;
+    }
+
     const receiver_destinations = body.receiver_destinations ?? {};
 
-    // ── Helper: move resources from source_territory → dest_territory ──────
-    async function moveResources(fromPlayerId, srcTid, destTid, resource, amount) {
-      if (!srcTid || !destTid || !(amount > 0)) return `Missing src/dest for ${resource}.`;
-      const srcTs = allTerritoryStates.find(s => s.territory_id === srcTid);
-      const destTs = allTerritoryStates.find(s => s.territory_id === destTid);
-      if (!srcTs) return `Source territory ${srcTid} not found.`;
-      if (!destTs) return `Destination territory ${destTid} not found.`;
-      if (srcTs.owner_player_id !== fromPlayerId) return `${srcTid} is not owned by the sending player.`;
-      const srcStorage = srcTs.resource_storage ?? {};
-      if ((srcStorage[resource] ?? 0) < amount) return `Not enough ${resource} at ${srcTid} (have ${srcStorage[resource] ?? 0}, need ${amount}).`;
-      await base44.asServiceRole.entities.TerritoryState.update(srcTs.id, {
-        resource_storage: { ...srcStorage, [resource]: srcStorage[resource] - amount },
-      });
-      const destStorage = destTs.resource_storage ?? {};
-      await base44.asServiceRole.entities.TerritoryState.update(destTs.id, {
-        resource_storage: { ...destStorage, [resource]: (destStorage[resource] ?? 0) + amount },
-      });
-      return null;
+    // ── Phase 1: DRY-RUN — accumulate all deltas, check validity, write nothing ─
+
+    const validationErrors = [];
+
+    // Helper: get current resource value with in-flight deltas applied
+    function effectiveResource(tid, resource) {
+      const ts = allTerritoryStates.find(s => s.territory_id === tid);
+      const base = (ts?.resource_storage ?? {})[resource] ?? 0;
+      return base + (resourceDelta[tid]?.[resource] ?? 0);
+    }
+    function effectiveTroops(tid) {
+      const ts = allTerritoryStates.find(s => s.territory_id === tid);
+      return (ts?.troop_count ?? 0) + (troopDelta[tid] ?? 0);
+    }
+    async function effectiveInfluence(playerId, region) {
+      const pools = await base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id, region_id: region, player_id: playerId });
+      return (pools[0]?.spendable_influence ?? 0) + (influenceDelta[`${playerId}|${region}`] ?? 0);
     }
 
-    // ── Helper: move troops from source_territory → dest_territory ─────────
-    async function moveTroops(fromPlayerId, srcTid, destTid, amount) {
-      if (!srcTid || !destTid || !(amount > 0)) return `Missing src/dest for troops.`;
-      const srcTs  = allTerritoryStates.find(s => s.territory_id === srcTid);
-      const destTs = allTerritoryStates.find(s => s.territory_id === destTid);
-      if (!srcTs) return `Source territory ${srcTid} not found.`;
-      if (!destTs) return `Destination territory ${destTid} not found.`;
-      if (srcTs.owner_player_id !== fromPlayerId) return `${srcTid} is not owned by the sending player.`;
-      if ((srcTs.troop_count ?? 0) < amount) return `Not enough troops at ${srcTid}.`;
-      await base44.asServiceRole.entities.TerritoryState.update(srcTs.id, { troop_count: srcTs.troop_count - amount });
-      await base44.asServiceRole.entities.TerritoryState.update(destTs.id, { troop_count: (destTs.troop_count ?? 0) + amount });
-      return null;
-    }
-
-    // ── Helper: move influence source_region → dest_region ─────────────────
-    async function moveInfluence(fromPlayerId, srcRegion, destRegion, amount) {
-      if (!srcRegion || !destRegion || !(amount > 0)) return `Missing src/dest for influence.`;
-      const [fromPools, toPools] = await Promise.all([
-        base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id, region_id: srcRegion,  player_id: fromPlayerId }),
-        base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id, region_id: destRegion, player_id: acceptorId }),
-      ]);
-      const fromP = fromPools[0];
-      if (!fromP || (fromP.spendable_influence ?? 0) < amount) return `Not enough influence in ${srcRegion}.`;
-      await base44.asServiceRole.entities.RegionalInfluencePool.update(fromP.id, {
-        spendable_influence: fromP.spendable_influence - amount, last_updated_round: round,
-      });
-      const toP = toPools[0];
-      if (toP) {
-        await base44.asServiceRole.entities.RegionalInfluencePool.update(toP.id, {
-          spendable_influence: (toP.spendable_influence ?? 0) + amount, last_updated_round: round,
-        });
-      } else {
-        await base44.asServiceRole.entities.RegionalInfluencePool.create({
-          campaign_id, region_id: destRegion, player_id: acceptorId, spendable_influence: amount, last_updated_round: round,
-        });
-      }
-      return null;
-    }
-
-    // ── 1. Transfer offered resources: proposer source → receiver destination ─
-    const offerResourceLines = offerAssets.resources ?? {}; // { resource: [{ source_territory, amount }] }
+    // 1a. Offered resources: proposer → receiver
+    const offerResourceLines = offerAssets.resources ?? {};
     for (const [resource, lines] of Object.entries(offerResourceLines)) {
       for (const line of (Array.isArray(lines) ? lines : [lines])) {
         if (!(line?.amount > 0)) continue;
         const srcTid  = line.source_territory ?? line.territory_id;
         const destTid = receiver_destinations?.resources?.[resource];
-        if (!srcTid)  return Response.json({ error: `Offer for ${resource} missing source territory.` }, { status: 400 });
-        if (!destTid) return Response.json({ error: `Receiver must specify destination territory for ${resource}.` }, { status: 400 });
+        if (!srcTid)  { validationErrors.push(`Offer for ${resource} missing source territory.`); continue; }
+        if (!destTid) { validationErrors.push(`Receiver must specify destination territory for ${resource}.`); continue; }
+        const srcTs  = allTerritoryStates.find(s => s.territory_id === srcTid);
         const destTs = allTerritoryStates.find(s => s.territory_id === destTid);
-        if (!destTs || destTs.owner_player_id !== acceptorId) return Response.json({ error: `Destination ${destTid} for ${resource} must be receiver's own territory.` }, { status: 400 });
-        const err = await moveResources(proposerId, srcTid, destTid, resource, line.amount);
-        if (err) return Response.json({ error: err }, { status: 400 });
+        if (!srcTs || srcTs.owner_player_id !== proposerId) { validationErrors.push(`${srcTid} is not owned by proposer.`); continue; }
+        if (!destTs || destTs.owner_player_id !== acceptorId) { validationErrors.push(`Destination ${destTid} for ${resource} must be receiver's territory.`); continue; }
+        const avail = effectiveResource(srcTid, resource);
+        if (avail < line.amount) { validationErrors.push(`Not enough ${resource} at ${srcTid} (have ${avail}, need ${line.amount}).`); continue; }
+        applyResourceDelta(srcTid, resource, -line.amount);
+        applyResourceDelta(destTid, resource, +line.amount);
       }
     }
 
-    // ── 2. Transfer receiver payment resources: receiver source → proposer dest ─
+    // 1b. Receiver payment resources: acceptor → proposer
     if (receiver_payment?.resources) {
       for (const [resource, lines] of Object.entries(receiver_payment.resources)) {
         for (const line of (Array.isArray(lines) ? lines : [lines])) {
           if (!(line?.amount > 0)) continue;
           const srcTid  = line.source_territory ?? line.territory_id;
-          // dest is from the stored request.resources[resource].dest_territory
           const destTid = requestAssets.resources?.[resource]?.dest_territory ?? line.dest_territory;
-          if (!srcTid || !destTid) return Response.json({ error: `Payment for ${resource} missing source or destination.` }, { status: 400 });
+          if (!srcTid || !destTid) { validationErrors.push(`Payment for ${resource} missing source or destination.`); continue; }
           const srcTs = allTerritoryStates.find(s => s.territory_id === srcTid);
-          if (!srcTs || srcTs.owner_player_id !== acceptorId) return Response.json({ error: `Source ${srcTid} for ${resource} must be receiver's own territory.` }, { status: 400 });
           const destTs = allTerritoryStates.find(s => s.territory_id === destTid);
-          if (!destTs || destTs.owner_player_id !== proposerId) return Response.json({ error: `Destination ${destTid} for ${resource} must be proposer's own territory.` }, { status: 400 });
-          const err = await moveResources(acceptorId, srcTid, destTid, resource, line.amount);
-          if (err) return Response.json({ error: err }, { status: 400 });
+          if (!srcTs || srcTs.owner_player_id !== acceptorId) { validationErrors.push(`Source ${srcTid} for ${resource} must be receiver's territory.`); continue; }
+          if (!destTs || destTs.owner_player_id !== proposerId) { validationErrors.push(`Destination ${destTid} for ${resource} must be proposer's territory.`); continue; }
+          const avail = effectiveResource(srcTid, resource);
+          if (avail < line.amount) { validationErrors.push(`Not enough ${resource} at ${srcTid} (have ${avail}, need ${line.amount}).`); continue; }
+          applyResourceDelta(srcTid, resource, -line.amount);
+          applyResourceDelta(destTid, resource, +line.amount);
         }
       }
     }
 
-    // ── 3. Transfer offered influence: proposer source_region → receiver dest_region ─
+    // 1c. Offered influence: proposer → receiver
     for (const [srcRegion, v] of Object.entries(offerAssets.influence ?? {})) {
-      const amount    = typeof v === 'object' ? (v.amount ?? 0) : (v ?? 0);
+      const amount = typeof v === 'object' ? (v.amount ?? 0) : (v ?? 0);
       const destRegion = receiver_destinations?.influence?.[srcRegion];
       if (amount <= 0) continue;
-      if (!destRegion) return Response.json({ error: `Receiver must specify destination region for influence from ${srcRegion}.` }, { status: 400 });
-      const err = await moveInfluence(proposerId, srcRegion, destRegion, amount);
-      if (err) return Response.json({ error: err }, { status: 400 });
+      if (!destRegion) { validationErrors.push(`Receiver must specify destination region for influence from ${srcRegion}.`); continue; }
+      const avail = await effectiveInfluence(proposerId, srcRegion);
+      if (avail < amount) { validationErrors.push(`Not enough influence in ${srcRegion} (proposer has ${avail}, need ${amount}).`); continue; }
+      applyInfluenceDelta(proposerId, srcRegion, -amount);
+      applyInfluenceDelta(acceptorId, destRegion, +amount);
     }
 
-    // ── 4. Transfer receiver payment influence: receiver source_region → proposer dest_region ─
+    // 1d. Receiver payment influence: acceptor → proposer
     if (receiver_payment?.influence) {
       const ip = receiver_payment.influence;
       const srcReg  = ip.source_region ?? ip.region;
       const destReg = requestAssets.influence?.dest_region ?? ip.dest_region;
       const amount  = ip.amount ?? 0;
       if (amount > 0) {
-        if (!srcReg || !destReg) return Response.json({ error: 'Influence payment missing source or destination region.' }, { status: 400 });
-        // Reuse helper but credit to proposerId's region
-        const [fromPools] = await Promise.all([
-          base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id, region_id: srcReg, player_id: acceptorId }),
-        ]);
-        const fromP = fromPools[0];
-        if (!fromP || (fromP.spendable_influence ?? 0) < amount) return Response.json({ error: `Not enough influence in ${srcReg}.` }, { status: 400 });
-        await base44.asServiceRole.entities.RegionalInfluencePool.update(fromP.id, { spendable_influence: fromP.spendable_influence - amount, last_updated_round: round });
-        const toPools = await base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id, region_id: destReg, player_id: proposerId });
-        if (toPools[0]) {
-          await base44.asServiceRole.entities.RegionalInfluencePool.update(toPools[0].id, { spendable_influence: (toPools[0].spendable_influence ?? 0) + amount, last_updated_round: round });
-        } else {
-          await base44.asServiceRole.entities.RegionalInfluencePool.create({ campaign_id, region_id: destReg, player_id: proposerId, spendable_influence: amount, last_updated_round: round });
+        if (!srcReg || !destReg) { validationErrors.push('Influence payment missing source or destination region.'); }
+        else {
+          const avail = await effectiveInfluence(acceptorId, srcReg);
+          if (avail < amount) { validationErrors.push(`Not enough influence in ${srcReg} (receiver has ${avail}, need ${amount}).`); }
+          else {
+            applyInfluenceDelta(acceptorId, srcReg, -amount);
+            applyInfluenceDelta(proposerId, destReg, +amount);
+          }
         }
       }
     }
 
-    // ── 5. Transfer offered troops: proposer source_territory → receiver dest_territory ─
+    // 1e. Offered troops: proposer → receiver
     if ((offerAssets.troops?.amount ?? 0) > 0) {
       const srcTid  = offerAssets.troops.source_territory ?? offerAssets.troops.territory_id;
       const destTid = receiver_destinations?.troops;
-      if (!srcTid || !destTid) return Response.json({ error: 'Offered troops missing source or receiver destination territory.' }, { status: 400 });
-      const destTs = allTerritoryStates.find(s => s.territory_id === destTid);
-      if (!destTs || destTs.owner_player_id !== acceptorId) return Response.json({ error: `Troop destination ${destTid} must be receiver's own territory.` }, { status: 400 });
-      const err = await moveTroops(proposerId, srcTid, destTid, offerAssets.troops.amount);
-      if (err) return Response.json({ error: err }, { status: 400 });
+      if (!srcTid || !destTid) { validationErrors.push('Offered troops missing source or receiver destination territory.'); }
+      else {
+        const srcTs  = allTerritoryStates.find(s => s.territory_id === srcTid);
+        const destTs = allTerritoryStates.find(s => s.territory_id === destTid);
+        if (!srcTs || srcTs.owner_player_id !== proposerId) { validationErrors.push(`Troop source ${srcTid} must be proposer's territory.`); }
+        else if (!destTs || destTs.owner_player_id !== acceptorId) { validationErrors.push(`Troop destination ${destTid} must be receiver's territory.`); }
+        else {
+          const avail = effectiveTroops(srcTid);
+          if (avail < offerAssets.troops.amount) { validationErrors.push(`Not enough troops at ${srcTid} (have ${avail}, need ${offerAssets.troops.amount}).`); }
+          else {
+            applyTroopDelta(srcTid, -offerAssets.troops.amount);
+            applyTroopDelta(destTid, +offerAssets.troops.amount);
+          }
+        }
+      }
     }
 
-    // ── 6. Transfer receiver payment troops: receiver source_territory → proposer dest_territory ─
+    // 1f. Receiver payment troops: acceptor → proposer
     if ((receiver_payment?.troops?.amount ?? 0) > 0) {
       const tp      = receiver_payment.troops;
       const srcTid  = tp.source_territory ?? tp.territory_id;
       const destTid = requestAssets.troops?.dest_territory ?? tp.dest_territory;
-      if (!srcTid || !destTid) return Response.json({ error: 'Troop payment missing source or destination territory.' }, { status: 400 });
-      const srcTs  = allTerritoryStates.find(s => s.territory_id === srcTid);
-      const destTs = allTerritoryStates.find(s => s.territory_id === destTid);
-      if (!srcTs || srcTs.owner_player_id !== acceptorId) return Response.json({ error: `Troop source ${srcTid} must be receiver's own territory.` }, { status: 400 });
-      if (!destTs || destTs.owner_player_id !== proposerId) return Response.json({ error: `Troop destination ${destTid} must be proposer's own territory.` }, { status: 400 });
-      const err = await moveTroops(acceptorId, srcTid, destTid, tp.amount);
-      if (err) return Response.json({ error: err }, { status: 400 });
+      if (!srcTid || !destTid) { validationErrors.push('Troop payment missing source or destination territory.'); }
+      else {
+        const srcTs  = allTerritoryStates.find(s => s.territory_id === srcTid);
+        const destTs = allTerritoryStates.find(s => s.territory_id === destTid);
+        if (!srcTs || srcTs.owner_player_id !== acceptorId) { validationErrors.push(`Troop source ${srcTid} must be receiver's territory.`); }
+        else if (!destTs || destTs.owner_player_id !== proposerId) { validationErrors.push(`Troop destination ${destTid} must be proposer's territory.`); }
+        else {
+          const avail = effectiveTroops(srcTid);
+          if (avail < tp.amount) { validationErrors.push(`Not enough troops at ${srcTid} (have ${avail}, need ${tp.amount}).`); }
+          else {
+            applyTroopDelta(srcTid, -tp.amount);
+            applyTroopDelta(destTid, +tp.amount);
+          }
+        }
+      }
+    }
+
+    // ── Phase 2: FAIL FAST — if any validation error, apply nothing ──────────
+    if (validationErrors.length > 0) {
+      return Response.json({ error: validationErrors[0], all_errors: validationErrors }, { status: 400 });
+    }
+
+    // ── Phase 3: EXECUTE — all validated; apply all deltas atomically ────────
+
+    // Apply resource deltas
+    for (const [tid, resources] of Object.entries(resourceDelta)) {
+      const ts = allTerritoryStates.find(s => s.territory_id === tid);
+      if (!ts) continue;
+      const newStorage = { ...(ts.resource_storage ?? {}) };
+      for (const [res, delta] of Object.entries(resources)) {
+        newStorage[res] = Math.max(0, (newStorage[res] ?? 0) + delta);
+      }
+      await base44.asServiceRole.entities.TerritoryState.update(ts.id, { resource_storage: newStorage });
+    }
+
+    // Apply troop deltas
+    for (const [tid, delta] of Object.entries(troopDelta)) {
+      if (delta === 0) continue;
+      const ts = allTerritoryStates.find(s => s.territory_id === tid);
+      if (!ts) continue;
+      await base44.asServiceRole.entities.TerritoryState.update(ts.id, {
+        troop_count: Math.max(0, (ts.troop_count ?? 0) + delta),
+      });
+    }
+
+    // Apply influence deltas
+    for (const [key, delta] of Object.entries(influenceDelta)) {
+      if (delta === 0) continue;
+      const [pid, region] = key.split('|');
+      const pools = await base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id, region_id: region, player_id: pid });
+      if (pools[0]) {
+        await base44.asServiceRole.entities.RegionalInfluencePool.update(pools[0].id, {
+          spendable_influence: Math.max(0, (pools[0].spendable_influence ?? 0) + delta),
+          last_updated_round: round,
+        });
+      } else if (delta > 0) {
+        await base44.asServiceRole.entities.RegionalInfluencePool.create({
+          campaign_id, region_id: region, player_id: pid,
+          spendable_influence: delta, last_updated_round: round,
+        });
+      }
     }
 
     // ── Peace treaty — create Non-Aggression Pact effect if included ──────

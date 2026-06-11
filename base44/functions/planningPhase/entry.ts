@@ -457,6 +457,20 @@ Deno.serve(async (req) => {
       objective_dealt_round: round,
     });
 
+    // ── Auto-evaluate held objectives before dealing new cards ─────────────
+    // This runs inline here (no local imports allowed) by delegating to objectivePhase
+    // via base44.functions.invoke (service-role call not available cross-function;
+    // evaluation logic is light so we do a minimal inline check here).
+    // Full evaluation is available via objectivePhase/evaluateObjectives.
+    // We call it as a best-effort fire-and-forget — errors don't block dealing.
+    try {
+      await base44.functions.invoke('objectivePhase', {
+        action: 'evaluateObjectives',
+        campaign_id,
+        acting_as_player_id: actingPlayer.id,
+      });
+    } catch { /* non-blocking */ }
+
     // Fetch card definitions for response
     const allCardDefs = await base44.asServiceRole.entities.SecretObjectiveCard.list();
     const cardMap = {};

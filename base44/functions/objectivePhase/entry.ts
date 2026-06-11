@@ -469,9 +469,16 @@ Deno.serve(async (req) => {
     });
   }
 
-  // ── ACTION: completeObjective ──────────────────────────────────────────────
-  // Marks objective as complete, awards influence, moves to discard.
+  // ── ACTION: completeObjective — ADMIN/SYSTEM ONLY ────────────────────────
+  // Normal players cannot self-complete objectives. Completion is automatic (system evaluation)
+  // or via adminCompleteObjective. This endpoint is kept for backward compat but requires admin.
   if (action === 'completeObjective') {
+    if (!isAdmin) {
+      return Response.json({
+        error: 'Objectives are completed automatically by the system. Manual completion is not available.',
+      }, { status: 403 });
+    }
+    // Admin path — same as adminCompleteObjective but for the acting player
     const { card_id, placement_territory_id } = body;
     if (!card_id) return Response.json({ error: 'card_id is required' }, { status: 400 });
 
@@ -479,55 +486,35 @@ Deno.serve(async (req) => {
     const cards = ledger?.objective_cards_json ?? emptyCards();
 
     if (!(cards.held ?? []).includes(card_id)) {
-      return Response.json({ error: 'card_id is not in your active objectives.' }, { status: 400 });
+      return Response.json({ error: 'card_id is not in the player\'s active objectives.' }, { status: 400 });
     }
 
-    // Load card definition
     const allCards = await base44.asServiceRole.entities.SecretObjectiveCard.list();
     const cardDef = allCards.find(c => c.card_id === card_id);
     if (!cardDef) return Response.json({ error: 'Card definition not found.' }, { status: 404 });
 
     const rewardAmount = OBJECTIVE_TIER_REWARDS[cardDef.tier] ?? 3;
-
-    // Resolve placement territory
     const placementTerritory = resolvePlacement(cardDef, placement_territory_id, {});
 
-    // Award influence if we have a placement territory
     let influenceResult = null;
     if (placementTerritory) {
       influenceResult = await addDirectInfluence(base44, campaign_id, actingPlayer.id, placementTerritory, rewardAmount, round);
     }
 
-    // Move to discard pile (deck)
     await addToDiscard(base44, campaign_id, [card_id]);
 
-    // Update ledger — remove from held, add to completed
     const newHeld = (cards.held ?? []).filter(cid => cid !== card_id);
-    const completedEntry = {
-      card_id,
-      completed_round: round,
-      reward_amount: rewardAmount,
-      placement_territory_id: placementTerritory ?? null,
-    };
-    const updatedCards = {
-      ...cards,
-      held: newHeld,
-      completed: [...(cards.completed ?? []), completedEntry],
-    };
+    const completedEntry = { card_id, completed_round: round, reward_amount: rewardAmount, placement_territory_id: placementTerritory ?? null };
+    const updatedCards = { ...cards, held: newHeld, completed: [...(cards.completed ?? []), completedEntry] };
     await upsertLedger(base44, campaign_id, actingPlayer.id, {
-      objective_cards_json: updatedCards,
-      updated_at_round: round,
+      objective_cards_json: updatedCards, updated_at_round: round,
     });
 
     return Response.json({
-      success: true,
-      card_id,
-      card_title: cardDef.title,
-      tier: cardDef.tier,
-      reward_amount: rewardAmount,
-      placement_territory_id: placementTerritory,
+      success: true, card_id, card_title: cardDef.title, tier: cardDef.tier,
+      reward_amount: rewardAmount, placement_territory_id: placementTerritory,
       influence_region: influenceResult?.region_id ?? null,
-      message: `Completed "${cardDef.title}". Awarded ${rewardAmount} influence.`,
+      message: `[Admin] Completed "${cardDef.title}" for ${actingPlayer.display_name}.`,
     });
   }
 
@@ -609,6 +596,119 @@ Deno.serve(async (req) => {
     });
 
     return Response.json({ success: true, card_id, target_player: targetPlayer.display_name });
+  }
+
+  // ── ACTION: evaluateObjectives ────────────────────────────────────────────
+  // Called at the start of Planning Phase to auto-complete eligible objectives.
+  // Checks each held objective's trigger_condition against current game state.
+  // Awards influence, moves completed cards to discard. Idempotent per round.
+  // Only objectives with auto_completable=true (or automation_level='automatic') are evaluated.
+  if (action === 'evaluateObjectives') {
+    const ledger = await getLedger(base44, campaign_id, actingPlayer.id);
+    const cards = ledger?.objective_cards_json ?? emptyCards();
+    const held = cards.held ?? [];
+    if (held.length === 0) {
+      return Response.json({ success: true, evaluated: 0, completed: [], message: 'No held objectives to evaluate.' });
+    }
+
+    const allCardDefs = await base44.asServiceRole.entities.SecretObjectiveCard.list();
+    const [allTerritoryStates] = await Promise.all([
+      base44.asServiceRole.entities.TerritoryState.filter({ campaign_id }),
+    ]);
+
+    const ownedStates = allTerritoryStates.filter(s => s.owner_player_id === actingPlayer.id);
+    const ownedTerritoryIds = new Set(ownedStates.map(s => s.territory_id));
+
+    // Load regional influence pools
+    const allPools = await base44.asServiceRole.entities.RegionalInfluencePool.filter({
+      campaign_id, player_id: actingPlayer.id,
+    });
+    const poolByRegion = {};
+    for (const p of allPools) poolByRegion[p.region_id] = p.spendable_influence ?? 0;
+
+    const completedThisEval = [];
+    let updatedCards = { ...cards };
+
+    for (const cardId of held) {
+      const cardDef = allCardDefs.find(c => c.card_id === cardId);
+      if (!cardDef) continue;
+      // Only auto-evaluate cards marked as auto_completable
+      if (!cardDef.auto_completable) continue;
+      // Skip if already completed this round (idempotency)
+      const alreadyDone = (updatedCards.completed ?? []).some(
+        e => e.card_id === cardId && e.completed_round === round
+      );
+      if (alreadyDone) continue;
+
+      // ── Evaluate trigger_condition ──────────────────────────────────────
+      // Supported conditions (extend as objective catalog grows):
+      //   hold_territories:<count>          — own at least N territories
+      //   hold_region:<region_id>           — own ALL territories in a region
+      //   influence_pool:<region>:<min>     — have >= min spendable influence in region
+      //   territories_count:<min>           — alias for hold_territories
+      let conditionMet = false;
+      const condition = cardDef.trigger_condition ?? '';
+      const params    = cardDef.metadata_json ?? {};
+
+      if (condition.startsWith('hold_territories:') || condition.startsWith('territories_count:')) {
+        const required = parseInt(condition.split(':')[1]) || (params.count ?? 0);
+        conditionMet = ownedStates.length >= required;
+      } else if (condition.startsWith('hold_region:')) {
+        const regionId = condition.split(':')[1] ?? params.region_id;
+        const regionTerritories = allTerritoryStates.filter(s => SC_TERRITORY_REGION[s.territory_id] === regionId);
+        conditionMet = regionTerritories.length > 0 && regionTerritories.every(s => s.owner_player_id === actingPlayer.id);
+      } else if (condition.startsWith('influence_pool:')) {
+        const parts  = condition.split(':');
+        const region = parts[1];
+        const minAmt = parseInt(parts[2]) || (params.min_influence ?? 0);
+        conditionMet = (poolByRegion[region] ?? 0) >= minAmt;
+      }
+      // Unknown or no condition: skip (requires manual/admin completion)
+      if (!conditionMet) continue;
+
+      // ── Complete the objective ──────────────────────────────────────────
+      const rewardAmount = OBJECTIVE_TIER_REWARDS[cardDef.tier] ?? 3;
+
+      // Find a suitable placement territory (highest troop owned territory)
+      let placementTerritory = null;
+      if (ownedStates.length > 0) {
+        const best = ownedStates.reduce((a, b) => (b.troop_count ?? 0) > (a.troop_count ?? 0) ? b : a);
+        placementTerritory = best.territory_id;
+      }
+
+      if (placementTerritory) {
+        await addDirectInfluence(base44, campaign_id, actingPlayer.id, placementTerritory, rewardAmount, round);
+      }
+      await addToDiscard(base44, campaign_id, [cardId]);
+
+      const completedEntry = {
+        card_id: cardId, completed_round: round,
+        reward_amount: rewardAmount,
+        placement_territory_id: placementTerritory ?? null,
+        auto_completed: true,
+      };
+      updatedCards = {
+        ...updatedCards,
+        held: (updatedCards.held ?? []).filter(cid => cid !== cardId),
+        completed: [...(updatedCards.completed ?? []), completedEntry],
+      };
+      completedThisEval.push({ card_id: cardId, card_title: cardDef.title, reward_amount: rewardAmount });
+    }
+
+    if (completedThisEval.length > 0) {
+      await upsertLedger(base44, campaign_id, actingPlayer.id, {
+        objective_cards_json: updatedCards, updated_at_round: round,
+      });
+    }
+
+    return Response.json({
+      success: true,
+      evaluated: held.length,
+      completed: completedThisEval,
+      message: completedThisEval.length > 0
+        ? `Auto-completed ${completedThisEval.length} objective(s).`
+        : 'No objectives met auto-completion criteria.',
+    });
   }
 
   // ── ACTION: seedCatalog (admin only) ──────────────────────────────────────
