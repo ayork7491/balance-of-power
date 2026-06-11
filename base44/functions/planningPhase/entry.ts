@@ -692,7 +692,7 @@ Deno.serve(async (req) => {
         for (const territory_id of economicStaged) {
           const ts = stateMap[territory_id];
           if (!ts) continue;
-          const primary = SC_RESOURCE_TYPES[territory_id] ?? 'food';
+          const primary = ts.resource_type ?? SC_RESOURCE_TYPES[territory_id] ?? 'food';
           const generated = { gold: 0, iron: 0, timber: 0, stone: 0, food: 0 };
           generated[primary] = 1;
           const before = { gold: 0, iron: 0, timber: 0, stone: 0, food: 0, ...(ts.resource_storage ?? {}) };
@@ -704,18 +704,34 @@ Deno.serve(async (req) => {
             resource_storage: after,
             resource_type: primary,
           });
-          activationResults.push({ territory_id, generated, storage_after: after });
+          // Store per-territory audit detail with before/after for delta reporting
+          activationResults.push({
+            territory_id,
+            player_id: actingPlayer.id,
+            resource_type: primary,
+            amount_generated: 1,
+            before_amount: before[primary] ?? 0,
+            after_amount: after[primary] ?? 0,
+            generated,
+            storage_before: { ...before },
+            storage_after: after,
+          });
         }
 
         await base44.asServiceRole.entities.SetupLog.create({
           campaign_id, phase: 'deploy', round,
           event_type: 'resource_activations_locked',
           player_id: actingPlayer.id,
-          payload: { territory_ids: economicStaged, activated_count: activationResults.length, via: 'planning_lock' },
+          payload: {
+            territory_ids: economicStaged,
+            activated_count: activationResults.length,
+            activation_details: activationResults,
+            via: 'planning_lock',
+          },
           is_public: false,
         });
 
-        results.economic = { locked: true, activated_count: activationResults.length };
+        results.economic = { locked: true, activated_count: activationResults.length, activation_details: activationResults };
       } else {
         results.economic = { locked: true, activated_count: 0, skipped: true };
       }

@@ -425,12 +425,22 @@ Deno.serve(async (req) => {
       }, { status: 400 });
     }
 
+    // ── Idempotency: if exact same submission_id already processed, return it ──
+    const { submission_id } = body;
+    if (submission_id) {
+      const dupIdx = currentAttacks.findIndex(a => a.submission_id === submission_id);
+      if (dupIdx >= 0) {
+        return Response.json({ success: true, attack_id: currentAttacks[dupIdx].id, attacks: currentAttacks, idempotent: true });
+      }
+    }
+
     // Upsert attack: if same origin→target exists, replace it
     const existingIdx = currentAttacks.findIndex(
       a => a.origin_territory_id === origin_territory_id && a.target_territory_id === target_territory_id
     );
     const newAttack = {
       id: existingIdx >= 0 ? currentAttacks[existingIdx].id : `atk_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      submission_id: submission_id ?? null,
       origin_territory_id,
       target_territory_id,
       committed_troops,
@@ -600,11 +610,67 @@ Deno.serve(async (req) => {
 
     // Flatten all attacks across all players
     const allAttacks = [];
+    const rejectedAttacks = [];
     for (const dec of finalDecisions) {
       for (const atk of (dec.data?.attacks ?? [])) {
         allAttacks.push({ ...atk, player_id: dec.player_id });
       }
     }
+
+    // ── DEFENSIVE RE-VALIDATION: check each attack against live board state ──
+    // This guards against stale staged attacks, double-submissions, and impossible states.
+    const liveStatesForValidation = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+    const liveStateMap = {};
+    for (const ts of liveStatesForValidation) liveStateMap[ts.territory_id] = ts;
+
+    // Track troops already committed per origin (within this processPhaseEnd run)
+    const committedPerOrigin = {};
+    // Track duplicate submission_ids
+    const seenSubmissionIds = new Set();
+
+    const validAttacks = [];
+    for (const atk of allAttacks) {
+      const originState = liveStateMap[atk.origin_territory_id];
+      const targetState = liveStateMap[atk.target_territory_id];
+      const alreadyCommitted = committedPerOrigin[atk.origin_territory_id] ?? 0;
+
+      let rejectionReason = null;
+
+      if (atk.submission_id && seenSubmissionIds.has(atk.submission_id)) {
+        rejectionReason = 'duplicate_submission';
+      } else if (!originState || originState.owner_player_id !== atk.player_id) {
+        rejectionReason = 'origin_not_owned_by_attacker';
+      } else if (targetState?.owner_player_id === atk.player_id) {
+        rejectionReason = 'target_owned_by_attacker';
+      } else if ((originState.troop_count ?? 0) <= 0) {
+        rejectionReason = 'insufficient_troops_zero';
+      } else if ((atk.committed_troops ?? 0) > ((originState.troop_count ?? 0) - alreadyCommitted)) {
+        rejectionReason = 'insufficient_troops';
+      } else if ((atk.committed_troops ?? 0) < 1) {
+        rejectionReason = 'zero_troops_committed';
+      }
+
+      if (rejectionReason) {
+        rejectedAttacks.push({
+          ...atk,
+          validation_result: 'rejected',
+          rejection_reason: rejectionReason,
+        });
+        await log(base44, campaign_id, round, phase, `attack_rejected_${rejectionReason}`, atk.player_id, {
+          origin_territory_id: atk.origin_territory_id,
+          target_territory_id: atk.target_territory_id,
+          committed_troops: atk.committed_troops,
+          rejection_reason: rejectionReason,
+        }, false);
+      } else {
+        if (atk.submission_id) seenSubmissionIds.add(atk.submission_id);
+        committedPerOrigin[atk.origin_territory_id] = alreadyCommitted + (atk.committed_troops ?? 0);
+        validAttacks.push(atk);
+      }
+    }
+
+    // Replace allAttacks with only valid ones
+    const validatedAttacks = validAttacks;
 
     // ── STEP 1: Remove committed troops from origin territories ──────────────
     const allTerritoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
@@ -613,7 +679,7 @@ Deno.serve(async (req) => {
       postCommitStateById[ts.territory_id] = { ...ts };
     }
 
-    for (const atk of allAttacks) {
+    for (const atk of validatedAttacks) {
       if (postCommitStateById[atk.origin_territory_id]) {
         postCommitStateById[atk.origin_territory_id].troop_count = Math.max(
           0,
@@ -661,7 +727,7 @@ Deno.serve(async (req) => {
     // ── STEP 5: Generate battle cards ─────────────────────────────────────────
     // Track which targets have been consumed into a bloodbath so we don't also
     // generate a second card for the "return" direction.
-    const targetIds     = [...new Set(allAttacks.map(a => a.target_territory_id))];
+    const targetIds     = [...new Set(validatedAttacks.map(a => a.target_territory_id))];
     const battleCards   = [];
     const skirmishResults = [];
     const consumedTargets = new Set(); // bloodbath targets already processed
@@ -669,7 +735,7 @@ Deno.serve(async (req) => {
     for (const targetId of targetIds) {
       if (consumedTargets.has(targetId)) continue; // already handled as the non-target side of a bloodbath pair
 
-      let attacksOnTarget = allAttacks.filter(a => a.target_territory_id === targetId);
+      let attacksOnTarget = validatedAttacks.filter(a => a.target_territory_id === targetId);
 
       // ── Bloodbath detection ──
       // A bloodbath exists when at least one attacker's origin is ALSO a target
@@ -677,7 +743,7 @@ Deno.serve(async (req) => {
       const mutualOrigins = attacksOnTarget
         .map(atk => atk.origin_territory_id)
         .filter(originId =>
-          allAttacks.some(a =>
+          validatedAttacks.some(a =>
             a.origin_territory_id === targetId &&
             a.target_territory_id === originId
           )
@@ -701,10 +767,10 @@ Deno.serve(async (req) => {
           consumedTargets.add(originId);
 
           // Combine all attacks involved in this mutual pair
-          const attacksFromTarget = allAttacks.filter(
+          const attacksFromTarget = validatedAttacks.filter(
             a => a.origin_territory_id === targetId && a.target_territory_id === originId
           );
-          const attacksFromOrigin = allAttacks.filter(
+          const attacksFromOrigin = validatedAttacks.filter(
             a => a.origin_territory_id === originId && a.target_territory_id === targetId
           );
           const allBloodbathAttacks = [...attacksFromOrigin, ...attacksFromTarget];
@@ -846,8 +912,8 @@ Deno.serve(async (req) => {
       }, true);
     }
 
-    // Write public AttackReveal records (one per attack, now publicly visible)
-    for (const atk of allAttacks) {
+    // Write public AttackReveal records (only valid attacks)
+    for (const atk of validatedAttacks) {
       await base44.asServiceRole.entities.AttackReveal.create({
         campaign_id,
         round,
@@ -856,6 +922,20 @@ Deno.serve(async (req) => {
         target_territory_id: atk.target_territory_id,
         committed_troops: atk.committed_troops,
       });
+    }
+
+    // Log rejected attacks summary for audit
+    if (rejectedAttacks.length > 0) {
+      await log(base44, campaign_id, round, phase, 'attacks_rejected_at_resolution', null, {
+        rejected_count: rejectedAttacks.length,
+        rejected: rejectedAttacks.map(a => ({
+          player_id: a.player_id,
+          origin_territory_id: a.origin_territory_id,
+          target_territory_id: a.target_territory_id,
+          committed_troops: a.committed_troops,
+          rejection_reason: a.rejection_reason,
+        })),
+      }, false);
     }
 
     // Phase snapshot — full enriched
@@ -891,7 +971,8 @@ Deno.serve(async (req) => {
     await log(base44, campaign_id, round, phase, 'phase_advanced', null, {
       next_phase: 'battle',
       round,
-      total_attacks: allAttacks.length,
+      total_attacks: validatedAttacks.length,
+      rejected_attacks: rejectedAttacks.length,
       battle_cards_generated: battleCards.length,
       skirmishes_auto_resolved: skirmishResults.length,
     }, true);
@@ -904,7 +985,9 @@ Deno.serve(async (req) => {
     return Response.json({
       success: true,
       next_phase: 'battle',
-      total_attacks: allAttacks.length,
+      total_attacks: validatedAttacks.length,
+      rejected_attacks: rejectedAttacks.length,
+      rejected_details: rejectedAttacks,
       battle_cards: battleCards.length,
       skirmishes: skirmishResults.length,
       round,

@@ -527,14 +527,29 @@ function buildEnrichedActions(cache, phase, round, playerMap) {
   const economic = [];
   const diplomatic = [];
 
-  // Military: attacks
+  // Military: attacks (valid, revealed)
   for (const a of (cache.attackReveals ?? [])) {
     military.push({
-      pillar: 'military', action_type: 'attack',
+      pillar: 'military', action_type: 'attack', validation_result: 'accepted',
       player_id: a.player_id, player: playerMap[a.player_id]?.display_name ?? a.player_id,
       source: tEnrich(a.origin_territory_id), target: tEnrich(a.target_territory_id),
       troops: a.committed_troops ?? 0, timestamp: a.created_date ?? null, round, phase,
     });
+  }
+
+  // Military: rejected attacks (from SetupLog audit)
+  for (const l of (cache.phaseLogs ?? [])) {
+    if (l.event_type === 'attacks_rejected_at_resolution' && l.payload?.rejected) {
+      for (const r of l.payload.rejected) {
+        military.push({
+          pillar: 'military', action_type: 'attack', validation_result: 'rejected',
+          rejection_reason: r.rejection_reason,
+          player_id: r.player_id, player: playerMap[r.player_id]?.display_name ?? r.player_id,
+          source: tEnrich(r.origin_territory_id), target: tEnrich(r.target_territory_id),
+          troops: r.committed_troops ?? 0, timestamp: l.created_date ?? null, round, phase,
+        });
+      }
+    }
   }
 
   // Military: deployments (deploy phase)
@@ -573,14 +588,32 @@ function buildEnrichedActions(cache, phase, round, playerMap) {
     }
   }
 
-  // Economic: resource activations (planning_stage)
+  // Economic: resource activations (planning_stage + SetupLog audit details)
+  // Build a map of player_id → activation_details from resource_activations_locked logs
+  const activationLogMap = {};
+  for (const l of (cache.phaseLogs ?? [])) {
+    if (l.event_type === 'resource_activations_locked' && l.player_id) {
+      activationLogMap[l.player_id] = l.payload?.activation_details ?? [];
+    }
+  }
   for (const d of (cache.phaseDecisions ?? []).filter(d => d.phase === 'planning_stage')) {
     const staged = d.data?.economic_staged ?? [];
     if (staged.length > 0) {
+      const details = activationLogMap[d.player_id] ?? [];
       economic.push({
         pillar: 'economic', action_type: 'activate_resources',
         player_id: d.player_id, player: playerMap[d.player_id]?.display_name ?? d.player_id,
         territories: staged.map(tid => tEnrich(tid)), territory_count: staged.length,
+        activation_details: details.map(a => ({
+          player_id: a.player_id,
+          player_name: playerMap[a.player_id]?.display_name ?? a.player_id,
+          ...tEnrich(a.territory_id),
+          resource_type: a.resource_type,
+          amount_generated: a.amount_generated ?? 1,
+          storage_location: a.territory_id,
+          before_amount: a.before_amount ?? 0,
+          after_amount: a.after_amount ?? 0,
+        })),
         timestamp: d.data?.locked_at ?? d.updated_date ?? null, round, phase,
       });
     }
@@ -1135,13 +1168,41 @@ Deno.serve(async (req) => {
         validationWarnings.push({ type: 'troop_changes_expected_but_empty', severity: 'medium',
           message: 'Military actions submitted but no troop deltas detected. Snapshots may not be authoritative.' });
       }
-      if ((deltaReport.resource_deltas ?? []).length === 0 && enrichedActions.economic.some(a => a.action_type === 'activate_resources')) {
-        validationWarnings.push({ type: 'resource_changes_expected_but_empty', severity: 'medium',
-          message: 'Resource activations submitted but no resource deltas detected.' });
+      {
+        const hasResourceDeltas = (deltaReport.resource_deltas ?? []).length > 0;
+        const hasActivationLog = enrichedActions.economic.some(
+          a => a.action_type === 'activate_resources' && (a.activation_details ?? []).length > 0
+        );
+        if (!hasResourceDeltas && !hasActivationLog && enrichedActions.economic.some(a => a.action_type === 'activate_resources')) {
+          validationWarnings.push({ type: 'resource_changes_expected_but_empty', severity: 'medium',
+            message: 'Resource activations submitted but no resource deltas detected and no activation log found.' });
+        }
       }
       if ((deltaReport.permanent_influence_deltas ?? []).length === 0 && enrichedActions.diplomatic.some(a => a.influence_spent > 0)) {
         validationWarnings.push({ type: 'influence_changes_expected_but_empty', severity: 'low',
           message: 'Influence spent but no influence deltas detected. Snapshots may not have influence data.' });
+      }
+
+      // Rejected attack warnings
+      const rejectedAttackActions = enrichedActions.military.filter(a => a.validation_result === 'rejected');
+      for (const r of rejectedAttackActions) {
+        const warnType = {
+          origin_not_owned_by_attacker: 'unowned_origin_attack_blocked',
+          target_owned_by_attacker:     'self_attack_attempt_blocked',
+          insufficient_troops:          'insufficient_troops_attack_blocked',
+          insufficient_troops_zero:     'insufficient_troops_attack_blocked',
+          zero_troops_committed:        'insufficient_troops_attack_blocked',
+          duplicate_submission:         'duplicate_attack_submission_blocked',
+          stale_action_state:           'stale_attack_submission_blocked',
+        }[r.rejection_reason] ?? 'attack_rejected';
+        validationWarnings.push({
+          type: warnType, severity: 'info',
+          player_id: r.player_id, player_name: r.player,
+          origin: r.source?.territory_name ?? r.source?.territory_id,
+          target: r.target?.territory_name ?? r.target?.territory_id,
+          rejection_reason: r.rejection_reason,
+          message: `Attack from ${r.source?.territory_name ?? r.source?.territory_id} → ${r.target?.territory_name ?? r.target?.territory_id} was rejected: ${r.rejection_reason}`,
+        });
       }
 
       // Battle resolved but no battle_results
@@ -1224,7 +1285,27 @@ Deno.serve(async (req) => {
         resolution_results: {
           ownership_changes:           ownershipChanges,
           troop_movements:             troopDeltasNonZero,
-          resource_changes:            deltaReport.resource_deltas ?? [],
+          resource_changes:            (() => {
+            // Prefer snapshot deltas; fall back to activation log for Planning phase
+            const fromDelta = deltaReport.resource_deltas ?? [];
+            if (fromDelta.length > 0 || targetPhase !== 'deploy') return fromDelta;
+            const entries = [];
+            for (const action of enrichedActions.economic.filter(a => a.action_type === 'activate_resources')) {
+              for (const d of (action.activation_details ?? [])) {
+                entries.push({
+                  player_id:   d.player_id,
+                  player_name: d.player_name,
+                  ...tEnrich(d.territory_id ?? d.storage_location),
+                  resource:    d.resource_type,
+                  before:      d.before_amount ?? 0,
+                  after:       d.after_amount ?? 0,
+                  delta:       d.amount_generated ?? 0,
+                  source:      'activation_log',
+                });
+              }
+            }
+            return entries;
+          })(),
           influence_changes:           [...(deltaReport.permanent_influence_deltas ?? []), ...(deltaReport.spendable_influence_deltas ?? [])],
           structure_changes:           deltaReport.structure_changes ?? [],
           battle_card_changes:         deltaReport.battle_card_changes ?? [],
@@ -1234,7 +1315,27 @@ Deno.serve(async (req) => {
 
         after_snapshot: afterSnapshotData,
 
-        delta_report: deltaReport,
+        delta_report: (() => {
+          // For Planning phase: if snapshot delta has no resource_deltas but activation log does,
+          // inject them so the delta_report is also populated.
+          if (targetPhase !== 'deploy' || (deltaReport.resource_deltas ?? []).length > 0) return deltaReport;
+          const entries = [];
+          for (const action of enrichedActions.economic.filter(a => a.action_type === 'activate_resources')) {
+            for (const d of (action.activation_details ?? [])) {
+              entries.push({
+                player_id:   d.player_id,
+                player_name: d.player_name,
+                ...tEnrich(d.territory_id ?? d.storage_location),
+                resource:    d.resource_type,
+                before:      d.before_amount ?? 0,
+                after:       d.after_amount ?? 0,
+                delta:       d.amount_generated ?? 0,
+                source:      'activation_log',
+              });
+            }
+          }
+          return entries.length > 0 ? { ...deltaReport, resource_deltas: entries } : deltaReport;
+        })(),
 
         validation_warnings: validationWarnings,
       };
