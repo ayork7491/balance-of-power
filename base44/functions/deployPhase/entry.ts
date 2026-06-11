@@ -353,20 +353,91 @@ function mergePlacements(base, additions) {
   return result;
 }
 
-function buildSnapshot({ campaignId, round, phase, snapshotType, territoryStates, activePlayers, deployIncomes }) {
-  return {
-    campaign_id: campaignId, round, phase, snapshot_type: snapshotType,
-    territory_states: territoryStates.map(ts => ({
-      territory_id: ts.territory_id, owner_player_id: ts.owner_player_id ?? null, troop_count: ts.troop_count ?? 0,
-    })),
-    player_standings: activePlayers.map(p => {
-      const owned = territoryStates.filter(ts => ts.owner_player_id === p.id);
-      const troopTotal = owned.reduce((s, ts) => s + (ts.troop_count || 0), 0);
-      const inc = deployIncomes?.[p.id];
-      return { player_id: p.id, display_name: p.display_name, territory_count: owned.length, troop_total: troopTotal, deploy_income: inc?.total ?? null, is_eliminated: p.is_eliminated ?? false };
-    }),
-    deploy_incomes: deployIncomes ?? {},
+// buildSnapshot now captures the full game state for audit-quality snapshots.
+// Pass enrichedData = { influence, regionalPools, buildings, supplyRoutes, objectives, victoryTrackers }
+// for full snapshots. Falls back gracefully when not provided.
+function buildSnapshot({ campaignId, round, phase, snapshotType, territoryStates, activePlayers, deployIncomes, enrichedData }) {
+  const territory_states = territoryStates.map(ts => ({
+    territory_id:     ts.territory_id,
+    owner_player_id:  ts.owner_player_id ?? null,
+    troop_count:      ts.troop_count ?? 0,
+    resource_storage: ts.resource_storage ?? {},
+    has_resource_hub: ts.has_resource_hub ?? false,
+    structures:       ts.structures ?? [],
+    resource_type:    ts.resource_type ?? null,
+  }));
+
+  const player_standings = activePlayers.map(p => {
+    const owned = territoryStates.filter(ts => ts.owner_player_id === p.id);
+    const troopTotal = owned.reduce((s, ts) => s + (ts.troop_count || 0), 0);
+    const inc = deployIncomes?.[p.id];
+    return {
+      player_id:       p.id,
+      display_name:    p.display_name,
+      territory_count: owned.length,
+      troop_total:     troopTotal,
+      deploy_income:   inc?.total ?? null,
+      is_eliminated:   p.is_eliminated ?? false,
+    };
+  });
+
+  const snapshot = {
+    campaign_id:      campaignId,
+    round,
+    phase,
+    snapshot_type:    snapshotType,
+    territory_states,
+    player_standings,
+    deploy_incomes:   deployIncomes ?? {},
+    _schema_version:  2,
   };
+
+  // Attach enriched data when provided
+  if (enrichedData) {
+    snapshot.permanent_influence = (enrichedData.influence ?? []).map(i => ({
+      territory_id:     i.territory_id,
+      player_id:        i.player_id,
+      influence_amount: i.influence_amount ?? 0,
+    }));
+    snapshot.spendable_influence = (enrichedData.regionalPools ?? []).map(p => ({
+      region_id:           p.region_id,
+      player_id:           p.player_id,
+      spendable_influence: p.spendable_influence ?? 0,
+    }));
+    snapshot.buildings = (enrichedData.buildings ?? []).map(b => ({
+      territory_id:     b.territory_id,
+      player_id:        b.player_id,
+      building_type:    b.building_type,
+      pillar_type:      b.pillar_type,
+      status:           b.status,
+      started_round:    b.started_round,
+      completed_round:  b.completed_round,
+    }));
+    snapshot.supply_routes = (enrichedData.supplyRoutes ?? []).map(r => ({
+      id:                r.id,
+      owner_player_id:   r.owner_player_id,
+      hub_territory_id:  r.hub_territory_id,
+      source_territory_id: r.source_territory_id,
+      route_status:      r.route_status,
+      resource_type:     r.resource_type,
+      created_round:     r.created_round,
+    }));
+    snapshot.objectives = (enrichedData.objectives ?? []).map(o => ({
+      player_id:        o.player_id,
+      global_influence: o.global_influence ?? 0,
+      objective_cards:  o.objective_cards_json ?? {},
+    }));
+    snapshot.victory_scores = (enrichedData.victoryTrackers ?? []).map(v => ({
+      player_id:       v.player_id,
+      occupancy_score: v.occupancy_score ?? 0,
+      wealth_score:    v.wealth_score ?? 0,
+      influence_score: v.influence_score ?? 0,
+      has_won:         v.has_won ?? false,
+      winning_condition: v.winning_condition ?? null,
+    }));
+  }
+
+  return snapshot;
 }
 
 async function log(base44, campaignId, round, phase, eventType, playerId, payload, isPublic = true) {
@@ -541,9 +612,19 @@ Deno.serve(async (req) => {
       console.warn('[startDeploy] Starting influence seed failed (non-fatal):', infErr?.message);
     }
 
+    // Fetch enriched data for full snapshot
+    const [snapshotInfluence, snapshotRegionalPools, snapshotBuildings, snapshotSupplyRoutes, snapshotObjectives, snapshotVictory] = await Promise.all([
+      base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id }),
+      base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id }),
+      base44.asServiceRole.entities.TerritoryBuilding.filter({ campaign_id }),
+      base44.asServiceRole.entities.SupplyRoute.filter({ campaign_id }),
+      base44.asServiceRole.entities.PlayerInfluenceLedger.filter({ campaign_id }),
+      base44.asServiceRole.entities.VictoryTracker.filter({ campaign_id }),
+    ]);
     const snapshot = buildSnapshot({
       campaignId: campaign_id, round, phase, snapshotType: 'phase_start',
       territoryStates: allTerritoryStates, activePlayers, deployIncomes,
+      enrichedData: { influence: snapshotInfluence, regionalPools: snapshotRegionalPools, buildings: snapshotBuildings, supplyRoutes: snapshotSupplyRoutes, objectives: snapshotObjectives, victoryTrackers: snapshotVictory },
     });
     await base44.asServiceRole.entities.PhaseSnapshot.create(snapshot);
 
@@ -790,14 +871,23 @@ Deno.serve(async (req) => {
     }
     console.log('[deployPhase reveal] Full diagnostics:', JSON.stringify(revealDiagnostics, null, 2));
 
-    const finalTerritoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
-    const incomeRecords = await base44.asServiceRole.entities.DeployIncome.filter({ campaign_id, round });
+    const [finalTerritoryStates, incomeRecords, endInfluence, endRegionalPools, endBuildings, endSupplyRoutes, endObjectives, endVictory] = await Promise.all([
+      base44.asServiceRole.entities.TerritoryState.filter({ campaign_id }),
+      base44.asServiceRole.entities.DeployIncome.filter({ campaign_id, round }),
+      base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id }),
+      base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id }),
+      base44.asServiceRole.entities.TerritoryBuilding.filter({ campaign_id }),
+      base44.asServiceRole.entities.SupplyRoute.filter({ campaign_id }),
+      base44.asServiceRole.entities.PlayerInfluenceLedger.filter({ campaign_id }),
+      base44.asServiceRole.entities.VictoryTracker.filter({ campaign_id }),
+    ]);
     const deployIncomes = {};
     for (const inc of incomeRecords) deployIncomes[inc.player_id] = inc;
 
     const snapshot = buildSnapshot({
       campaignId: campaign_id, round, phase, snapshotType: 'phase_end',
       territoryStates: finalTerritoryStates, activePlayers, deployIncomes,
+      enrichedData: { influence: endInfluence, regionalPools: endRegionalPools, buildings: endBuildings, supplyRoutes: endSupplyRoutes, objectives: endObjectives, victoryTrackers: endVictory },
     });
     await base44.asServiceRole.entities.PhaseSnapshot.create(snapshot);
 

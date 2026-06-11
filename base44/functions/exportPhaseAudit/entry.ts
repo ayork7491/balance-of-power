@@ -766,38 +766,146 @@ Deno.serve(async (req) => {
       const nextPhaseBeforeRecord = [...nextPhaseSnapshots, ...nextRoundSnapshots]
         .find(s => BEFORE_TYPES.has(s.snapshot_type ?? s.type)) ?? null;
 
-      // ── Resolve before snapshot ──────────────────────────────────────────
-      let beforeSnapshotData, beforeCapturedAt, beforeSource;
+      // ── Helpers: enrich a stored snapshot with canonical names ──────────────
+      // Stored snapshots contain raw IDs. We layer on canonical display names for the
+      // export consumer without altering the authoritative values.
+      function enrichStoredSnapshot(stored, pMap) {
+        if (!stored || typeof stored !== 'object') return stored;
+        const enriched = { ...stored };
 
-      // A stored before-snapshot has all the minimal fields (territory_states,
-      // player_standings). We merge with a live buildSnapshot to ensure rich fields
-      // (resources, influence, buildings, etc.) are present when the stored record
-      // uses the old minimal schema.
-      if (beforeRecord) {
-        // Prefer stored record's territory_states/player_standings but fill in rich
-        // fields from liveSnapshot if missing (live is good enough for before-rich context
-        // since these fields don't change rapidly).
-        const stored = beforeRecord.data ?? {};
-        if (stored.territory_states && !stored.permanent_influence) {
-          // Old minimal schema — enrich territory_states with canonical names
-          const enrichedTS = (stored.territory_states ?? []).map(t => ({
+        // Territory states — add canonical names
+        if (Array.isArray(stored.territory_states)) {
+          enriched.territory_states = stored.territory_states.map(t => ({
             ...tEnrich(t.territory_id),
-            owner_player_id: t.owner_player_id ?? null,
-            owner_name: t.owner_player_id ? (playerMap[t.owner_player_id]?.display_name ?? t.owner_player_id) : null,
-            troop_count: t.troop_count ?? 0,
+            owner_player_id:  t.owner_player_id ?? null,
+            owner_name:       t.owner_player_id ? (pMap[t.owner_player_id]?.display_name ?? t.owner_player_id) : null,
+            troop_count:      t.troop_count ?? 0,
             resource_storage: t.resource_storage ?? {},
             has_resource_hub: t.has_resource_hub ?? false,
-            structures: t.structures ?? [],
+            structures:       t.structures ?? [],
+            resource_type:    t.resource_type ?? null,
           }));
-          beforeSnapshotData = {
-            ...liveSnapshot,        // rich fields from live (best available for before context)
-            territory_states: enrichedTS,    // authoritative: from stored record
-            player_standings: stored.player_standings ?? liveSnapshot.player_standings,
-          };
-          beforeSource = 'stored_phase_snapshot_minimal_enriched';
+        }
+
+        // Permanent influence — add canonical names
+        if (Array.isArray(stored.permanent_influence)) {
+          enriched.permanent_influence = stored.permanent_influence.map(i => ({
+            ...tEnrich(i.territory_id),
+            player_id:        i.player_id,
+            player_name:      pMap[i.player_id]?.display_name ?? i.player_id,
+            influence_amount: i.influence_amount ?? 0,
+          }));
+        }
+
+        // Spendable influence — add player names
+        if (Array.isArray(stored.spendable_influence)) {
+          enriched.spendable_influence = stored.spendable_influence.map(p => ({
+            region_id:           p.region_id,
+            player_id:           p.player_id,
+            player_name:         pMap[p.player_id]?.display_name ?? p.player_id,
+            spendable_influence: p.spendable_influence ?? 0,
+          }));
+        }
+
+        // Buildings — add canonical names
+        if (Array.isArray(stored.buildings)) {
+          enriched.buildings = stored.buildings.map(b => ({
+            ...tEnrich(b.territory_id),
+            player_id:       b.player_id,
+            player_name:     pMap[b.player_id]?.display_name ?? b.player_id,
+            building_type:   b.building_type,
+            pillar_type:     b.pillar_type,
+            status:          b.status,
+            started_round:   b.started_round,
+            completed_round: b.completed_round,
+          }));
+        }
+
+        // Supply routes — add canonical names
+        if (Array.isArray(stored.supply_routes)) {
+          enriched.supply_routes = stored.supply_routes.map(r => ({
+            id:            r.id,
+            owner_player_id: r.owner_player_id,
+            owner_name:    pMap[r.owner_player_id]?.display_name ?? r.owner_player_id,
+            hub:           tEnrich(r.hub_territory_id),
+            source:        tEnrich(r.source_territory_id),
+            route_status:  r.route_status,
+            resource_type: r.resource_type,
+            created_round: r.created_round,
+          }));
+        }
+
+        // Objectives — add player names
+        if (Array.isArray(stored.objectives)) {
+          enriched.objectives = stored.objectives.map(o => ({
+            player_id:        o.player_id,
+            player_name:      pMap[o.player_id]?.display_name ?? o.player_id,
+            global_influence: o.global_influence ?? 0,
+            objective_cards:  o.objective_cards ?? {},
+          }));
+        }
+
+        // Victory scores — add player names
+        if (Array.isArray(stored.victory_scores)) {
+          enriched.victory_scores = stored.victory_scores.map(v => ({
+            player_id:         v.player_id,
+            player_name:       pMap[v.player_id]?.display_name ?? v.player_id,
+            occupancy_score:   v.occupancy_score ?? 0,
+            wealth_score:      v.wealth_score ?? 0,
+            influence_score:   v.influence_score ?? 0,
+            has_won:           v.has_won ?? false,
+            winning_condition: v.winning_condition ?? null,
+          }));
+        }
+
+        return enriched;
+      }
+
+      // Check whether a stored snapshot is fully populated (schema v2+)
+      function isFullSnapshot(stored) {
+        if (!stored) return false;
+        const data = stored.data ?? stored;
+        return Array.isArray(data.territory_states) && data.territory_states.length > 0
+          && (Array.isArray(data.permanent_influence) || Array.isArray(data.buildings));
+      }
+
+      // For minimal (v1) snapshots, merge the stored territory/player data with the
+      // live snapshot's rich fields. The live values are NOT authoritative for historical
+      // phases but are better than nothing for influence/buildings/objectives.
+      function mergeMinimalWithLive(stored, live, pMap) {
+        const enrichedTS = (stored.territory_states ?? []).map(t => ({
+          ...tEnrich(t.territory_id),
+          owner_player_id:  t.owner_player_id ?? null,
+          owner_name:       t.owner_player_id ? (pMap[t.owner_player_id]?.display_name ?? t.owner_player_id) : null,
+          troop_count:      t.troop_count ?? 0,
+          resource_storage: t.resource_storage ?? {},
+          has_resource_hub: t.has_resource_hub ?? false,
+          structures:       t.structures ?? [],
+          resource_type:    t.resource_type ?? null,
+        }));
+        return {
+          ...live,
+          territory_states: enrichedTS,
+          player_standings: stored.player_standings ?? live.player_standings,
+          _merged_from_minimal: true,
+        };
+      }
+
+      // ── Resolve before snapshot ──────────────────────────────────────────
+      let beforeSnapshotData, beforeCapturedAt, beforeSource;
+      diagnostics.before_snapshot_population = 'pending';
+
+      if (beforeRecord) {
+        const stored = beforeRecord.data ?? beforeRecord;
+        if (isFullSnapshot(beforeRecord)) {
+          beforeSnapshotData = enrichStoredSnapshot(stored, playerMap);
+          beforeSource = 'stored_full';
+          diagnostics.before_snapshot_population = 'success';
         } else {
-          beforeSnapshotData = stored;
-          beforeSource = 'stored';
+          // Old minimal schema — merge with live for rich fields
+          beforeSnapshotData = mergeMinimalWithLive(stored, liveSnapshot, playerMap);
+          beforeSource = 'stored_minimal_merged_with_live';
+          diagnostics.before_snapshot_population = 'partial_minimal_schema';
         }
         beforeCapturedAt = beforeRecord.created_date ?? null;
         diagnostics.before_snapshot_source = 'stored';
@@ -806,16 +914,18 @@ Deno.serve(async (req) => {
         beforeCapturedAt   = new Date().toISOString();
         beforeSource       = 'live_state_at_export_time';
         diagnostics.before_snapshot_source = 'live_fallback';
+        diagnostics.before_snapshot_population = (liveSnapshot.territory_states?.length > 0) ? 'success_live' : 'failed_empty';
       } else {
-        // Completed phase but no stored before — use live (contaminated but best available)
         beforeSnapshotData = liveSnapshot;
         beforeCapturedAt   = new Date().toISOString();
         beforeSource       = 'live_state_fallback_no_stored_snapshot';
         diagnostics.before_snapshot_source = 'live_fallback_missing';
+        diagnostics.before_snapshot_population = 'failed_no_stored_snapshot';
       }
 
       // ── Resolve after snapshot ───────────────────────────────────────────
       let afterSnapshotData, afterCapturedAt, afterSource, phaseCompletionState;
+      diagnostics.after_snapshot_population = 'pending';
 
       if (isCurrentPhase) {
         afterSnapshotData    = liveSnapshot;
@@ -823,53 +933,31 @@ Deno.serve(async (req) => {
         afterSource          = 'current_in_progress_state_only';
         phaseCompletionState = 'in_progress';
         diagnostics.after_snapshot_source = 'live_in_progress';
+        diagnostics.after_snapshot_population = (liveSnapshot.territory_states?.length > 0) ? 'success_live' : 'failed_empty';
       } else if (afterRecord) {
-        // Full authoritative stored after-snapshot
-        const stored = afterRecord.data ?? {};
-        if (stored.territory_states && !stored.permanent_influence) {
-          const enrichedTS = (stored.territory_states ?? []).map(t => ({
-            ...tEnrich(t.territory_id),
-            owner_player_id: t.owner_player_id ?? null,
-            owner_name: t.owner_player_id ? (playerMap[t.owner_player_id]?.display_name ?? t.owner_player_id) : null,
-            troop_count: t.troop_count ?? 0,
-            resource_storage: t.resource_storage ?? {},
-            has_resource_hub: t.has_resource_hub ?? false,
-            structures: t.structures ?? [],
-          }));
-          afterSnapshotData = {
-            ...liveSnapshot,
-            territory_states: enrichedTS,
-            player_standings: stored.player_standings ?? liveSnapshot.player_standings,
-          };
-          afterSource = 'stored_after_minimal_enriched';
+        const stored = afterRecord.data ?? afterRecord;
+        if (isFullSnapshot(afterRecord)) {
+          afterSnapshotData = enrichStoredSnapshot(stored, playerMap);
+          afterSource = 'stored_full';
+          diagnostics.after_snapshot_population = 'success';
         } else {
-          afterSnapshotData = stored;
-          afterSource = 'stored';
+          afterSnapshotData = mergeMinimalWithLive(stored, liveSnapshot, playerMap);
+          afterSource = 'stored_minimal_merged_with_live';
+          diagnostics.after_snapshot_population = 'partial_minimal_schema';
         }
         afterCapturedAt      = afterRecord.created_date ?? null;
         phaseCompletionState = 'completed';
         diagnostics.after_snapshot_source = 'stored';
       } else if (nextPhaseBeforeRecord) {
-        const stored = nextPhaseBeforeRecord.data ?? {};
-        if (stored.territory_states && !stored.permanent_influence) {
-          const enrichedTS = (stored.territory_states ?? []).map(t => ({
-            ...tEnrich(t.territory_id),
-            owner_player_id: t.owner_player_id ?? null,
-            owner_name: t.owner_player_id ? (playerMap[t.owner_player_id]?.display_name ?? t.owner_player_id) : null,
-            troop_count: t.troop_count ?? 0,
-            resource_storage: t.resource_storage ?? {},
-            has_resource_hub: t.has_resource_hub ?? false,
-            structures: t.structures ?? [],
-          }));
-          afterSnapshotData = {
-            ...liveSnapshot,
-            territory_states: enrichedTS,
-            player_standings: stored.player_standings ?? liveSnapshot.player_standings,
-          };
-          afterSource = 'next_phase_before_snapshot_minimal_enriched';
+        const stored = nextPhaseBeforeRecord.data ?? nextPhaseBeforeRecord;
+        if (isFullSnapshot(nextPhaseBeforeRecord)) {
+          afterSnapshotData = enrichStoredSnapshot(stored, playerMap);
+          afterSource = 'next_phase_before_snapshot_full';
+          diagnostics.after_snapshot_population = 'success';
         } else {
-          afterSnapshotData = nextPhaseBeforeRecord.data;
-          afterSource = 'next_phase_before_snapshot_equals_after';
+          afterSnapshotData = mergeMinimalWithLive(stored, liveSnapshot, playerMap);
+          afterSource = 'next_phase_before_snapshot_minimal_merged';
+          diagnostics.after_snapshot_population = 'partial_minimal_schema';
         }
         afterCapturedAt      = nextPhaseBeforeRecord.created_date ?? null;
         phaseCompletionState = 'completed';
@@ -880,6 +968,7 @@ Deno.serve(async (req) => {
         afterSource          = 'live_state_fallback_no_stored_after_snapshot';
         phaseCompletionState = 'completed_no_stored_snapshot';
         diagnostics.after_snapshot_source = 'live_fallback_missing';
+        diagnostics.after_snapshot_population = 'failed_no_stored_snapshot';
       }
 
       // Phase timing from SetupLog events (best-effort; null if not recorded)
@@ -946,15 +1035,42 @@ Deno.serve(async (req) => {
       const validationWarnings = [];
       let exportValidationStatus = 'passed';
 
+      // Task 8: Empty snapshot detection — fail hard if snapshots have no territory data
+      const beforeTerritoryCount = (beforeSnapshotData?.territory_states ?? []).length;
+      const afterTerritoryCount  = (afterSnapshotData?.territory_states ?? []).length;
+
+      if (beforeTerritoryCount === 0) {
+        validationWarnings.push({ type: 'before_snapshot_empty', severity: 'critical',
+          message: 'Before snapshot contains no territory data. Cannot generate accurate deltas.',
+          reason: 'empty_snapshots' });
+        exportValidationStatus = 'failed';
+        diagnostics.before_snapshot_population = 'failed_empty';
+      }
+      if (afterTerritoryCount === 0) {
+        validationWarnings.push({ type: 'after_snapshot_empty', severity: 'critical',
+          message: 'After snapshot contains no territory data. Cannot generate accurate deltas.',
+          reason: 'empty_snapshots' });
+        exportValidationStatus = 'failed';
+        diagnostics.after_snapshot_population = 'failed_empty';
+      }
+
       if (diagnostics.before_snapshot_source.includes('missing')) {
         validationWarnings.push({ type: 'before_snapshot_not_authoritative', severity: 'high',
           message: 'No stored before-snapshot found. Before snapshot reflects current live state.' });
-        exportValidationStatus = 'failed';
+        if (exportValidationStatus === 'passed') exportValidationStatus = 'warning';
       }
       if (diagnostics.after_snapshot_source.includes('missing')) {
         validationWarnings.push({ type: 'after_snapshot_not_authoritative', severity: 'high',
           message: 'No stored after-snapshot found. After snapshot reflects current live state.' });
-        exportValidationStatus = 'failed';
+        if (exportValidationStatus === 'passed') exportValidationStatus = 'warning';
+      }
+      if (diagnostics.before_snapshot_population === 'partial_minimal_schema') {
+        validationWarnings.push({ type: 'before_snapshot_minimal_schema', severity: 'medium',
+          message: 'Before snapshot uses minimal schema (v1). Influence, buildings, resources use live state as proxy.' });
+      }
+      if (diagnostics.after_snapshot_population === 'partial_minimal_schema') {
+        validationWarnings.push({ type: 'after_snapshot_minimal_schema', severity: 'medium',
+          message: 'After snapshot uses minimal schema (v1). Influence, buildings, resources use live state as proxy.' });
       }
 
       // Ownership changed but no ownership_changes populated
@@ -964,11 +1080,20 @@ Deno.serve(async (req) => {
           message: `${troopDeltasWithOwnerChange.length} territory ownership change(s) detected but no changes populated.` });
       }
 
-      // Troop changes but empty troop_deltas
       const troopDeltasNonZero = (deltaReport.troop_deltas ?? []).filter(d => d.troop_delta !== 0);
+
+      // Task 9: Delta validation — expected changes not reflected
       if (troopDeltasNonZero.length === 0 && enrichedActions.military.some(a => a.action_type === 'deploy_troops' || a.action_type === 'attack')) {
         validationWarnings.push({ type: 'troop_changes_expected_but_empty', severity: 'medium',
           message: 'Military actions submitted but no troop deltas detected. Snapshots may not be authoritative.' });
+      }
+      if ((deltaReport.resource_deltas ?? []).length === 0 && enrichedActions.economic.some(a => a.action_type === 'activate_resources')) {
+        validationWarnings.push({ type: 'resource_changes_expected_but_empty', severity: 'medium',
+          message: 'Resource activations submitted but no resource deltas detected.' });
+      }
+      if ((deltaReport.permanent_influence_deltas ?? []).length === 0 && enrichedActions.diplomatic.some(a => a.influence_spent > 0)) {
+        validationWarnings.push({ type: 'influence_changes_expected_but_empty', severity: 'low',
+          message: 'Influence spent but no influence deltas detected. Snapshots may not have influence data.' });
       }
 
       // Battle resolved but no battle_results
@@ -979,7 +1104,6 @@ Deno.serve(async (req) => {
         exportValidationStatus = 'failed';
       }
 
-      // Phase lock missing for any active player
       const activePlayers = players.filter(p => !p.is_eliminated);
 
       // Negative resources
@@ -998,9 +1122,9 @@ Deno.serve(async (req) => {
         }
       }
 
-      // delta_generation or battle_audit errors
+      // delta_generation or snapshot errors
       if (diagnostics.delta_generation !== 'success') exportValidationStatus = 'failed';
-      if (diagnostics.battle_audit_generation !== 'success') exportValidationStatus = 'warning';
+      if (diagnostics.battle_audit_generation !== 'success' && exportValidationStatus === 'passed') exportValidationStatus = 'warning';
 
       diagnostics.export_validation = exportValidationStatus;
 
@@ -1019,7 +1143,7 @@ Deno.serve(async (req) => {
           exported_by_user_id: user.id,
           exported_by_name: user.full_name ?? user.email,
           bundle_status: bundleStatus,
-          game_version: '5F.2',
+          game_version: '5F.3',
           active_win_conditions: campaign.settings?.active_win_conditions ?? [],
           phase_started_at:              phaseStartedAt,
           phase_completed_at:            phaseCompletedAt,
