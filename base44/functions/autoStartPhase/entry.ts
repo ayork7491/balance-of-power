@@ -37,13 +37,25 @@ Deno.serve(async (req) => {
 
   try {
     if (phase === 'deploy') {
-      // Check if already started (idempotency)
-      const existingDecisions = await base44.asServiceRole.entities.PhaseDecision.filter({
-        campaign_id, phase: 'deploy', round,
-      });
-      if (existingDecisions.length > 0) {
-        console.log('[autoStartPhase] Deploy phase already started — skipping.');
+      // Check if already started (decisions exist AND phase_start snapshot exists).
+      // Must check BOTH — decisions may exist but snapshot may be missing (repair needed).
+      const [existingDecisions, existingSnapshots] = await Promise.all([
+        base44.asServiceRole.entities.PhaseDecision.filter({ campaign_id, phase: 'deploy', round }),
+        base44.asServiceRole.entities.PhaseSnapshot.filter({ campaign_id, phase: 'deploy', round, snapshot_type: 'phase_start' }),
+      ]);
+
+      const decisionsExist = existingDecisions.length > 0;
+      const snapshotExists = existingSnapshots.length > 0;
+
+      if (decisionsExist && snapshotExists) {
+        console.log('[autoStartPhase] Deploy phase already started and phase_start snapshot exists — skipping.');
         return Response.json({ skipped: true, reason: 'Already started' });
+      }
+
+      if (decisionsExist && !snapshotExists) {
+        console.log('[autoStartPhase] Deploy decisions exist but phase_start snapshot missing — calling startDeploy for snapshot repair.');
+      } else {
+        console.log('[autoStartPhase] Starting deploy phase for the first time.');
       }
 
       const result = await base44.asServiceRole.functions.invoke('deployPhase', {
@@ -52,7 +64,7 @@ Deno.serve(async (req) => {
         _internal: true,
       });
       console.log('[autoStartPhase] Deploy auto-start result:', result?.success);
-      return Response.json({ success: true, phase, round });
+      return Response.json({ success: true, phase, round, snapshot_repaired: decisionsExist && !snapshotExists });
     }
 
     if (phase === 'fortify') {
