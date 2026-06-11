@@ -40,25 +40,24 @@ export default function ConsolidationPhaseHeader({ campaign, myPlayer, actingAsP
 
   const load = useCallback(async () => {
     if (!campaign?.id || !actingId) return;
-    setLoading(true);
     setError(null);
+    if (!status) setLoading(true);
     try {
-      // Load the acting player's fortify PhaseDecision (phase+round scoped)
-      const decisions = await base44.entities.PhaseDecision.filter({
-        campaign_id: campaign.id,
-        player_id: actingId,
-        phase: 'fortify',
-        round,
-      });
+      // Fetch acting player decision + all decisions in parallel
+      const [decisions, allDecisions] = await Promise.all([
+        base44.entities.PhaseDecision.filter({
+          campaign_id: campaign.id,
+          player_id: actingId,
+          phase: 'fortify',
+          round,
+        }),
+        base44.entities.PhaseDecision.filter({
+          campaign_id: campaign.id,
+          phase: 'fortify',
+          round,
+        }),
+      ]);
       const decision = decisions[0] ?? null;
-
-      // Load all player locks for the display counter
-      const allDecisions = await base44.entities.PhaseDecision.filter({
-        campaign_id: campaign.id,
-        phase: 'fortify',
-        round,
-      }).catch(() => []);
-
       const s = {
         is_locked: decision?.is_locked ?? false,
         movements_staged: (decision?.data?.movements ?? []).length,
@@ -71,7 +70,7 @@ export default function ConsolidationPhaseHeader({ campaign, myPlayer, actingAsP
     } finally {
       setLoading(false);
     }
-  }, [campaign?.id, actingId, round]);
+  }, [campaign?.id, actingId, round]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load(); }, [load]);
 

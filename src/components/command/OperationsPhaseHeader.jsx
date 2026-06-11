@@ -57,8 +57,8 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
 
   const load = useCallback(async () => {
     if (!campaign?.id || !myPlayer?.id) return;
-    setLoading(true);
     setError(null);
+    if (!status) setLoading(true);
     try {
       const [statusRes, adminRes] = await Promise.all([
         base44.functions.invoke('operationsLockPhase', {
@@ -79,7 +79,7 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
     } finally {
       setLoading(false);
     }
-  }, [campaign?.id, myPlayer?.id, actingAsPlayerId]);
+  }, [campaign?.id, myPlayer?.id, actingAsPlayerId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load(); }, [load]);
 

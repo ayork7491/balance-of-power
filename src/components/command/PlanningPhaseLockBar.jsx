@@ -58,8 +58,9 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
 
   const load = useCallback(async () => {
     if (!campaign?.id || !myPlayer?.id) return;
-    setLoading(true);
+    // Only show full loading spinner on first load; subsequent refreshes are silent
     setError(null);
+    if (!status) setLoading(true);
     try {
       const [statusRes, adminRes] = await Promise.all([
         base44.functions.invoke('planningPhase', {
@@ -80,7 +81,7 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
     } finally {
       setLoading(false);
     }
-  }, [campaign?.id, myPlayer?.id, actingAsPlayerId]);
+  }, [campaign?.id, myPlayer?.id, actingAsPlayerId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load(); }, [load]);
   // Auto-refresh when parent signals a staging change
