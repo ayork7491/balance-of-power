@@ -15,27 +15,90 @@
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
-// ── Territory → name map (inline from SC config) ─────────────────────────────
-const SC_TERRITORY_NAMES = {
-  I1:'Iron Peaks',I2:'Ironholm',I3:'The Crucible',I4:'Forge Pass',I5:'Ashfall',I6:'Cinder Gate',I7:'Ember Ridge',I8:'Outer Pass',
-  W1:'Willowfen',W2:'Briarwood',W3:'Thornwall',W4:'Gale Crossing',W5:'Deeproot',W6:'Mosshaven',W7:'Fernwatch',W8:'Oakhearth',W9:'Tangle Mire',
-  B1:'Blightmoor',B2:'Crumble Flats',B3:'Ashwick',B4:'Ruinstone',B5:'Dustwall',B6:'Crossroads Keep',B7:'Gravel Reach',B8:'Sallow Pit',B9:'Bonewatch',B10:'Ruins End',
-  S1:'Sunreach',S2:'Saltwind',S3:'Shoreholm',S4:'Gilded Plains',S5:'Harvest Cross',S6:'Amber Bay',S7:'Fieldstone',S8:'Verdant Mile',S9:'Tidecrest',
-  C1:'Coldspire',C2:'Frostveil',C3:'Shattercap',C4:'Fracture Bay',C5:'Cliffwatch',C6:'Brokenshore',C7:'Tidal Shelf',C8:'Gull Ledge',
+// ── Canonical territory data ──────────────────────────────────────────────────
+// SOURCE OF TRUTH: shared/maps/shatteredCrownConfig.ts — SC_TERRITORIES
+// Do NOT edit manually. Update shatteredCrownConfig.ts first, then propagate here.
+
+const SC_TERRITORY_DATA = {
+  // Ironspine — outer_passes
+  I8: { name:'Eastspire',         region_id:'outer_passes',       continent_id:'ironspine'       },
+  I4: { name:'Greyhold',          region_id:'outer_passes',       continent_id:'ironspine'       },
+  I6: { name:'Ridgefall',         region_id:'outer_passes',       continent_id:'ironspine'       },
+  I7: { name:'Basinwatch',        region_id:'outer_passes',       continent_id:'ironspine'       },
+  // Ironspine — high_crown
+  I1: { name:'Frostgate',         region_id:'high_crown',         continent_id:'ironspine'       },
+  I2: { name:'Northpass',         region_id:'high_crown',         continent_id:'ironspine'       },
+  I3: { name:'Cliffwatch',        region_id:'high_crown',         continent_id:'ironspine'       },
+  I5: { name:'Crownforge',        region_id:'high_crown',         continent_id:'ironspine'       },
+  // Wild Frontier — northern_wilds
+  W1: { name:'Thornwood Edge',    region_id:'northern_wilds',     continent_id:'wild_frontier'   },
+  W2: { name:'Greenmarch',        region_id:'northern_wilds',     continent_id:'wild_frontier'   },
+  W3: { name:'Broken Pines',      region_id:'northern_wilds',     continent_id:'wild_frontier'   },
+  W4: { name:'Mossfen',           region_id:'northern_wilds',     continent_id:'wild_frontier'   },
+  W5: { name:'Wildcross',         region_id:'northern_wilds',     continent_id:'wild_frontier'   },
+  // Wild Frontier — deepwoods
+  W6: { name:'Emberwood',         region_id:'deepwoods',          continent_id:'wild_frontier'   },
+  W7: { name:'Lowbranch',         region_id:'deepwoods',          continent_id:'wild_frontier'   },
+  W8: { name:'Riverholt',         region_id:'deepwoods',          continent_id:'wild_frontier'   },
+  W9: { name:'Ashen Ford',        region_id:'deepwoods',          continent_id:'wild_frontier'   },
+  // Fracture Basin — northern_ruins
+  B1: { name:'North Ruin Gate',   region_id:'northern_ruins',     continent_id:'fracture_basin'  },
+  B2: { name:'Old Bastion',       region_id:'northern_ruins',     continent_id:'fracture_basin'  },
+  B3: { name:'Highbridge',        region_id:'northern_ruins',     continent_id:'fracture_basin'  },
+  B4: { name:'East Rupture',      region_id:'northern_ruins',     continent_id:'fracture_basin'  },
+  // Fracture Basin — central_crossroads
+  B5: { name:'West Crucible',     region_id:'central_crossroads', continent_id:'fracture_basin'  },
+  B6: { name:'Crownbreak',        region_id:'central_crossroads', continent_id:'fracture_basin'  },
+  B7: { name:'Glass Rift',        region_id:'central_crossroads', continent_id:'fracture_basin'  },
+  // Fracture Basin — southern_ruins
+  B8: { name:'Southwatch Ruins',  region_id:'southern_ruins',     continent_id:'fracture_basin'  },
+  B9: { name:'Golden Causeway',   region_id:'southern_ruins',     continent_id:'fracture_basin'  },
+  B10:{ name:'Riftmarket',        region_id:'southern_ruins',     continent_id:'fracture_basin'  },
+  // Sunfields — western_plains
+  S1: { name:'Westmeadow',        region_id:'western_plains',     continent_id:'sunfields'       },
+  S2: { name:'Sunroad',           region_id:'western_plains',     continent_id:'sunfields'       },
+  S4: { name:'Amberhold',         region_id:'western_plains',     continent_id:'sunfields'       },
+  S7: { name:'South Orchard',     region_id:'western_plains',     continent_id:'sunfields'       },
+  // Sunfields — eastern_granaries
+  S3: { name:'Harvest Ford',      region_id:'eastern_granaries',  continent_id:'sunfields'       },
+  S5: { name:'Granary Cross',     region_id:'eastern_granaries',  continent_id:'sunfields'       },
+  S6: { name:'Dawnmarch',         region_id:'eastern_granaries',  continent_id:'sunfields'       },
+  S8: { name:'Lowgold',           region_id:'eastern_granaries',  continent_id:'sunfields'       },
+  S9: { name:'Coastward Fields',  region_id:'eastern_granaries',  continent_id:'sunfields'       },
+  // Shattered Coast — northern_isles
+  C1: { name:'Northcliff',        region_id:'northern_isles',     continent_id:'shattered_coast' },
+  C2: { name:'Saltwind Pass',     region_id:'northern_isles',     continent_id:'shattered_coast' },
+  C3: { name:'Broken Harbor',     region_id:'northern_isles',     continent_id:'shattered_coast' },
+  C4: { name:'Blacktide Gate',    region_id:'northern_isles',     continent_id:'shattered_coast' },
+  // Shattered Coast — southern_fractures
+  C5: { name:'Shardport',         region_id:'southern_fractures', continent_id:'shattered_coast' },
+  C6: { name:'Mirror Cape',       region_id:'southern_fractures', continent_id:'shattered_coast' },
+  C7: { name:'Southwake',         region_id:'southern_fractures', continent_id:'shattered_coast' },
+  C8: { name:'Tidebreak',         region_id:'southern_fractures', continent_id:'shattered_coast' },
 };
 
-const SC_TERRITORY_REGION = {
-  I8:'outer_passes',I4:'outer_passes',I6:'outer_passes',I7:'outer_passes',
-  I1:'high_crown',I2:'high_crown',I3:'high_crown',I5:'high_crown',
-  W1:'northern_wilds',W2:'northern_wilds',W3:'northern_wilds',W4:'northern_wilds',W5:'northern_wilds',
-  W6:'deepwoods',W7:'deepwoods',W8:'deepwoods',W9:'deepwoods',
-  B1:'northern_ruins',B3:'northern_ruins',B2:'northern_ruins',B4:'northern_ruins',
-  B5:'central_crossroads',B6:'central_crossroads',B7:'central_crossroads',
-  B8:'southern_ruins',B9:'southern_ruins',B10:'southern_ruins',
-  S1:'western_plains',S4:'western_plains',S7:'western_plains',S2:'western_plains',
-  S5:'eastern_granaries',S8:'eastern_granaries',S3:'eastern_granaries',S6:'eastern_granaries',S9:'eastern_granaries',
-  C1:'northern_isles',C2:'northern_isles',C3:'northern_isles',C4:'northern_isles',
-  C5:'southern_fractures',C6:'southern_fractures',C7:'southern_fractures',C8:'southern_fractures',
+// Canonical region display names
+const SC_REGION_NAMES = {
+  outer_passes:       'Outer Passes',
+  high_crown:         'High Crown',
+  northern_wilds:     'Northern Wilds',
+  deepwoods:          'Deepwoods',
+  northern_ruins:     'Northern Ruins',
+  central_crossroads: 'Central Crossroads',
+  southern_ruins:     'Southern Ruins',
+  western_plains:     'Western Plains',
+  eastern_granaries:  'Eastern Granaries',
+  northern_isles:     'Northern Isles',
+  southern_fractures: 'Southern Fractures',
+};
+
+// Canonical continent display names
+const SC_CONTINENT_NAMES = {
+  ironspine:      'Ironspine',
+  wild_frontier:  'Wild Frontier',
+  fracture_basin: 'Fracture Basin',
+  sunfields:      'Sunfields',
+  shattered_coast:'Shattered Coast',
 };
 
 const PHASE_LABELS = {
@@ -48,7 +111,25 @@ const PHASE_LABELS = {
   initial_deploy: 'initial_deploy',
 };
 
-function tName(id) { return SC_TERRITORY_NAMES[id] ?? id; }
+// Territory enrichment helpers
+function tName(id) { return SC_TERRITORY_DATA[id]?.name ?? id; }
+function tRegion(id) { return SC_TERRITORY_DATA[id]?.region_id ?? null; }
+function tContinent(id) { return SC_TERRITORY_DATA[id]?.continent_id ?? null; }
+function tRegionName(id) { return SC_REGION_NAMES[SC_TERRITORY_DATA[id]?.region_id] ?? null; }
+function tContinentName(id) { return SC_CONTINENT_NAMES[SC_TERRITORY_DATA[id]?.continent_id] ?? null; }
+
+// Enrich a territory reference with all canonical fields
+function tEnrich(territory_id) {
+  const d = SC_TERRITORY_DATA[territory_id];
+  return {
+    territory_id,
+    territory_name:   d?.name ?? territory_id,
+    region_id:        d?.region_id ?? null,
+    region_name:      SC_REGION_NAMES[d?.region_id] ?? null,
+    continent_id:     d?.continent_id ?? null,
+    continent_name:   SC_CONTINENT_NAMES[d?.continent_id] ?? null,
+  };
+}
 
 // ── Snapshot builder ──────────────────────────────────────────────────────────
 
@@ -70,11 +151,9 @@ async function buildSnapshot(base44, campaignId, playerMap) {
     base44.asServiceRole.entities.PhaseDecision.filter({ campaign_id: campaignId }),
   ]);
 
-  // Territories with enriched names and owner names
+  // Territories with enriched canonical names and owner names
   const territorySnapshot = territories.map(t => ({
-    territory_id: t.territory_id,
-    territory_name: tName(t.territory_id),
-    region_id: SC_TERRITORY_REGION[t.territory_id] ?? null,
+    ...tEnrich(t.territory_id),
     owner_player_id: t.owner_player_id ?? null,
     owner_name: t.owner_player_id ? (playerMap[t.owner_player_id]?.display_name ?? t.owner_player_id) : null,
     troop_count: t.troop_count ?? 0,
@@ -85,8 +164,7 @@ async function buildSnapshot(base44, campaignId, playerMap) {
 
   // Permanent influence per territory per player
   const permInfluence = influence.map(i => ({
-    territory_id: i.territory_id,
-    territory_name: tName(i.territory_id),
+    ...tEnrich(i.territory_id),
     player_id: i.player_id,
     player_name: playerMap[i.player_id]?.display_name ?? i.player_id,
     influence_amount: i.influence_amount ?? 0,
@@ -102,8 +180,7 @@ async function buildSnapshot(base44, campaignId, playerMap) {
 
   // Active buildings
   const buildingSnapshot = buildings.map(b => ({
-    territory_id: b.territory_id,
-    territory_name: tName(b.territory_id),
+    ...tEnrich(b.territory_id),
     player_id: b.player_id,
     player_name: playerMap[b.player_id]?.display_name ?? b.player_id,
     building_type: b.building_type,
@@ -118,10 +195,8 @@ async function buildSnapshot(base44, campaignId, playerMap) {
     id: r.id,
     owner_player_id: r.owner_player_id,
     owner_name: playerMap[r.owner_player_id]?.display_name ?? r.owner_player_id,
-    hub_territory_id: r.hub_territory_id,
-    hub_territory_name: tName(r.hub_territory_id),
-    source_territory_id: r.source_territory_id,
-    source_territory_name: tName(r.source_territory_id),
+    hub: tEnrich(r.hub_territory_id),
+    source: tEnrich(r.source_territory_id),
     route_status: r.route_status,
     resource_type: r.resource_type,
     created_round: r.created_round,
@@ -133,8 +208,7 @@ async function buildSnapshot(base44, campaignId, playerMap) {
     round: bc.round,
     battle_type: bc.battle_type,
     battle_pillar: bc.battle_pillar,
-    target_territory_id: bc.target_territory_id,
-    target_territory_name: tName(bc.target_territory_id),
+    target: tEnrich(bc.target_territory_id),
     defender_player_id: bc.defender_player_id ?? null,
     defender_name: bc.defender_player_id ? (playerMap[bc.defender_player_id]?.display_name ?? bc.defender_player_id) : null,
     status: bc.status,
@@ -215,8 +289,7 @@ function calcDeltas(before, after, playerMap) {
     const delta = (t.troop_count ?? 0) - (bef?.troop_count ?? 0);
     if (delta !== 0 || (bef?.owner_player_id !== t.owner_player_id)) {
       troopDeltas.push({
-        territory_id: t.territory_id,
-        territory_name: t.territory_name,
+        ...tEnrich(t.territory_id),
         owner_before: bef?.owner_name ?? null,
         owner_after: t.owner_name ?? null,
         troops_before: bef?.troop_count ?? 0,
@@ -227,9 +300,9 @@ function calcDeltas(before, after, playerMap) {
       if (delta > 0 && !bef?.owner_player_id && t.owner_player_id) {
         // Occupation — expected
       } else if (delta > 30) {
-        warnings.push({ type: 'unexpected_troop_increase', territory_id: t.territory_id, territory_name: t.territory_name, delta });
+        warnings.push({ type: 'unexpected_troop_increase', ...tEnrich(t.territory_id), delta });
       } else if (delta < -30) {
-        warnings.push({ type: 'unexpected_troop_decrease', territory_id: t.territory_id, territory_name: t.territory_name, delta });
+        warnings.push({ type: 'unexpected_troop_decrease', ...tEnrich(t.territory_id), delta });
       }
     }
   }
@@ -247,15 +320,14 @@ function calcDeltas(before, after, playerMap) {
       const delta = aft - bfr;
       if (delta !== 0) {
         resourceDeltas.push({
-          territory_id: t.territory_id,
-          territory_name: t.territory_name,
+          ...tEnrich(t.territory_id),
           resource: res,
           before: bfr,
           after: aft,
           delta,
         });
-        if (aft < 0) warnings.push({ type: 'resource_went_negative', territory_id: t.territory_id, resource: res, value: aft });
-        if (delta > 50) warnings.push({ type: 'unexpected_resource_increase', territory_id: t.territory_id, resource: res, delta });
+        if (aft < 0) warnings.push({ type: 'resource_went_negative', ...tEnrich(t.territory_id), resource: res, value: aft });
+        if (delta > 50) warnings.push({ type: 'unexpected_resource_increase', ...tEnrich(t.territory_id), resource: res, delta });
       }
     }
   }
@@ -273,10 +345,10 @@ function calcDeltas(before, after, playerMap) {
     if (delta !== 0) {
       permInfluenceDeltas.push({
         player_id: i.player_id, player_name: i.player_name,
-        territory_id: i.territory_id, territory_name: i.territory_name,
+        ...tEnrich(i.territory_id),
         before: bef?.influence_amount ?? 0, after: i.influence_amount, delta,
       });
-      if (delta < 0) warnings.push({ type: 'permanent_influence_reduced', player_id: i.player_id, territory_id: i.territory_id, delta });
+      if (delta < 0) warnings.push({ type: 'permanent_influence_reduced', player_id: i.player_id, ...tEnrich(i.territory_id), delta });
     }
   }
 
@@ -325,7 +397,7 @@ function calcDeltas(before, after, playerMap) {
     if (!bef) {
       structureChanges.push({ change: 'created', ...b });
     } else if (bef.status !== b.status) {
-      structureChanges.push({ change: 'status_changed', territory_id: b.territory_id, territory_name: b.territory_name, building_type: b.building_type, from: bef.status, to: b.status });
+      structureChanges.push({ change: 'status_changed', ...tEnrich(b.territory_id), building_type: b.building_type, from: bef.status, to: b.status });
     }
   }
 
@@ -338,10 +410,10 @@ function calcDeltas(before, after, playerMap) {
     if (!bef) {
       battleCardChanges.push({ change: 'created', ...bc });
       if (!bc.defender_player_id && bc.battle_type !== 'bloodbath') {
-        warnings.push({ type: 'battle_card_no_defender', battle_card_id: bc.id, battle_type: bc.battle_type, target: bc.target_territory_name });
+        warnings.push({ type: 'battle_card_no_defender', battle_card_id: bc.id, battle_type: bc.battle_type, target: bc.target ?? tEnrich(bc.target_territory_id) });
       }
     } else if (bef.status !== bc.status) {
-      battleCardChanges.push({ change: 'status_changed', id: bc.id, territory_name: bc.target_territory_name, from: bef.status, to: bc.status });
+      battleCardChanges.push({ change: 'status_changed', id: bc.id, target: bc.target ?? tEnrich(bc.target_territory_id), from: bef.status, to: bc.status });
     }
   }
 
@@ -486,10 +558,8 @@ async function getSubmittedActions(base44, campaignId, round, phase, playerMap) 
         action_type: 'attack_declaration',
         pillar: 'military',
         submitted_at: a.created_date,
-        origin_territory_id: a.origin_territory_id,
-        origin_territory_name: tName(a.origin_territory_id),
-        target_territory_id: a.target_territory_id,
-        target_territory_name: tName(a.target_territory_id),
+        origin: tEnrich(a.origin_territory_id),
+        target: tEnrich(a.target_territory_id),
         committed_troops: a.committed_troops,
       });
     }
@@ -516,8 +586,7 @@ async function getSubmittedActions(base44, campaignId, round, phase, playerMap) 
       status: a.status,
       target_player_id: a.target_player_id ?? null,
       target_player_name: a.target_player_id ? (playerMap[a.target_player_id]?.display_name ?? a.target_player_id) : null,
-      target_territory_id: a.target_territory_id ?? null,
-      target_territory_name: a.target_territory_id ? tName(a.target_territory_id) : null,
+      target: a.target_territory_id ? tEnrich(a.target_territory_id) : null,
       effect_metadata: a.effect_metadata ?? {},
     });
   }
@@ -536,8 +605,7 @@ async function getSubmittedActions(base44, campaignId, round, phase, playerMap) 
       pillar: 'diplomatic',
       submitted_at: r.generated_at,
       generated_phase: r.generated_phase,
-      target_territory_id: r.target_territory_id ?? null,
-      target_territory_name: r.target_territory_id ? tName(r.target_territory_id) : null,
+      target: r.target_territory_id ? tEnrich(r.target_territory_id) : null,
       target_player_id: r.target_player_id ?? null,
       target_player_name: r.target_player_id ? (playerMap[r.target_player_id]?.display_name ?? r.target_player_id) : null,
       influence_spent: r.influence_spent ?? 0,
@@ -572,8 +640,7 @@ async function getGeneratedArtifacts(base44, campaignId, round, playerMap) {
       id: bc.id,
       battle_type: bc.battle_type,
       battle_pillar: bc.battle_pillar,
-      target_territory_id: bc.target_territory_id,
-      target_territory_name: tName(bc.target_territory_id),
+      target: tEnrich(bc.target_territory_id),
       source_player_id: bc.source_player_id ?? null,
       source_player_name: bc.source_player_id ? (playerMap[bc.source_player_id]?.display_name ?? bc.source_player_id) : null,
       status: bc.status,
@@ -593,20 +660,18 @@ async function getGeneratedArtifacts(base44, campaignId, round, playerMap) {
       report_type: r.report_type,
       viewer_player_id: r.viewer_player_id,
       viewer_name: playerMap[r.viewer_player_id]?.display_name ?? r.viewer_player_id,
-      target_territory_id: r.target_territory_id ?? null,
-      target_territory_name: r.target_territory_id ? tName(r.target_territory_id) : null,
+      target: r.target_territory_id ? tEnrich(r.target_territory_id) : null,
       generated_phase: r.generated_phase,
     })),
     supply_routes_created: supplyRoutes.map(r => ({
       id: r.id,
       owner_name: playerMap[r.owner_player_id]?.display_name ?? r.owner_player_id,
-      hub_territory_name: tName(r.hub_territory_id),
-      source_territory_name: tName(r.source_territory_id),
+      hub: tEnrich(r.hub_territory_id),
+      source: tEnrich(r.source_territory_id),
       resource_type: r.resource_type,
     })),
     buildings_started: buildings.map(b => ({
-      territory_id: b.territory_id,
-      territory_name: tName(b.territory_id),
+      ...tEnrich(b.territory_id),
       player_name: playerMap[b.player_id]?.display_name ?? b.player_id,
       building_type: b.building_type,
       pillar_type: b.pillar_type,
@@ -801,7 +866,7 @@ Deno.serve(async (req) => {
       for (const t of (afterSnapshotData.territory_states ?? [])) {
         for (const [res, val] of Object.entries(t.resource_storage ?? {})) {
           if ((val ?? 0) < 0) {
-            validationWarnings.push({ type: 'resource_total_negative', territory_id: t.territory_id, territory_name: t.territory_name, resource: res, value: val });
+            validationWarnings.push({ type: 'resource_total_negative', ...tEnrich(t.territory_id), resource: res, value: val });
           }
         }
       }
