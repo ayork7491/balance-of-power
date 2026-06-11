@@ -396,14 +396,56 @@ function calcDeltas(before, after, playerMap) {
 
 // ── Phase snapshot retrieval ──────────────────────────────────────────────────
 
+// Phase order — used to find "next phase" for after-snapshot reconstruction
+const PHASE_ORDER = [
+  'faction_selection', 'territory_draft', 'initial_deploy',
+  'deploy', 'attack', 'battle', 'fortify',
+];
+
+function nextPhase(phase) {
+  const idx = PHASE_ORDER.indexOf(phase);
+  if (idx < 0 || idx >= PHASE_ORDER.length - 1) return null;
+  return PHASE_ORDER[idx + 1];
+}
+
 async function getPhaseSnapshotData(base44, campaignId, round, phase) {
-  // Look for stored PhaseSnapshot records (before/after)
+  // Look for stored PhaseSnapshot records (before/after) for this exact phase
   const snapshots = await base44.asServiceRole.entities.PhaseSnapshot.filter({
     campaign_id: campaignId,
     round,
     phase,
   });
   return snapshots;
+}
+
+// Find the "before" snapshot of the next phase, which equals the "after" of this phase
+async function getNextPhaseBeforeSnapshot(base44, campaignId, round, phase) {
+  const next = nextPhase(phase);
+  if (!next) return null;
+
+  // Try same round first
+  const snapshots = await base44.asServiceRole.entities.PhaseSnapshot.filter({
+    campaign_id: campaignId,
+    round,
+    phase: next,
+  });
+  const beforeRecord = snapshots.find(s =>
+    s.snapshot_type === 'before' || s.type === 'before' || s.snapshot_type === 'start'
+  );
+  if (beforeRecord) return beforeRecord;
+
+  // If phase was fortify (end of round), try round+1 deploy
+  if (phase === 'fortify') {
+    const nextRoundSnaps = await base44.asServiceRole.entities.PhaseSnapshot.filter({
+      campaign_id: campaignId,
+      round: round + 1,
+      phase: 'deploy',
+    });
+    return nextRoundSnaps.find(s =>
+      s.snapshot_type === 'before' || s.type === 'before' || s.snapshot_type === 'start'
+    ) ?? null;
+  }
+  return null;
 }
 
 // ── Submitted actions assembler ───────────────────────────────────────────────
@@ -613,36 +655,114 @@ Deno.serve(async (req) => {
     if (action === 'generateBundle') {
       const targetRound = body.round ?? campaign.current_round ?? 1;
       const targetPhase = body.phase ?? campaign.current_phase ?? 'deploy';
-      const isCurrentPhase = (targetRound === campaign.current_round && targetPhase === campaign.current_phase);
+      const isCurrentPhase = (
+        targetRound === (campaign.current_round ?? 1) &&
+        targetPhase === campaign.current_phase
+      );
 
-      // Build before snapshot — use stored PhaseSnapshot if available, else live state
-      const storedSnapshots = await getPhaseSnapshotData(base44, campaign_id, targetRound, targetPhase);
-      const beforeSnapshotRecord = storedSnapshots.find(s => s.snapshot_type === 'before' || s.type === 'before');
-      const afterSnapshotRecord  = storedSnapshots.find(s => s.snapshot_type === 'after'  || s.type === 'after');
+      // ── Snapshot resolution strategy ────────────────────────────────────
+      //
+      // before_snapshot: the stored "before" PhaseSnapshot for this phase.
+      //   Represents state AT THE START of the phase, before any effects.
+      //   Fallback: live state (current phase only).
+      //
+      // after_snapshot:
+      //   For COMPLETED phases: the stored "after" PhaseSnapshot, OR the
+      //   "before" snapshot of the NEXT phase (same data, different label).
+      //   This represents the world AFTER effects have been applied.
+      //   For IN-PROGRESS phases: live state (clearly labelled).
+      //
+      const [storedSnapshots, nextPhaseBeforeRecord, liveSnapshot] = await Promise.all([
+        getPhaseSnapshotData(base44, campaign_id, targetRound, targetPhase),
+        isCurrentPhase ? Promise.resolve(null) : getNextPhaseBeforeSnapshot(base44, campaign_id, targetRound, targetPhase),
+        buildSnapshot(base44, campaign_id, playerMap),
+      ]);
 
-      // Always build a live snapshot for the current state
-      const liveSnapshot = await buildSnapshot(base44, campaign_id, playerMap);
+      const beforeRecord = storedSnapshots.find(s =>
+        s.snapshot_type === 'before' || s.type === 'before' || s.snapshot_type === 'start'
+      );
+      const afterRecord = storedSnapshots.find(s =>
+        s.snapshot_type === 'after' || s.type === 'after' || s.snapshot_type === 'end'
+      );
 
-      const beforeSnapshot = beforeSnapshotRecord?.data ?? (isCurrentPhase ? liveSnapshot : liveSnapshot);
-      const afterSnapshot  = afterSnapshotRecord?.data  ?? liveSnapshot;
+      // Determine before snapshot and its metadata
+      const beforeSnapshotData = beforeRecord?.data ?? liveSnapshot;
+      const beforeCapturedAt   = beforeRecord?.created_date ?? null;
+      const beforeSource = beforeRecord
+        ? 'stored_phase_snapshot'
+        : (isCurrentPhase ? 'live_state_at_export_time' : 'live_state_fallback_no_stored_snapshot');
 
-      // Submitted actions
+      // Determine after snapshot and its metadata
+      // Priority: explicit after record > next-phase before record > live (in-progress only)
+      let afterSnapshotData, afterCapturedAt, afterSource, phaseCompletionState;
+
+      if (isCurrentPhase) {
+        // Phase still active — use live state, clearly marked
+        afterSnapshotData    = liveSnapshot;
+        afterCapturedAt      = new Date().toISOString();
+        afterSource          = 'current_in_progress_state_only';
+        phaseCompletionState = 'in_progress';
+      } else if (afterRecord) {
+        afterSnapshotData    = afterRecord.data;
+        afterCapturedAt      = afterRecord.created_date ?? null;
+        afterSource          = 'stored_phase_snapshot_after';
+        phaseCompletionState = 'completed';
+      } else if (nextPhaseBeforeRecord) {
+        // The before-snapshot of the next phase IS the after-state of this phase
+        afterSnapshotData    = nextPhaseBeforeRecord.data;
+        afterCapturedAt      = nextPhaseBeforeRecord.created_date ?? null;
+        afterSource          = 'next_phase_before_snapshot_equals_after';
+        phaseCompletionState = 'completed';
+      } else {
+        // No stored records — use live state, warn that it may not reflect this phase's resolution
+        afterSnapshotData    = liveSnapshot;
+        afterCapturedAt      = new Date().toISOString();
+        afterSource          = 'live_state_fallback_no_stored_after_snapshot';
+        phaseCompletionState = 'completed_no_stored_snapshot';
+      }
+
+      // Phase timing from SetupLog events (best-effort; null if not recorded)
+      const phaseLogs = await base44.asServiceRole.entities.SetupLog.filter({
+        campaign_id,
+        phase: targetPhase,
+        round: targetRound,
+      });
+      const startLog = phaseLogs.find(l => l.event_type === 'phase_started' || l.event_type === 'deploy_started' || l.event_type === 'attack_started' || l.event_type === 'fortify_started');
+      const endLog   = phaseLogs.find(l => l.event_type === 'phase_ended' || l.event_type === 'phase_advanced' || l.event_type === 'phase_complete');
+      const phaseStartedAt    = startLog?.created_date ?? null;
+      const phaseCompletedAt  = endLog?.created_date ?? null;
+
+      // ── Submitted actions ───────────────────────────────────────────────
       const submittedActions = await getSubmittedActions(base44, campaign_id, targetRound, targetPhase, playerMap);
 
-      // Generated artifacts
+      // ── Generated artifacts ─────────────────────────────────────────────
       const generatedArtifacts = await getGeneratedArtifacts(base44, campaign_id, targetRound, playerMap);
 
-      // Deltas
-      const deltaReport = calcDeltas(beforeSnapshot, afterSnapshot, playerMap);
-      const deltaWarnings = deltaReport._warnings ?? [];
-      delete deltaReport._warnings;
+      // ── Delta: compare true before vs true after ────────────────────────
+      const deltaReport = calcDeltas(beforeSnapshotData, afterSnapshotData, playerMap);
 
-      // Additional validation warnings
-      const validationWarnings = [...deltaWarnings];
+      // ── Validation warnings ─────────────────────────────────────────────
+      const validationWarnings = [];
 
-      // Check: phase lock missing for any active player
+      // Warn if after snapshot is not authoritative
+      if (afterSource === 'live_state_fallback_no_stored_after_snapshot') {
+        validationWarnings.push({
+          type: 'after_snapshot_not_authoritative',
+          message: 'No stored after-snapshot found for this phase. After snapshot reflects current live state, which may include changes from later phases.',
+          severity: 'high',
+        });
+      }
+      if (afterSource === 'live_state_fallback_no_stored_snapshot') {
+        validationWarnings.push({
+          type: 'before_snapshot_not_authoritative',
+          message: 'No stored before-snapshot found for this phase. Before snapshot reflects current live state.',
+          severity: 'high',
+        });
+      }
+
+      // Phase lock missing for any active player
       const activePlayers = players.filter(p => !p.is_eliminated);
-      const lockStates = afterSnapshot.phase_lock_states ?? [];
+      const lockStates = afterSnapshotData.phase_lock_states ?? [];
       for (const p of activePlayers) {
         const lock = lockStates.find(l => l.player_id === p.id && l.phase === targetPhase && l.round === targetRound);
         if (!lock) {
@@ -656,7 +776,7 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Check: duplicate objective opportunity same round
+      // Duplicate objective opportunity same round
       const objActions = submittedActions.filter(a => a.action_type === 'phase_staging' && a.payload?.objective_dealt);
       const seenObj = new Set();
       for (const a of objActions) {
@@ -666,7 +786,7 @@ Deno.serve(async (req) => {
         seenObj.add(a.player_id);
       }
 
-      // Check: duplicate phase lock execution
+      // Duplicate phase lock execution
       const lockActions = submittedActions.filter(a => a.is_locked);
       const seenLock = {};
       for (const a of lockActions) {
@@ -677,8 +797,8 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Check: negative resource totals in live state
-      for (const t of (liveSnapshot.territory_states ?? [])) {
+      // Negative resource totals in after snapshot
+      for (const t of (afterSnapshotData.territory_states ?? [])) {
         for (const [res, val] of Object.entries(t.resource_storage ?? {})) {
           if ((val ?? 0) < 0) {
             validationWarnings.push({ type: 'resource_total_negative', territory_id: t.territory_id, territory_name: t.territory_name, resource: res, value: val });
@@ -686,7 +806,16 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Assemble bundle
+      // Negative spendable influence in after snapshot
+      for (const p of (afterSnapshotData.spendable_influence ?? [])) {
+        if ((p.spendable_influence ?? 0) < 0) {
+          validationWarnings.push({ type: 'spendable_influence_negative', player_id: p.player_id, player_name: p.player_name, region_id: p.region_id, value: p.spendable_influence });
+        }
+      }
+
+      // ── Assemble bundle ─────────────────────────────────────────────────
+      const bundleStatus = isCurrentPhase ? 'in_progress' : 'completed';
+
       const bundle = {
         metadata: {
           campaign_id,
@@ -698,25 +827,37 @@ Deno.serve(async (req) => {
           exported_by_player_id: players.find(p => p.user_id === user.id)?.id ?? user.id,
           exported_by_user_id: user.id,
           exported_by_name: user.full_name ?? user.email,
-          bundle_status: isCurrentPhase ? 'in_progress' : 'completed',
-          game_version: '5F',
+          bundle_status: bundleStatus,
+          game_version: '5F.1',
           active_win_conditions: campaign.settings?.active_win_conditions ?? [],
+          // ── Snapshot timing ──────────────────────────────────────────
+          phase_started_at:              phaseStartedAt,
+          phase_completed_at:            phaseCompletedAt,
+          before_snapshot_captured_at:   beforeCapturedAt,
+          after_snapshot_captured_at:    afterCapturedAt,
+          // ── Snapshot status clarity ──────────────────────────────────
+          snapshot_status: {
+            before_snapshot:       beforeSource,
+            after_snapshot:        afterSource,
+            phase_completion_state: phaseCompletionState,
+            delta_report:          isCurrentPhase ? 'preliminary' : 'authoritative',
+          },
         },
-        before_snapshot: beforeSnapshot,
+        before_snapshot: beforeSnapshotData,
         submitted_actions: submittedActions,
         generated_artifacts: generatedArtifacts,
         resolution_results: {
-          note: 'Resolution results are derived from the delta report. Phase-specific results are embedded in submitted_actions payload fields.',
-          troop_movements: deltaReport.troop_deltas?.filter(d => d.troop_delta !== 0) ?? [],
-          ownership_changes: deltaReport.troop_deltas?.filter(d => d.ownership_changed) ?? [],
-          resource_changes: deltaReport.resource_deltas ?? [],
-          influence_changes: [...(deltaReport.permanent_influence_deltas ?? []), ...(deltaReport.spendable_influence_deltas ?? [])],
-          structure_changes: deltaReport.structure_changes ?? [],
-          battle_card_results: deltaReport.battle_card_changes ?? [],
-          trade_results: deltaReport.trade_state_changes ?? [],
+          note: 'Derived from delta between before_snapshot and after_snapshot. Submitted actions explain why changes occurred.',
+          troop_movements:             deltaReport.troop_deltas?.filter(d => d.troop_delta !== 0) ?? [],
+          ownership_changes:           deltaReport.troop_deltas?.filter(d => d.ownership_changed) ?? [],
+          resource_changes:            deltaReport.resource_deltas ?? [],
+          influence_changes:           [...(deltaReport.permanent_influence_deltas ?? []), ...(deltaReport.spendable_influence_deltas ?? [])],
+          structure_changes:           deltaReport.structure_changes ?? [],
+          battle_card_results:         deltaReport.battle_card_changes ?? [],
+          trade_results:               deltaReport.trade_state_changes ?? [],
           victory_score_recalculations: deltaReport.victory_score_deltas ?? [],
         },
-        after_snapshot: afterSnapshot,
+        after_snapshot: afterSnapshotData,
         delta_report: deltaReport,
         validation_warnings: validationWarnings,
       };
