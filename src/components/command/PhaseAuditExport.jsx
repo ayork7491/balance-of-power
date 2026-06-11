@@ -11,7 +11,7 @@
  *   - Error display
  */
 import { useState } from 'react';
-import { Download, FileJson, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Clipboard, ClipboardCheck, FileJson, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 
 const ALL_PHASES = [
@@ -42,18 +42,20 @@ export default function PhaseAuditExport({ campaign }) {
   const [phase, setPhase] = useState(currentPhase);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [downloadUrl, setDownloadUrl] = useState(null);
+  const [bundleJson, setBundleJson] = useState(null);
   const [filename, setFilename] = useState(null);
   const [warnings, setWarnings] = useState(0);
   const [bundleStatus, setBundleStatus] = useState(null);
+  const [copied, setCopied] = useState(false);
 
   const maxRound = currentRound;
 
   const handleExport = async () => {
     setLoading(true);
     setError(null);
-    setDownloadUrl(null);
+    setBundleJson(null);
     setFilename(null);
+    setCopied(false);
 
     try {
       const res = await base44.functions.invoke('exportPhaseAudit', {
@@ -69,10 +71,7 @@ export default function PhaseAuditExport({ campaign }) {
       const phaseLabel = PHASE_SHORT[phase] ?? phase;
       const fname = `bop_phase_audit_round_${round}_${phaseLabel}.json`;
 
-      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
-      const url  = URL.createObjectURL(blob);
-
-      setDownloadUrl(url);
+      setBundleJson(JSON.stringify(bundle, null, 2));
       setFilename(fname);
       setWarnings(bundle.validation_warnings?.length ?? 0);
       setBundleStatus(bundle.metadata?.bundle_status ?? 'completed');
@@ -106,7 +105,7 @@ export default function PhaseAuditExport({ campaign }) {
             <label className="text-[10px] text-muted-foreground font-display tracking-wider uppercase">Round</label>
             <select
               value={round}
-              onChange={e => { setRound(e.target.value); setDownloadUrl(null); }}
+              onChange={e => { setRound(e.target.value); setBundleJson(null); setCopied(false); }}
               className="w-full bg-muted/20 border border-border rounded px-2 py-1.5 text-xs text-foreground"
             >
               {roundOptions.map(r => (
@@ -118,7 +117,7 @@ export default function PhaseAuditExport({ campaign }) {
             <label className="text-[10px] text-muted-foreground font-display tracking-wider uppercase">Phase</label>
             <select
               value={phase}
-              onChange={e => { setPhase(e.target.value); setDownloadUrl(null); }}
+              onChange={e => { setPhase(e.target.value); setBundleJson(null); setCopied(false); }}
               className="w-full bg-muted/20 border border-border rounded px-2 py-1.5 text-xs text-foreground"
             >
               {ALL_PHASES.map(p => (
@@ -158,8 +157,8 @@ export default function PhaseAuditExport({ campaign }) {
           }
         </button>
 
-        {/* Download link */}
-        {downloadUrl && filename && (
+        {/* Copy to clipboard */}
+        {bundleJson && filename && (
           <div className="space-y-2">
             <div className="flex items-center gap-2 px-2 py-2 rounded border border-green-500/30 bg-green-500/10 text-xs text-green-400">
               <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
@@ -172,14 +171,19 @@ export default function PhaseAuditExport({ campaign }) {
               )}
             </div>
 
-            <a
-              href={downloadUrl}
-              download={filename}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded bg-primary text-primary-foreground text-xs font-display tracking-wider uppercase hover:brightness-110 transition-all"
+            <button
+              onClick={() => { navigator.clipboard.writeText(bundleJson); setCopied(true); }}
+              className={`w-full flex items-center justify-center gap-2 px-4 py-2 rounded text-xs font-display tracking-wider uppercase hover:brightness-110 transition-all ${
+                copied
+                  ? 'bg-green-600 text-white'
+                  : 'bg-primary text-primary-foreground'
+              }`}
             >
-              <Download className="w-3.5 h-3.5" />
-              {filename}
-            </a>
+              {copied
+                ? <><ClipboardCheck className="w-3.5 h-3.5" /> Copied!</>
+                : <><Clipboard className="w-3.5 h-3.5" /> Copy to Clipboard</>
+              }
+            </button>
 
             <p className="text-[10px] text-muted-foreground text-center">
               JSON · Round {round} · {ALL_PHASES.find(p => p.value === phase)?.label ?? phase}
