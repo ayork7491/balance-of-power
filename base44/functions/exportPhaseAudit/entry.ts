@@ -132,94 +132,69 @@ function tEnrich(territory_id) {
 }
 
 // ── Snapshot builder ──────────────────────────────────────────────────────────
+// Takes pre-fetched data instead of re-querying — called with cached results.
 
-async function buildSnapshot(base44, campaignId, playerMap) {
-  const [
-    territories, influence, regionalPools, supplyRoutes,
-    buildings, battleCards, tradeProposals, objectives,
-    victoryTrackers, phaseDecisions,
-  ] = await Promise.all([
-    base44.asServiceRole.entities.TerritoryState.filter({ campaign_id: campaignId }),
-    base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id: campaignId }),
-    base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id: campaignId }),
-    base44.asServiceRole.entities.SupplyRoute.filter({ campaign_id: campaignId }),
-    base44.asServiceRole.entities.TerritoryBuilding.filter({ campaign_id: campaignId }),
-    base44.asServiceRole.entities.BattleCard.filter({ campaign_id: campaignId }),
-    base44.asServiceRole.entities.DiplomaticAction.filter({ campaign_id: campaignId }),
-    base44.asServiceRole.entities.PlayerInfluenceLedger.filter({ campaign_id: campaignId }),
-    base44.asServiceRole.entities.VictoryTracker.filter({ campaign_id: campaignId }),
-    base44.asServiceRole.entities.PhaseDecision.filter({ campaign_id: campaignId }),
-  ]);
+function buildSnapshotFromData({
+  territories, influence, regionalPools, supplyRoutes,
+  buildings, battleCards, tradeProposals, objectives,
+  victoryTrackers, phaseDecisions,
+}, playerMap) {
 
-  // Territories with enriched canonical names and owner names
-  const territorySnapshot = territories.map(t => ({
-    ...tEnrich(t.territory_id),
-    owner_player_id: t.owner_player_id ?? null,
-    owner_name: t.owner_player_id ? (playerMap[t.owner_player_id]?.display_name ?? t.owner_player_id) : null,
-    troop_count: t.troop_count ?? 0,
-    resource_storage: t.resource_storage ?? {},
-    has_resource_hub: t.has_resource_hub ?? false,
-    structures: t.structures ?? [],
-  }));
-
-  // Permanent influence per territory per player
-  const permInfluence = influence.map(i => ({
-    ...tEnrich(i.territory_id),
-    player_id: i.player_id,
-    player_name: playerMap[i.player_id]?.display_name ?? i.player_id,
-    influence_amount: i.influence_amount ?? 0,
-  }));
-
-  // Spendable influence per region per player
-  const spendableInfluence = regionalPools.map(p => ({
-    region_id: p.region_id,
-    player_id: p.player_id,
-    player_name: playerMap[p.player_id]?.display_name ?? p.player_id,
-    spendable_influence: p.spendable_influence ?? 0,
-  }));
-
-  // Active buildings
-  const buildingSnapshot = buildings.map(b => ({
-    ...tEnrich(b.territory_id),
-    player_id: b.player_id,
-    player_name: playerMap[b.player_id]?.display_name ?? b.player_id,
-    building_type: b.building_type,
-    pillar_type: b.pillar_type,
-    status: b.status,
-    started_round: b.started_round,
-    completed_round: b.completed_round,
-  }));
-
-  // Supply routes
-  const routeSnapshot = supplyRoutes.map(r => ({
-    id: r.id,
-    owner_player_id: r.owner_player_id,
-    owner_name: playerMap[r.owner_player_id]?.display_name ?? r.owner_player_id,
-    hub: tEnrich(r.hub_territory_id),
-    source: tEnrich(r.source_territory_id),
-    route_status: r.route_status,
-    resource_type: r.resource_type,
-    created_round: r.created_round,
-  }));
-
-  // Battle cards
-  const battleCardSnapshot = battleCards.map(bc => ({
-    id: bc.id,
-    round: bc.round,
-    battle_type: bc.battle_type,
-    battle_pillar: bc.battle_pillar,
-    target: tEnrich(bc.target_territory_id),
-    defender_player_id: bc.defender_player_id ?? null,
-    defender_name: bc.defender_player_id ? (playerMap[bc.defender_player_id]?.display_name ?? bc.defender_player_id) : null,
-    status: bc.status,
-    result_applied: bc.result_applied ?? false,
-    total_troops_in_battle: bc.total_troops_in_battle ?? 0,
-  }));
-
-  // Trade proposals (pending diplomatic actions)
-  const tradeSnapshot = tradeProposals
-    .filter(a => a.action_type === 'trade_proposal')
-    .map(a => ({
+  return {
+    territory_states: (territories ?? []).map(t => ({
+      ...tEnrich(t.territory_id),
+      owner_player_id: t.owner_player_id ?? null,
+      owner_name: t.owner_player_id ? (playerMap[t.owner_player_id]?.display_name ?? t.owner_player_id) : null,
+      troop_count: t.troop_count ?? 0,
+      resource_storage: t.resource_storage ?? {},
+      has_resource_hub: t.has_resource_hub ?? false,
+      structures: t.structures ?? [],
+    })),
+    permanent_influence: (influence ?? []).map(i => ({
+      ...tEnrich(i.territory_id),
+      player_id: i.player_id,
+      player_name: playerMap[i.player_id]?.display_name ?? i.player_id,
+      influence_amount: i.influence_amount ?? 0,
+    })),
+    spendable_influence: (regionalPools ?? []).map(p => ({
+      region_id: p.region_id,
+      player_id: p.player_id,
+      player_name: playerMap[p.player_id]?.display_name ?? p.player_id,
+      spendable_influence: p.spendable_influence ?? 0,
+    })),
+    buildings: (buildings ?? []).map(b => ({
+      ...tEnrich(b.territory_id),
+      player_id: b.player_id,
+      player_name: playerMap[b.player_id]?.display_name ?? b.player_id,
+      building_type: b.building_type,
+      pillar_type: b.pillar_type,
+      status: b.status,
+      started_round: b.started_round,
+      completed_round: b.completed_round,
+    })),
+    supply_routes: (supplyRoutes ?? []).map(r => ({
+      id: r.id,
+      owner_player_id: r.owner_player_id,
+      owner_name: playerMap[r.owner_player_id]?.display_name ?? r.owner_player_id,
+      hub: tEnrich(r.hub_territory_id),
+      source: tEnrich(r.source_territory_id),
+      route_status: r.route_status,
+      resource_type: r.resource_type,
+      created_round: r.created_round,
+    })),
+    battle_cards: (battleCards ?? []).map(bc => ({
+      id: bc.id,
+      round: bc.round,
+      battle_type: bc.battle_type,
+      battle_pillar: bc.battle_pillar,
+      target: tEnrich(bc.target_territory_id),
+      defender_player_id: bc.defender_player_id ?? null,
+      defender_name: bc.defender_player_id ? (playerMap[bc.defender_player_id]?.display_name ?? bc.defender_player_id) : null,
+      status: bc.status,
+      result_applied: bc.result_applied ?? false,
+      total_troops_in_battle: bc.total_troops_in_battle ?? 0,
+    })),
+    trade_proposals: (tradeProposals ?? []).filter(a => a.action_type === 'trade_proposal').map(a => ({
       id: a.id,
       round: a.round,
       proposer_player_id: a.player_id,
@@ -229,49 +204,31 @@ async function buildSnapshot(base44, campaignId, playerMap) {
       status: a.status,
       offer: a.effect_metadata?.offer ?? {},
       request: a.effect_metadata?.request ?? {},
-    }));
-
-  // Objectives per player
-  const objectiveSnapshot = objectives.map(o => ({
-    player_id: o.player_id,
-    player_name: playerMap[o.player_id]?.display_name ?? o.player_id,
-    global_influence: o.global_influence ?? 0,
-    objective_cards: o.objective_cards_json ?? {},
-    updated_at_round: o.updated_at_round,
-  }));
-
-  // Victory scores
-  const victorySnapshot = victoryTrackers.map(v => ({
-    player_id: v.player_id,
-    player_name: playerMap[v.player_id]?.display_name ?? v.player_id,
-    occupancy_score: v.occupancy_score ?? 0,
-    wealth_score: v.wealth_score ?? 0,
-    influence_score: v.influence_score ?? 0,
-    has_won: v.has_won ?? false,
-    winning_condition: v.winning_condition ?? null,
-  }));
-
-  // Phase lock states
-  const lockSnapshot = phaseDecisions.map(pd => ({
-    player_id: pd.player_id,
-    player_name: playerMap[pd.player_id]?.display_name ?? pd.player_id,
-    phase: pd.phase,
-    round: pd.round,
-    is_locked: pd.is_locked ?? false,
-    locked_at: pd.locked_at ?? null,
-  }));
-
-  return {
-    territory_states: territorySnapshot,
-    permanent_influence: permInfluence,
-    spendable_influence: spendableInfluence,
-    buildings: buildingSnapshot,
-    supply_routes: routeSnapshot,
-    battle_cards: battleCardSnapshot,
-    trade_proposals: tradeSnapshot,
-    objectives: objectiveSnapshot,
-    victory_scores: victorySnapshot,
-    phase_lock_states: lockSnapshot,
+    })),
+    objectives: (objectives ?? []).map(o => ({
+      player_id: o.player_id,
+      player_name: playerMap[o.player_id]?.display_name ?? o.player_id,
+      global_influence: o.global_influence ?? 0,
+      objective_cards: o.objective_cards_json ?? {},
+      updated_at_round: o.updated_at_round,
+    })),
+    victory_scores: (victoryTrackers ?? []).map(v => ({
+      player_id: v.player_id,
+      player_name: playerMap[v.player_id]?.display_name ?? v.player_id,
+      occupancy_score: v.occupancy_score ?? 0,
+      wealth_score: v.wealth_score ?? 0,
+      influence_score: v.influence_score ?? 0,
+      has_won: v.has_won ?? false,
+      winning_condition: v.winning_condition ?? null,
+    })),
+    phase_lock_states: (phaseDecisions ?? []).map(pd => ({
+      player_id: pd.player_id,
+      player_name: playerMap[pd.player_id]?.display_name ?? pd.player_id,
+      phase: pd.phase,
+      round: pd.round,
+      is_locked: pd.is_locked ?? false,
+      locked_at: pd.locked_at ?? null,
+    })),
   };
 }
 
@@ -468,66 +425,19 @@ function calcDeltas(before, after, playerMap) {
 
 // ── Phase snapshot retrieval ──────────────────────────────────────────────────
 
-// Phase order — used to find "next phase" for after-snapshot reconstruction
-const PHASE_ORDER = [
-  'faction_selection', 'territory_draft', 'initial_deploy',
-  'deploy', 'attack', 'battle', 'fortify',
-];
-
+const PHASE_ORDER = ['faction_selection', 'territory_draft', 'initial_deploy', 'deploy', 'attack', 'battle', 'fortify'];
 function nextPhase(phase) {
   const idx = PHASE_ORDER.indexOf(phase);
-  if (idx < 0 || idx >= PHASE_ORDER.length - 1) return null;
-  return PHASE_ORDER[idx + 1];
+  return (idx < 0 || idx >= PHASE_ORDER.length - 1) ? null : PHASE_ORDER[idx + 1];
 }
 
-// All known snapshot_type values that mean "start of phase" (before effects)
 const BEFORE_TYPES = new Set(['before', 'start', 'phase_start', 'phase_before']);
-// All known snapshot_type values that mean "end of phase" (after effects)
 const AFTER_TYPES  = new Set(['after', 'end', 'phase_end', 'phase_after']);
 
-async function getPhaseSnapshotData(base44, campaignId, round, phase) {
-  const snapshots = await base44.asServiceRole.entities.PhaseSnapshot.filter({
-    campaign_id: campaignId,
-    round,
-    phase,
-  });
-  return snapshots;
-}
+// ── Battle Resolution Audit (uses pre-fetched allBattleCards) ─────────────────
 
-// Find the "before" snapshot of the next phase, which equals the "after" of this phase
-async function getNextPhaseBeforeSnapshot(base44, campaignId, round, phase) {
-  const next = nextPhase(phase);
-  if (!next) return null;
-
-  const snapshots = await base44.asServiceRole.entities.PhaseSnapshot.filter({
-    campaign_id: campaignId,
-    round,
-    phase: next,
-  });
-  const beforeRecord = snapshots.find(s => BEFORE_TYPES.has(s.snapshot_type ?? s.type));
-  if (beforeRecord) return beforeRecord;
-
-  // If phase was fortify (end of round), try round+1 deploy
-  if (phase === 'fortify') {
-    const nextRoundSnaps = await base44.asServiceRole.entities.PhaseSnapshot.filter({
-      campaign_id: campaignId,
-      round: round + 1,
-      phase: 'deploy',
-    });
-    return nextRoundSnaps.find(s => BEFORE_TYPES.has(s.snapshot_type ?? s.type)) ?? null;
-  }
-  return null;
-}
-
-// ── Battle Resolution Audit ───────────────────────────────────────────────────
-
-async function getBattleResolutionAudit(base44, campaignId, round, playerMap) {
-  const allCards = await base44.asServiceRole.entities.BattleCard.filter({
-    campaign_id: campaignId,
-    round,
-  });
-
-  const resolved = allCards.filter(bc => bc.result_applied === true);
+function getBattleResolutionAudit(allBattleCards, playerMap) {
+  const resolved = allBattleCards.filter(bc => bc.result_applied === true);
   const audit = [];
 
   for (const bc of resolved) {
@@ -610,357 +520,154 @@ async function getBattleResolutionAudit(base44, campaignId, round, playerMap) {
   return audit;
 }
 
-// ── Enriched submitted actions per pillar ─────────────────────────────────────
+// ── Build enriched submitted actions from pre-fetched data ───────────────────
 
-async function getEnrichedSubmittedActions(base44, campaignId, round, phase, playerMap) {
+function buildEnrichedActions(cache, phase, round, playerMap) {
   const military = [];
   const economic = [];
   const diplomatic = [];
 
-  // ── Military: attack declarations (from AttackReveal) ──
-  if (phase === 'attack' || phase === 'deploy') {
-    const attacks = await base44.asServiceRole.entities.AttackReveal.filter({
-      campaign_id: campaignId,
-      round,
+  // Military: attacks
+  for (const a of (cache.attackReveals ?? [])) {
+    military.push({
+      pillar: 'military', action_type: 'attack',
+      player_id: a.player_id, player: playerMap[a.player_id]?.display_name ?? a.player_id,
+      source: tEnrich(a.origin_territory_id), target: tEnrich(a.target_territory_id),
+      troops: a.committed_troops ?? 0, timestamp: a.created_date ?? null, round, phase,
     });
-    for (const a of attacks) {
+  }
+
+  // Military: deployments (deploy phase)
+  for (const d of (cache.phaseDecisions ?? []).filter(d => d.phase === 'deploy')) {
+    const placements = d.data?.placements ?? {};
+    const total = Object.values(placements).reduce((s, v) => s + (v || 0), 0);
+    if (total > 0) {
       military.push({
-        pillar:        'military',
-        action_type:   'attack',
-        player_id:     a.player_id,
-        player:        playerMap[a.player_id]?.display_name ?? a.player_id,
-        source:        tEnrich(a.origin_territory_id),
-        target:        tEnrich(a.target_territory_id),
-        troops:        a.committed_troops ?? 0,
-        timestamp:     a.created_date ?? null,
-        round,
-        phase,
+        pillar: 'military', action_type: 'deploy_troops',
+        player_id: d.player_id, player: playerMap[d.player_id]?.display_name ?? d.player_id,
+        territories_placed: Object.entries(placements).map(([tid, cnt]) => ({ ...tEnrich(tid), troops: cnt })),
+        total_troops: total, is_auto_submitted: d.is_auto_submitted ?? false,
+        locked_at: d.locked_at ?? null, timestamp: d.locked_at ?? d.updated_date ?? null, round, phase,
       });
     }
   }
 
-  // ── Military: troop deployments (from PhaseDecision for deploy phase) ──
-  if (phase === 'deploy') {
-    const decisions = await base44.asServiceRole.entities.PhaseDecision.filter({
-      campaign_id: campaignId, phase: 'deploy', round,
-    });
-    for (const d of decisions) {
-      const placements = d.data?.placements ?? {};
-      const total = Object.values(placements).reduce((s, v) => s + v, 0);
-      if (total > 0) {
-        military.push({
-          pillar:             'military',
-          action_type:        'deploy_troops',
-          player_id:          d.player_id,
-          player:             playerMap[d.player_id]?.display_name ?? d.player_id,
-          territories_placed: Object.entries(placements).map(([tid, cnt]) => ({ ...tEnrich(tid), troops: cnt })),
-          total_troops:       total,
-          is_auto_submitted:  d.is_auto_submitted ?? false,
-          locked_at:          d.locked_at ?? null,
-          timestamp:          d.locked_at ?? d.updated_date ?? null,
-          round,
-          phase,
-        });
-      }
+  // Military: fortifications + construction (fortify phase)
+  for (const d of (cache.phaseDecisions ?? []).filter(d => d.phase === 'fortify')) {
+    for (const m of (d.data?.movements ?? [])) {
+      military.push({
+        pillar: 'military', action_type: 'fortify',
+        player_id: d.player_id, player: playerMap[d.player_id]?.display_name ?? d.player_id,
+        source: tEnrich(m.origin_territory_id), target: tEnrich(m.destination_territory_id),
+        troops: m.committed_troops ?? 0, timestamp: d.locked_at ?? d.updated_date ?? null, round, phase,
+      });
+    }
+    const con = d.data?.construction;
+    if (con?.territory_id) {
+      economic.push({
+        pillar: 'economic', action_type: 'start_construction',
+        player_id: d.player_id, player: playerMap[d.player_id]?.display_name ?? d.player_id,
+        territory: tEnrich(con.territory_id), building_type: con.structure_type, pillar_type: con.pillar,
+        timestamp: con.staged_at ?? d.locked_at ?? null, round, phase,
+      });
     }
   }
 
-  // ── Military: fortifications (from PhaseDecision for fortify phase) ──
-  if (phase === 'fortify') {
-    const decisions = await base44.asServiceRole.entities.PhaseDecision.filter({
-      campaign_id: campaignId, phase: 'fortify', round,
-    });
-    for (const d of decisions) {
-      const movements = d.data?.movements ?? [];
-      for (const m of movements) {
-        military.push({
-          pillar:       'military',
-          action_type:  'fortify',
-          player_id:    d.player_id,
-          player:       playerMap[d.player_id]?.display_name ?? d.player_id,
-          source:       tEnrich(m.origin_territory_id),
-          target:       tEnrich(m.destination_territory_id),
-          troops:       m.committed_troops ?? 0,
-          timestamp:    d.locked_at ?? d.updated_date ?? null,
-          round,
-          phase,
-        });
-      }
-      // Construction
-      const construction = d.data?.construction;
-      if (construction?.territory_id) {
-        economic.push({
-          pillar:         'economic',
-          action_type:    'start_construction',
-          player_id:      d.player_id,
-          player:         playerMap[d.player_id]?.display_name ?? d.player_id,
-          territory:      tEnrich(construction.territory_id),
-          building_type:  construction.structure_type,
-          pillar_type:    construction.pillar,
-          timestamp:      construction.staged_at ?? d.locked_at ?? null,
-          round,
-          phase,
-        });
-      }
+  // Economic: resource activations (planning_stage)
+  for (const d of (cache.phaseDecisions ?? []).filter(d => d.phase === 'planning_stage')) {
+    const staged = d.data?.economic_staged ?? [];
+    if (staged.length > 0) {
+      economic.push({
+        pillar: 'economic', action_type: 'activate_resources',
+        player_id: d.player_id, player: playerMap[d.player_id]?.display_name ?? d.player_id,
+        territories: staged.map(tid => tEnrich(tid)), territory_count: staged.length,
+        timestamp: d.data?.locked_at ?? d.updated_date ?? null, round, phase,
+      });
     }
   }
 
-  // ── Economic: resource activations (from operations staging decisions) ──
-  if (phase === 'deploy') {
-    const stagingDecisions = await base44.asServiceRole.entities.PhaseDecision.filter({
-      campaign_id: campaignId, phase: 'planning_stage', round,
-    });
-    for (const d of stagingDecisions) {
-      const staged = d.data?.economic_staged ?? [];
-      if (staged.length > 0) {
-        economic.push({
-          pillar:            'economic',
-          action_type:       'activate_resources',
-          player_id:         d.player_id,
-          player:            playerMap[d.player_id]?.display_name ?? d.player_id,
-          territories:       staged.map(tid => tEnrich(tid)),
-          territory_count:   staged.length,
-          timestamp:         d.data?.locked_at ?? d.updated_date ?? null,
-          round,
-          phase,
-        });
-      }
-    }
-  }
-
-  // ── Economic: construction projects started this round ──
-  const buildings = await base44.asServiceRole.entities.TerritoryBuilding.filter({
-    campaign_id: campaignId, started_round: round,
-  });
-  for (const b of buildings) {
+  // Economic: buildings started this round
+  for (const b of (cache.buildings ?? []).filter(b => b.started_round === round)) {
     economic.push({
-      pillar:        'economic',
-      action_type:   'build_' + b.building_type,
-      player_id:     b.player_id,
-      player:        playerMap[b.player_id]?.display_name ?? b.player_id,
-      territory:     tEnrich(b.territory_id),
-      building_type: b.building_type,
-      status:        b.status,
-      timestamp:     b.created_date ?? null,
-      round,
-      phase,
+      pillar: 'economic', action_type: 'build_' + b.building_type,
+      player_id: b.player_id, player: playerMap[b.player_id]?.display_name ?? b.player_id,
+      territory: tEnrich(b.territory_id), building_type: b.building_type, status: b.status,
+      timestamp: b.created_date ?? null, round, phase,
     });
   }
 
-  // ── Diplomatic: all DiplomaticActions this round ──
-  const dipActions = await base44.asServiceRole.entities.DiplomaticAction.filter({
-    campaign_id: campaignId, round,
-  });
-  for (const a of dipActions) {
+  // Diplomatic: all diplomatic actions this round
+  for (const a of (cache.dipActions ?? [])) {
     diplomatic.push({
-      pillar:              'diplomatic',
-      action_type:         a.action_type,
-      player_id:           a.player_id,
-      player:              playerMap[a.player_id]?.display_name ?? a.player_id,
-      region_id:           a.region_id,
-      influence_spent:     a.influence_spent ?? 0,
-      target_territory:    a.target_territory_id ? tEnrich(a.target_territory_id) : null,
-      target_player_id:    a.target_player_id ?? null,
-      target_player:       a.target_player_id ? (playerMap[a.target_player_id]?.display_name ?? a.target_player_id) : null,
-      status:              a.status,
-      timestamp:           a.created_date ?? null,
-      round,
-      phase,
+      pillar: 'diplomatic', action_type: a.action_type,
+      player_id: a.player_id, player: playerMap[a.player_id]?.display_name ?? a.player_id,
+      region_id: a.region_id, influence_spent: a.influence_spent ?? 0,
+      target_territory: a.target_territory_id ? tEnrich(a.target_territory_id) : null,
+      target_player_id: a.target_player_id ?? null,
+      target_player: a.target_player_id ? (playerMap[a.target_player_id]?.display_name ?? a.target_player_id) : null,
+      status: a.status, timestamp: a.created_date ?? null, round, phase,
     });
   }
 
-  // ── Diplomatic: intelligence reports this round ──
-  const intelReports = await base44.asServiceRole.entities.IntelligenceReport.filter({
-    campaign_id: campaignId, generated_round: round,
-  });
-  for (const r of intelReports) {
+  // Diplomatic: intelligence reports
+  for (const r of (cache.intelReports ?? [])) {
     diplomatic.push({
-      pillar:            'diplomatic',
-      action_type:       r.report_type,
-      player_id:         r.viewer_player_id,
-      player:            playerMap[r.viewer_player_id]?.display_name ?? r.viewer_player_id,
-      target_territory:  r.target_territory_id ? tEnrich(r.target_territory_id) : null,
-      target_player_id:  r.target_player_id ?? null,
-      target_player:     r.target_player_id ? (playerMap[r.target_player_id]?.display_name ?? r.target_player_id) : null,
-      influence_spent:   r.influence_spent ?? 0,
-      generated_phase:   r.generated_phase,
-      timestamp:         r.generated_at ?? r.created_date ?? null,
-      round,
-      phase,
+      pillar: 'diplomatic', action_type: r.report_type,
+      player_id: r.viewer_player_id, player: playerMap[r.viewer_player_id]?.display_name ?? r.viewer_player_id,
+      target_territory: r.target_territory_id ? tEnrich(r.target_territory_id) : null,
+      target_player_id: r.target_player_id ?? null,
+      target_player: r.target_player_id ? (playerMap[r.target_player_id]?.display_name ?? r.target_player_id) : null,
+      influence_spent: r.influence_spent ?? 0, generated_phase: r.generated_phase,
+      timestamp: r.generated_at ?? r.created_date ?? null, round, phase,
     });
   }
 
   return { military, economic, diplomatic, all: [...military, ...economic, ...diplomatic] };
 }
 
-// ── Submitted actions assembler ───────────────────────────────────────────────
+// ── Build generated artifacts from pre-fetched cache ─────────────────────────
 
-async function getSubmittedActions(base44, campaignId, round, phase, playerMap) {
-  const actions = [];
-
-  // PhaseDecisions — staging records
-  const decisions = await base44.asServiceRole.entities.PhaseDecision.filter({
-    campaign_id: campaignId,
-    round,
-    phase,
-  });
-  for (const d of decisions) {
-    actions.push({
-      source: 'PhaseDecision',
-      player_id: d.player_id,
-      player_name: playerMap[d.player_id]?.display_name ?? d.player_id,
-      action_type: 'phase_staging',
-      pillar: phase === 'deploy' ? 'military' : phase === 'attack' ? 'multi' : 'multi',
-      submitted_at: d.updated_date ?? d.created_date,
-      is_locked: d.is_locked ?? false,
-      payload: d.data ?? {},
-    });
-  }
-
-  // AttackReveals — attack submissions during attack phase
-  if (phase === 'attack' || phase === 'deploy') {
-    const attacks = await base44.asServiceRole.entities.AttackReveal.filter({
-      campaign_id: campaignId,
-      round,
-    });
-    for (const a of attacks) {
-      actions.push({
-        source: 'AttackReveal',
-        player_id: a.player_id,
-        player_name: playerMap[a.player_id]?.display_name ?? a.player_id,
-        action_type: 'attack_declaration',
-        pillar: 'military',
-        submitted_at: a.created_date,
-        origin: tEnrich(a.origin_territory_id),
-        target: tEnrich(a.target_territory_id),
-        committed_troops: a.committed_troops,
-      });
-    }
-  }
-
-  // DiplomaticActions — submitted during any phase
-  const dipActions = await base44.asServiceRole.entities.DiplomaticAction.filter({
-    campaign_id: campaignId,
-    round,
-  });
-  for (const a of dipActions) {
-    const pillar = a.action_type === 'trade_proposal' ? 'diplomatic' :
-                   ['war_rations','influence_network','merchant_convoy','non_aggression_pact',
-                    'broker_peace','coalition_warfare','power_broker'].includes(a.action_type) ? 'diplomatic' : 'diplomatic';
-    actions.push({
-      source: 'DiplomaticAction',
-      player_id: a.player_id,
-      player_name: playerMap[a.player_id]?.display_name ?? a.player_id,
-      action_type: a.action_type,
-      pillar,
-      submitted_at: a.created_date,
-      region_id: a.region_id,
-      influence_spent: a.influence_spent ?? 0,
-      status: a.status,
-      target_player_id: a.target_player_id ?? null,
-      target_player_name: a.target_player_id ? (playerMap[a.target_player_id]?.display_name ?? a.target_player_id) : null,
-      target: a.target_territory_id ? tEnrich(a.target_territory_id) : null,
-      effect_metadata: a.effect_metadata ?? {},
-    });
-  }
-
-  // IntelligenceReports — gathered this round
-  const intelReports = await base44.asServiceRole.entities.IntelligenceReport.filter({
-    campaign_id: campaignId,
-    generated_round: round,
-  });
-  for (const r of intelReports) {
-    actions.push({
-      source: 'IntelligenceReport',
-      player_id: r.viewer_player_id,
-      player_name: playerMap[r.viewer_player_id]?.display_name ?? r.viewer_player_id,
-      action_type: r.report_type,
-      pillar: 'diplomatic',
-      submitted_at: r.generated_at,
-      generated_phase: r.generated_phase,
-      target: r.target_territory_id ? tEnrich(r.target_territory_id) : null,
-      target_player_id: r.target_player_id ?? null,
-      target_player_name: r.target_player_id ? (playerMap[r.target_player_id]?.display_name ?? r.target_player_id) : null,
-      influence_spent: r.influence_spent ?? 0,
-      report_data: r.report_data ?? {},
-    });
-  }
-
-  return actions;
-}
-
-// ── Generated artifacts ───────────────────────────────────────────────────────
-
-async function getGeneratedArtifacts(base44, campaignId, round, playerMap) {
-  const [
-    battleCards,
-    tradeProposals,
-    intelReports,
-    supplyRoutes,
-    buildings,
-    dipActions,
-  ] = await Promise.all([
-    base44.asServiceRole.entities.BattleCard.filter({ campaign_id: campaignId, round }),
-    base44.asServiceRole.entities.DiplomaticAction.filter({ campaign_id: campaignId, round }),
-    base44.asServiceRole.entities.IntelligenceReport.filter({ campaign_id: campaignId, generated_round: round }),
-    base44.asServiceRole.entities.SupplyRoute.filter({ campaign_id: campaignId, created_round: round }),
-    base44.asServiceRole.entities.TerritoryBuilding.filter({ campaign_id: campaignId, started_round: round }),
-    base44.asServiceRole.entities.DiplomaticAction.filter({ campaign_id: campaignId, round }),
-  ]);
+function buildGeneratedArtifacts(cache, round, playerMap) {
+  const battleCards = cache.allBattleCards ?? [];
+  const dipActions  = cache.dipActions ?? [];
+  const intelReports = cache.intelReports ?? [];
+  const supplyRoutes = (cache.supplyRoutes ?? []).filter(r => r.created_round === round);
+  const buildings    = (cache.buildings ?? []).filter(b => b.started_round === round);
 
   return {
     battle_cards_generated: battleCards.map(bc => ({
-      id: bc.id,
-      battle_type: bc.battle_type,
-      battle_pillar: bc.battle_pillar,
+      id: bc.id, battle_type: bc.battle_type, battle_pillar: bc.battle_pillar,
       target: tEnrich(bc.target_territory_id),
       source_player_id: bc.source_player_id ?? null,
       source_player_name: bc.source_player_id ? (playerMap[bc.source_player_id]?.display_name ?? bc.source_player_id) : null,
       status: bc.status,
     })),
-    trade_proposals_generated: tradeProposals
-      .filter(a => a.action_type === 'trade_proposal')
-      .map(a => ({
-        id: a.id,
-        proposer_player_id: a.player_id,
-        proposer_name: playerMap[a.player_id]?.display_name ?? a.player_id,
-        target_player_id: a.target_player_id,
-        target_name: a.target_player_id ? (playerMap[a.target_player_id]?.display_name ?? a.target_player_id) : null,
-        status: a.status,
-      })),
+    trade_proposals_generated: dipActions.filter(a => a.action_type === 'trade_proposal').map(a => ({
+      id: a.id, proposer_player_id: a.player_id,
+      proposer_name: playerMap[a.player_id]?.display_name ?? a.player_id,
+      target_player_id: a.target_player_id,
+      target_name: a.target_player_id ? (playerMap[a.target_player_id]?.display_name ?? a.target_player_id) : null,
+      status: a.status,
+    })),
     intelligence_reports_generated: intelReports.map(r => ({
-      id: r.id,
-      report_type: r.report_type,
-      viewer_player_id: r.viewer_player_id,
+      id: r.id, report_type: r.report_type, viewer_player_id: r.viewer_player_id,
       viewer_name: playerMap[r.viewer_player_id]?.display_name ?? r.viewer_player_id,
       target: r.target_territory_id ? tEnrich(r.target_territory_id) : null,
       generated_phase: r.generated_phase,
     })),
     supply_routes_created: supplyRoutes.map(r => ({
-      id: r.id,
-      owner_name: playerMap[r.owner_player_id]?.display_name ?? r.owner_player_id,
-      hub: tEnrich(r.hub_territory_id),
-      source: tEnrich(r.source_territory_id),
-      resource_type: r.resource_type,
+      id: r.id, owner_name: playerMap[r.owner_player_id]?.display_name ?? r.owner_player_id,
+      hub: tEnrich(r.hub_territory_id), source: tEnrich(r.source_territory_id), resource_type: r.resource_type,
     })),
     buildings_started: buildings.map(b => ({
-      ...tEnrich(b.territory_id),
-      player_name: playerMap[b.player_id]?.display_name ?? b.player_id,
-      building_type: b.building_type,
-      pillar_type: b.pillar_type,
-      status: b.status,
+      ...tEnrich(b.territory_id), player_name: playerMap[b.player_id]?.display_name ?? b.player_id,
+      building_type: b.building_type, pillar_type: b.pillar_type, status: b.status,
     })),
-    diplomatic_effects_created: dipActions
-      .filter(a => a.action_type !== 'trade_proposal')
-      .map(a => ({
-        id: a.id,
-        action_type: a.action_type,
-        player_name: playerMap[a.player_id]?.display_name ?? a.player_id,
-        region_id: a.region_id,
-        influence_spent: a.influence_spent ?? 0,
-        status: a.status,
-        expires_round: a.expires_round ?? null,
-      })),
+    diplomatic_effects_created: dipActions.filter(a => a.action_type !== 'trade_proposal').map(a => ({
+      id: a.id, action_type: a.action_type, player_name: playerMap[a.player_id]?.display_name ?? a.player_id,
+      region_id: a.region_id, influence_spent: a.influence_spent ?? 0, status: a.status,
+      expires_round: a.expires_round ?? null,
+    })),
   };
 }
 
@@ -1007,27 +714,57 @@ Deno.serve(async (req) => {
         action_log_generation:  'pending',
       };
 
-      // ── Snapshot resolution strategy ────────────────────────────────────
-      //
-      // PHASE_START / phase_start snapshots: written by phase functions at the
-      //   very beginning of a phase (before any player actions take effect).
-      //   These are the authoritative "before" state.
-      //
-      // PHASE_END / phase_end snapshots: written by processPhaseEnd immediately
-      //   after all effects are applied. These are the authoritative "after" state.
-      //
-      // Fallback chain:
-      //   before = stored phase_start → live state (current phase only)
-      //   after  = stored phase_end → next-phase phase_start → live state (in-progress only)
-      //
-      const [storedSnapshots, nextPhaseBeforeRecord, liveSnapshot] = await Promise.all([
-        getPhaseSnapshotData(base44, campaign_id, targetRound, targetPhase),
-        isCurrentPhase ? Promise.resolve(null) : getNextPhaseBeforeSnapshot(base44, campaign_id, targetRound, targetPhase),
-        buildSnapshot(base44, campaign_id, playerMap),
+      // ── SINGLE BULK FETCH — all DB queries in one Promise.all ───────────
+      // This eliminates rate-limit issues by batching every query together.
+      const nextPhaseName = nextPhase(targetPhase);
+      const [
+        territories, influence, regionalPools, supplyRoutes,
+        allBuildings, allBattleCards, dipActions, objectives,
+        victoryTrackers, phaseDecisions,
+        storedSnapshots,
+        nextPhaseSnapshots,
+        nextRoundSnapshots,
+        phaseLogs,
+        attackReveals,
+        intelReports,
+      ] = await Promise.all([
+        base44.asServiceRole.entities.TerritoryState.filter({ campaign_id }),
+        base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id }),
+        base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id }),
+        base44.asServiceRole.entities.SupplyRoute.filter({ campaign_id }),
+        base44.asServiceRole.entities.TerritoryBuilding.filter({ campaign_id }),
+        base44.asServiceRole.entities.BattleCard.filter({ campaign_id, round: targetRound }),
+        base44.asServiceRole.entities.DiplomaticAction.filter({ campaign_id, round: targetRound }),
+        base44.asServiceRole.entities.PlayerInfluenceLedger.filter({ campaign_id }),
+        base44.asServiceRole.entities.VictoryTracker.filter({ campaign_id }),
+        base44.asServiceRole.entities.PhaseDecision.filter({ campaign_id, round: targetRound }),
+        base44.asServiceRole.entities.PhaseSnapshot.filter({ campaign_id, round: targetRound, phase: targetPhase }),
+        nextPhaseName
+          ? base44.asServiceRole.entities.PhaseSnapshot.filter({ campaign_id, round: targetRound, phase: nextPhaseName })
+          : Promise.resolve([]),
+        targetPhase === 'fortify'
+          ? base44.asServiceRole.entities.PhaseSnapshot.filter({ campaign_id, round: targetRound + 1, phase: 'deploy' })
+          : Promise.resolve([]),
+        base44.asServiceRole.entities.SetupLog.filter({ campaign_id, phase: targetPhase, round: targetRound }),
+        base44.asServiceRole.entities.AttackReveal.filter({ campaign_id, round: targetRound }),
+        base44.asServiceRole.entities.IntelligenceReport.filter({ campaign_id, generated_round: targetRound }),
       ]);
 
+      // Build a cache object for helper functions
+      const cache = {
+        territories, influence, regionalPools, supplyRoutes,
+        buildings: allBuildings, allBattleCards, dipActions, objectives,
+        victoryTrackers, phaseDecisions, attackReveals, intelReports,
+      };
+
+      // Build live snapshot from cached data
+      const liveSnapshot = buildSnapshotFromData(cache, playerMap);
+
+      // Resolve phase snapshots
       const beforeRecord = storedSnapshots.find(s => BEFORE_TYPES.has(s.snapshot_type ?? s.type));
       const afterRecord  = storedSnapshots.find(s => AFTER_TYPES.has(s.snapshot_type ?? s.type));
+      const nextPhaseBeforeRecord = [...nextPhaseSnapshots, ...nextRoundSnapshots]
+        .find(s => BEFORE_TYPES.has(s.snapshot_type ?? s.type)) ?? null;
 
       // ── Resolve before snapshot ──────────────────────────────────────────
       let beforeSnapshotData, beforeCapturedAt, beforeSource;
@@ -1146,35 +883,27 @@ Deno.serve(async (req) => {
       }
 
       // Phase timing from SetupLog events (best-effort; null if not recorded)
-      const phaseLogs = await base44.asServiceRole.entities.SetupLog.filter({
-        campaign_id,
-        phase: targetPhase,
-        round: targetRound,
-      });
       const startLog = phaseLogs.find(l => ['phase_started','deploy_started','attack_started','fortify_started'].includes(l.event_type));
       const endLog   = phaseLogs.find(l => ['phase_ended','phase_advanced','phase_complete'].includes(l.event_type));
       const phaseStartedAt   = startLog?.created_date ?? null;
       const phaseCompletedAt = endLog?.created_date ?? null;
 
-      // ── Enriched submitted actions (per pillar) ─────────────────────────
+      // ── Enriched submitted actions (per pillar) — uses cache, no extra queries
       let enrichedActions = { military: [], economic: [], diplomatic: [], all: [] };
       try {
-        enrichedActions = await getEnrichedSubmittedActions(base44, campaign_id, targetRound, targetPhase, playerMap);
+        enrichedActions = buildEnrichedActions(cache, targetPhase, targetRound, playerMap);
         diagnostics.action_log_generation = 'success';
       } catch (e) {
         diagnostics.action_log_generation = `error: ${e.message}`;
       }
 
-      // ── Legacy flat submitted actions (kept for backward compat) ───────
-      const submittedActions = await getSubmittedActions(base44, campaign_id, targetRound, targetPhase, playerMap);
+      // ── Generated artifacts — uses cache, no extra queries ──────────────
+      const generatedArtifacts = buildGeneratedArtifacts(cache, targetRound, playerMap);
 
-      // ── Generated artifacts ─────────────────────────────────────────────
-      const generatedArtifacts = await getGeneratedArtifacts(base44, campaign_id, targetRound, playerMap);
-
-      // ── Battle resolution audit ─────────────────────────────────────────
+      // ── Battle resolution audit — uses cache, no extra queries ──────────
       let battleAudit = [];
       try {
-        battleAudit = await getBattleResolutionAudit(base44, campaign_id, targetRound, playerMap);
+        battleAudit = getBattleResolutionAudit(allBattleCards, playerMap);
         diagnostics.battle_audit_generation = 'success';
       } catch (e) {
         diagnostics.battle_audit_generation = `error: ${e.message}`;
@@ -1314,7 +1043,6 @@ Deno.serve(async (req) => {
           economic:   enrichedActions.economic,
           diplomatic: enrichedActions.diplomatic,
           all:        enrichedActions.all,
-          _legacy:    submittedActions,
         },
 
         generated_artifacts: generatedArtifacts,
