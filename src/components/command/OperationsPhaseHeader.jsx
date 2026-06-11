@@ -12,7 +12,7 @@
  *   onLocked          — called after successful lock-in
  *   onStatusLoaded    — called with status object after load
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Lock, Loader2, Shield, Coins, Feather, CheckCircle2, RefreshCw, Users } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 
@@ -52,15 +52,16 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
   const [loading, setLoading] = useState(true);
   const [locking, setLocking] = useState(false);
   const [error, setError] = useState(null);
+  const retryRef = useRef(null);
 
-  const actingId = actingAsPlayerId ?? myPlayer?.id;
-
-  const load = useCallback(async () => {
+  const load = useCallback(async (isRetry = false) => {
     if (!campaign?.id || !myPlayer?.id) return;
-    setError(null);
+    if (!isRetry) setError(null);
     if (!status) setLoading(true);
+
     try {
-      const [statusRes, adminRes] = await Promise.all([
+      // Fetch both in parallel; allow admin status to fail silently
+      const [statusRes, adminRes] = await Promise.allSettled([
         base44.functions.invoke('operationsLockPhase', {
           action: 'getOperationsStatus',
           campaign_id: campaign.id,
@@ -71,17 +72,36 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
           campaign_id: campaign.id,
         }),
       ]);
-      setStatus(statusRes.data);
-      setAdminStatus(adminRes.data);
-      onStatusLoaded?.(statusRes.data);
-    } catch (e) {
-      setError(e?.response?.data?.error ?? 'Failed to load operations status.');
+
+      if (statusRes.status === 'fulfilled') {
+        setStatus(statusRes.value.data);
+        onStatusLoaded?.(statusRes.value.data);
+        setError(null);
+        retryRef.current = null;
+      } else {
+        // Schedule a silent retry after 3s instead of showing an error immediately
+        const msg = statusRes.reason?.response?.data?.error ?? statusRes.reason?.message ?? 'Failed to load operations status.';
+        if (!status) {
+          // Only show error if we have no cached data to fall back on
+          retryRef.current = setTimeout(() => load(true), 3000);
+          setError(msg);
+        }
+        // If we already have status data, keep showing it silently
+      }
+
+      if (adminRes.status === 'fulfilled') {
+        setAdminStatus(adminRes.value.data);
+      }
+      // adminRes failure is silent — admin dot indicators just stay stale
     } finally {
       setLoading(false);
     }
   }, [campaign?.id, myPlayer?.id, actingAsPlayerId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    return () => { if (retryRef.current) clearTimeout(retryRef.current); };
+  }, [load]);
 
   const handleLock = async () => {
     if (!campaign?.id) return;
