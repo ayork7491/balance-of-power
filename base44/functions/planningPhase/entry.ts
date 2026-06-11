@@ -835,6 +835,49 @@ Deno.serve(async (req) => {
       is_public: true,
     });
 
+    // ── Write phase_end snapshot after all activations are applied ────────────
+    // This snapshot captures the full post-activation game state so exports can
+    // compute accurate resource deltas without relying on SetupLog fallback.
+    // Written per-player after their lock commits; exportPhaseAudit uses the
+    // last-written phase_end record (or the latest timestamp if multiple exist).
+    try {
+      const [snapStates, snapInfluence, snapRegionalPools, snapBuildings, snapSupplyRoutes, snapObjectives, snapVictory] = await Promise.all([
+        base44.asServiceRole.entities.TerritoryState.filter({ campaign_id }),
+        base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id }),
+        base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id }),
+        base44.asServiceRole.entities.TerritoryBuilding.filter({ campaign_id }),
+        base44.asServiceRole.entities.SupplyRoute.filter({ campaign_id }),
+        base44.asServiceRole.entities.PlayerInfluenceLedger.filter({ campaign_id }),
+        base44.asServiceRole.entities.VictoryTracker.filter({ campaign_id }),
+      ]);
+      const snapActivePlayers = players.filter(p => !p.is_eliminated);
+      await base44.asServiceRole.entities.PhaseSnapshot.create({
+        campaign_id, round, phase: 'deploy', snapshot_type: 'phase_end',
+        _schema_version: 2,
+        territory_states: snapStates.map(ts => ({
+          territory_id: ts.territory_id, owner_player_id: ts.owner_player_id ?? null,
+          troop_count: ts.troop_count ?? 0, resource_storage: ts.resource_storage ?? {},
+          has_resource_hub: ts.has_resource_hub ?? false, structures: ts.structures ?? [],
+          resource_type: ts.resource_type ?? null,
+        })),
+        player_standings: snapActivePlayers.map(p => {
+          const owned = snapStates.filter(ts => ts.owner_player_id === p.id);
+          return { player_id: p.id, display_name: p.display_name, territory_count: owned.length, troop_total: owned.reduce((s, ts) => s + (ts.troop_count || 0), 0), is_eliminated: p.is_eliminated ?? false };
+        }),
+        permanent_influence: snapInfluence.map(i => ({ territory_id: i.territory_id, player_id: i.player_id, influence_amount: i.influence_amount ?? 0 })),
+        spendable_influence: snapRegionalPools.map(p => ({ region_id: p.region_id, player_id: p.player_id, spendable_influence: p.spendable_influence ?? 0 })),
+        buildings: snapBuildings.map(b => ({ territory_id: b.territory_id, player_id: b.player_id, building_type: b.building_type, pillar_type: b.pillar_type, status: b.status, started_round: b.started_round, completed_round: b.completed_round })),
+        supply_routes: snapSupplyRoutes.map(r => ({ id: r.id, owner_player_id: r.owner_player_id, hub_territory_id: r.hub_territory_id, source_territory_id: r.source_territory_id, route_status: r.route_status, resource_type: r.resource_type, created_round: r.created_round })),
+        objectives: snapObjectives.map(o => ({ player_id: o.player_id, global_influence: o.global_influence ?? 0, objective_cards: o.objective_cards_json ?? {} })),
+        victory_scores: snapVictory.map(v => ({ player_id: v.player_id, occupancy_score: v.occupancy_score ?? 0, wealth_score: v.wealth_score ?? 0, influence_score: v.influence_score ?? 0, has_won: v.has_won ?? false, winning_condition: v.winning_condition ?? null })),
+        locked_by_player_id: actingPlayer.id,
+        locked_at: lockedAt,
+      });
+    } catch (snapErr) {
+      // Non-fatal — don't fail the lock if snapshot write fails
+      console.warn('[lockPlanningPhase] Phase end snapshot write failed (non-fatal):', snapErr?.message);
+    }
+
     return Response.json({
       success: true,
       locked_at: lockedAt,

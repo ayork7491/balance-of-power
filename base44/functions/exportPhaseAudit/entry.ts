@@ -795,7 +795,12 @@ Deno.serve(async (req) => {
 
       // Resolve phase snapshots
       const beforeRecord = storedSnapshots.find(s => BEFORE_TYPES.has(s.snapshot_type ?? s.type));
-      const afterRecord  = storedSnapshots.find(s => AFTER_TYPES.has(s.snapshot_type ?? s.type));
+      // For deploy/planning phase: multiple phase_end snapshots can exist (one per player lock).
+      // Pick the latest one (highest created_date) so it reflects the most complete post-activation state.
+      const afterCandidates = storedSnapshots.filter(s => AFTER_TYPES.has(s.snapshot_type ?? s.type));
+      const afterRecord = afterCandidates.length > 0
+        ? afterCandidates.sort((a, b) => new Date(b.created_date ?? 0) - new Date(a.created_date ?? 0))[0]
+        : null;
       const nextPhaseBeforeRecord = [...nextPhaseSnapshots, ...nextRoundSnapshots]
         .find(s => BEFORE_TYPES.has(s.snapshot_type ?? s.type)) ?? null;
 
@@ -1149,6 +1154,63 @@ Deno.serve(async (req) => {
         if (exportValidationStatus === 'passed') exportValidationStatus = 'warning';
       }
 
+      // Issue 4: Ownership mismatch — battle result winner != after-snapshot owner
+      if (afterSnapshotData?.territory_states) {
+        const afterOwnerMap = {};
+        for (const t of afterSnapshotData.territory_states) afterOwnerMap[t.territory_id] = t.owner_player_id;
+        for (const b of battleAudit) {
+          if (!b.result_applied || !b.ending_state?.owner_player_id) continue;
+          const targetId = b.target?.territory_id ?? b.target_territory_id;
+          const snapOwner = afterOwnerMap[targetId];
+          if (snapOwner && snapOwner !== b.ending_state.owner_player_id) {
+            const winnerName = b.winner ?? b.ending_state.owner_player_id;
+            const snapName = playerMap[snapOwner]?.display_name ?? snapOwner;
+            validationWarnings.push({
+              type: 'ownership_mismatch',
+              severity: 'high',
+              territory_id: targetId,
+              territory_name: b.target?.territory_name ?? targetId,
+              battle_result_winner: winnerName,
+              snapshot_owner: snapName,
+              message: `Ownership mismatch at ${b.target?.territory_name ?? targetId}: battle result shows ${winnerName} but snapshot shows ${snapName}.`,
+            });
+            if (exportValidationStatus === 'passed') exportValidationStatus = 'warning';
+          }
+        }
+      }
+
+      // Issue 4: Troop mismatch — committed troops left an origin but troop delta shows no decrease
+      // Only check when we have both snapshots and there are military attack actions
+      const attackActions = enrichedActions.military.filter(a => a.action_type === 'attack' && a.validation_result !== 'rejected');
+      if (canDelta && attackActions.length > 0 && beforeSnapshotData?.territory_states) {
+        const beforeOwnerMap = {};
+        for (const t of beforeSnapshotData.territory_states) beforeOwnerMap[t.territory_id] = { owner: t.owner_player_id, troops: t.troop_count ?? 0 };
+        for (const atk of attackActions) {
+          const originId = atk.source?.territory_id;
+          if (!originId) continue;
+          const before = beforeOwnerMap[originId];
+          const afterEntry = (afterSnapshotData?.territory_states ?? []).find(t => t.territory_id === originId);
+          if (before && afterEntry) {
+            const expectedLoss = atk.troops ?? 0;
+            const actualDelta = (afterEntry.troop_count ?? 0) - before.troops;
+            // If the origin lost no troops (delta >= 0) but committed_troops > 0, flag it
+            if (expectedLoss > 0 && actualDelta >= 0 && before.owner === atk.player_id) {
+              validationWarnings.push({
+                type: 'troop_commitment_not_reflected',
+                severity: 'medium',
+                territory_id: originId,
+                territory_name: atk.source?.territory_name ?? originId,
+                player_id: atk.player_id,
+                player_name: atk.player,
+                committed: expectedLoss,
+                snapshot_delta: actualDelta,
+                message: `${expectedLoss} troops committed from ${atk.source?.territory_name ?? originId} by ${atk.player} but snapshot troop delta is ${actualDelta} (expected decrease).`,
+              });
+            }
+          }
+        }
+      }
+
       const troopDeltasNonZero = (deltaReport.troop_deltas ?? []).filter(d => d.troop_delta !== 0);
 
       // Snapshot identity check — snapshots should differ when actions were submitted
@@ -1169,13 +1231,26 @@ Deno.serve(async (req) => {
           message: 'Military actions submitted but no troop deltas detected. Snapshots may not be authoritative.' });
       }
       {
+        const activationActions = enrichedActions.economic.filter(a => a.action_type === 'activate_resources');
+        const totalActivated = activationActions.reduce((s, a) => s + (a.territory_count ?? 0), 0);
+        const hasActivationDetails = activationActions.some(a => (a.activation_details ?? []).length > 0);
         const hasResourceDeltas = (deltaReport.resource_deltas ?? []).length > 0;
-        const hasActivationLog = enrichedActions.economic.some(
-          a => a.action_type === 'activate_resources' && (a.activation_details ?? []).length > 0
-        );
-        if (!hasResourceDeltas && !hasActivationLog && enrichedActions.economic.some(a => a.action_type === 'activate_resources')) {
+        const resourceChangesFromLog = (() => {
+          const entries = [];
+          for (const action of activationActions) {
+            for (const d of (action.activation_details ?? [])) entries.push(d);
+          }
+          return entries;
+        })();
+        // Warn only if: activations occurred + no activation details logged + no snapshot deltas
+        if (totalActivated > 0 && !hasActivationDetails && !hasResourceDeltas) {
           validationWarnings.push({ type: 'resource_changes_expected_but_empty', severity: 'medium',
-            message: 'Resource activations submitted but no resource deltas detected and no activation log found.' });
+            message: `${totalActivated} resource activation(s) submitted but neither activation_details nor resource_deltas were produced.` });
+        }
+        // Warn if activation details exist but snapshot-based resource_deltas are missing (snapshots may be legacy/empty)
+        if (hasActivationDetails && !hasResourceDeltas && targetPhase === 'deploy') {
+          validationWarnings.push({ type: 'resource_deltas_missing_using_log_fallback', severity: 'low',
+            message: `Resource deltas not available from snapshots (${resourceChangesFromLog.length} activation(s) from log). Snapshot-based delta requires both before/after snapshots with resource_storage data.` });
         }
       }
       if ((deltaReport.permanent_influence_deltas ?? []).length === 0 && enrichedActions.diplomatic.some(a => a.influence_spent > 0)) {
