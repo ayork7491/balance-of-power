@@ -208,6 +208,19 @@ async function ensureBattlePhaseStartSnapshot(base44, campaign_id, round, player
   return snap;
 }
 
+async function buildAuthoritativeBattleCard(base44, campaign_id, round, card) {
+  const troopSources = await getBattleTroopSources(base44, campaign_id, card.round ?? round, card);
+  return {
+    authoritativeCard: {
+      ...card,
+      defender_troops: troopSources.authoritative_defender_troops,
+      total_troops_in_battle: (card.total_attacking_troops ?? 0) + troopSources.authoritative_defender_troops,
+      combat_source_trace: troopSources.combat_source_trace,
+    },
+    troopSources,
+  };
+}
+
 async function getBattleTroopSources(base44, campaign_id, round, card) {
   const targetId = card.target_territory_id;
   const cardDefenderTroops = card.defender_troops ?? 0;
@@ -1660,8 +1673,10 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Battle already resolved and applied' }, { status: 400 });
     }
 
-    const autoResult = autoResolveBattle(card, campaign_id);
-    await applyAutoResolve(card, autoResult, base44, campaign_id, round);
+    await ensureBattlePhaseStartSnapshot(base44, campaign_id, round, players);
+    const { authoritativeCard, troopSources } = await buildAuthoritativeBattleCard(base44, campaign_id, round, card);
+    const autoResult = autoResolveBattle(authoritativeCard, campaign_id);
+    await applyAutoResolve(authoritativeCard, { ...autoResult, combat_source_trace: troopSources.combat_source_trace }, base44, campaign_id, round);
     return Response.json({ success: true, result: autoResult });
   }
 
