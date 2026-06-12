@@ -1393,14 +1393,39 @@ Deno.serve(async (req) => {
           // Non-military: apply specialized consequences, NO territory ownership changes
           await applyNonMilitaryConsequences(base44, campaign_id, round, card, result);
         } else {
-          const territoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
-          const updates = await buildTerritoryUpdatesWithRecovery(base44, campaign_id, round, card, result, territoryStates);
+          // Read AUTHORITATIVE current territory states before applying updates
+          const territoryStatesBefore = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+          const updates = await buildTerritoryUpdatesWithRecovery(base44, campaign_id, round, card, result, territoryStatesBefore);
           await applyTerritoryUpdates(base44, updates);
         }
+        // Build combat_source_trace for audit traceability
+        const territoryStatesAfter = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+        const tsAfterMap = {};
+        for (const ts of territoryStatesAfter) tsAfterMap[ts.territory_id] = ts;
+        const tsBefore = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+        const tsBeforeMap = {};
+        for (const ts of tsBefore) tsBeforeMap[ts.territory_id] = ts;
+        const combat_source_trace = {
+          attacker_origins: (card.attackers ?? []).map(a => {
+            const after = tsAfterMap[a.origin_territory_id];
+            return {
+              territory_id: a.origin_territory_id,
+              committed: a.committed_troops ?? 0,
+              persisted_after: after?.troop_count ?? null,
+            };
+          }),
+          target: {
+            territory_id: card.target_territory_id,
+            battle_starting_defender_troops: card.defender_troops ?? 0,
+            persisted_after: tsAfterMap[card.target_territory_id]?.troop_count ?? null,
+            winner_player_id: result.winner_player_id ?? null,
+          },
+        };
+
         await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
           result_applied: true,
           ...(isCarryoverCard ? { resolved_in_battle_round: round } : {}),
-          result: { ...result, applied_at: new Date().toISOString() },
+          result: { ...result, applied_at: new Date().toISOString(), combat_source_trace },
         });
         await refreshLockedTerritories(base44, campaign_id);
         await log(base44, campaign_id, card.round, 'battle_result_applied', null, { battle_card_id, winner_player_id: result.winner_player_id ?? null }, true);

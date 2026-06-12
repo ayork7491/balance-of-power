@@ -572,6 +572,7 @@ function getBattleResolutionAudit(allBattleCards, playerMap, attackReveals) {
       scale_factor:   bc.scale_factor ?? 1,
       resolved_at:    bc.resolved_at ?? null,
       status:         bc.status,
+      combat_source_trace: bc.result?.combat_source_trace ?? null,
     });
   }
 
@@ -1506,6 +1507,79 @@ Deno.serve(async (req) => {
         }
       }
 
+      // ── Issue 5 validations — combat troop accounting ─────────────────────
+      if (targetCategory === 'conflict' || targetCategory === 'operations') {
+        const afterTerritoryMap = {};
+        for (const t of (afterSnapshotData?.territory_states ?? [])) afterTerritoryMap[t.territory_id] = t;
+        const beforeTerritoryMap2 = {};
+        for (const t of (beforeSnapshotData?.territory_states ?? [])) beforeTerritoryMap2[t.territory_id] = t;
+
+        // 5.1: Attacker origin mismatch — troop_movement says before→after but after_snapshot disagrees
+        const troopMovements = (deltaReport.troop_deltas ?? []).filter(d => d.troop_delta !== 0);
+        for (const mv of troopMovements) {
+          const snapEntry = afterTerritoryMap[mv.territory_id];
+          if (snapEntry && mv.troops_after != null && snapEntry.troop_count !== mv.troops_after) {
+            validationWarnings.push({
+              type: 'troop_movement_snapshot_mismatch',
+              code: 'troop_movement_snapshot_mismatch',
+              severity: 'error',
+              territory_id: mv.territory_id,
+              territory_name: mv.territory_name ?? mv.territory_id,
+              troop_movement_after: mv.troops_after,
+              snapshot_after: snapEntry.troop_count,
+              message: `Troop movement says after=${mv.troops_after} but after_snapshot shows ${snapEntry.troop_count} at ${mv.territory_name ?? mv.territory_id}`,
+            });
+            exportValidationStatus = 'failed';
+          }
+        }
+
+        // 5.2: Defender starting mismatch — battle starting_state.troops vs before_snapshot troop_count
+        for (const b of battleAudit) {
+          if (!b.result_applied) continue;
+          const targetId = b.target?.territory_id;
+          if (!targetId) continue;
+          const beforeEntry = beforeTerritoryMap2[targetId];
+          const cardDefenderTroops = b.starting_state?.troops ?? null;
+          if (beforeEntry != null && cardDefenderTroops != null &&
+              beforeEntry.troop_count !== cardDefenderTroops) {
+            validationWarnings.push({
+              type: 'battle_defender_troop_source_mismatch',
+              code: 'battle_defender_troop_source_mismatch',
+              severity: 'error',
+              territory_id: targetId,
+              territory_name: b.target?.territory_name ?? targetId,
+              battle_card_id: b.battle_card_id,
+              before_snapshot_troops: beforeEntry.troop_count,
+              battle_starting_troops: cardDefenderTroops,
+              message: `Defender troop mismatch at ${b.target?.territory_name ?? targetId}: before_snapshot=${beforeEntry.troop_count}, battle_card.defender_troops=${cardDefenderTroops}`,
+            });
+            exportValidationStatus = 'failed';
+          }
+        }
+
+        // 5.3: Player standings mismatch — standings troop_total vs sum of owned territory troops
+        for (const standing of (afterSnapshotData?.player_standings ?? [])) {
+          const ownedTerritories = (afterSnapshotData?.territory_states ?? [])
+            .filter(t => t.owner_player_id === standing.player_id);
+          const territorySum = ownedTerritories.reduce((s, t) => s + (t.troop_count ?? 0), 0);
+          const standingTotal = standing.troop_total ?? 0;
+          if (Math.abs(territorySum - standingTotal) > 0) {
+            validationWarnings.push({
+              type: 'player_standings_troop_total_mismatch',
+              code: 'player_standings_troop_total_mismatch',
+              severity: 'error',
+              player_id: standing.player_id,
+              player_name: standing.display_name ?? (playerMap[standing.player_id]?.display_name ?? standing.player_id),
+              territory_troop_sum: territorySum,
+              standings_total: standingTotal,
+              discrepancy: Math.abs(territorySum - standingTotal),
+              message: `Player standings mismatch for ${standing.display_name ?? standing.player_id}: territory_sum=${territorySum}, standings_troop_total=${standingTotal}`,
+            });
+            if (exportValidationStatus === 'passed') exportValidationStatus = 'warning';
+          }
+        }
+      }
+
       // Negative resources — always check
       if (afterSnapshotData?.territory_states) {
         for (const t of afterSnapshotData.territory_states) {
@@ -1782,6 +1856,15 @@ Deno.serve(async (req) => {
           // snapshot_vs_delta_consistency_valid: no standing/territory mismatch
           const snapshotVsDeltaConsistencyCheck = !validationWarnings.some(w => w.type === 'snapshot_vs_delta_consistency');
 
+          // troop_movement_snapshot_consistent: no attacker troop movement vs snapshot mismatch
+          const troopMovementSnapshotConsistent = !validationWarnings.some(w => w.type === 'troop_movement_snapshot_mismatch');
+
+          // defender_troop_source_consistent: no defender troop source mismatch
+          const defenderTroopSourceConsistent = !validationWarnings.some(w => w.type === 'battle_defender_troop_source_mismatch');
+
+          // player_standings_consistent: no player standings troop total mismatch
+          const playerStandingsConsistent = !validationWarnings.some(w => w.type === 'player_standings_troop_total_mismatch');
+
           return {
             battle_cards_valid: battleCardsValid,
             ownership_changes_valid: ownershipChangesValid,
@@ -1791,8 +1874,11 @@ Deno.serve(async (req) => {
             battle_source_metadata_valid: battleSourceMetadataValid,
             battle_lifecycle_valid: battleLifecycleValid,
             snapshot_vs_delta_consistency_valid: snapshotVsDeltaConsistencyCheck,
+            troop_movement_snapshot_consistent: troopMovementSnapshotConsistent,
+            defender_troop_source_consistent: defenderTroopSourceConsistent,
+            player_standings_consistent: playerStandingsConsistent,
             validation_details_present: validationDetailsPresent,
-            overall: battleCardsValid && ownershipChangesValid && troopCountsValid && resourceChangesValid && snapshotIntegrityValid && battleSourceMetadataValid && battleLifecycleValid && snapshotVsDeltaConsistencyCheck,
+            overall: battleCardsValid && ownershipChangesValid && troopCountsValid && resourceChangesValid && snapshotIntegrityValid && battleSourceMetadataValid && battleLifecycleValid && snapshotVsDeltaConsistencyCheck && troopMovementSnapshotConsistent && defenderTroopSourceConsistent && playerStandingsConsistent,
           };
         })(),
       };

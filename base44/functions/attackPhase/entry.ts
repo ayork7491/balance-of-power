@@ -718,6 +718,14 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── STEP 3B: Re-fetch territory states from DB after persisting deductions ─
+    // This ensures battle cards use the AUTHORITATIVE persisted troop counts,
+    // not the in-memory postCommitStateById which may have stale values for
+    // territories that were both attackers and defenders in the same round.
+    const persistedStatesAfterDeductions = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+    const persistedStateMap = {};
+    for (const ts of persistedStatesAfterDeductions) persistedStateMap[ts.territory_id] = ts;
+
     // ── STEP 4: Load scaling profile ──────────────────────────────────────────
     let avgBattleSize = 1000;
     if (campaign.game_profile_id) {
@@ -827,7 +835,10 @@ Deno.serve(async (req) => {
       const battleType = classifyBattle(targetId, attacksOnTarget, postCommitStateById);
 
       const totalAttackingTroops = attacksOnTarget.reduce((s, a) => s + (a.committed_troops || 0), 0);
-      const defenderTroops       = postCommitStateById[targetId]?.troop_count ?? 0;
+      // Use authoritative persisted state for defender troops — guaranteed to match
+      // what's in the DB at card-generation time. This is the single source of truth.
+      const defenderTroops       = persistedStateMap[targetId]?.troop_count ?? postCommitStateById[targetId]?.troop_count ?? 0;
+      const defenderPlayerId     = persistedStateMap[targetId]?.owner_player_id ?? postCommitStateById[targetId]?.owner_player_id ?? null;
       const totalTroopsInBattle  = totalAttackingTroops + defenderTroops;
       const { scale_factor, tabletop_size } = calcBattleScaling(totalTroopsInBattle, avgBattleSize);
 
@@ -891,7 +902,7 @@ Deno.serve(async (req) => {
         battle_type: battleType,
         battle_pillar: 'military',
         target_territory_id: targetId,
-        defender_player_id:  postCommitStateById[targetId]?.owner_player_id ?? null,
+        defender_player_id:  defenderPlayerId,
         defender_troops:     defenderTroops,
         attackers: attacksOnTarget.map(a => ({
           player_id:           a.player_id,
