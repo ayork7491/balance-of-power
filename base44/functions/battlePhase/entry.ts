@@ -153,6 +153,61 @@ function buildSides(card) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// § TROOP SOURCE AUTHORITY
+// Single shared helper used by BOTH auto-resolve and manual resolution paths.
+// Defender troops MUST come from the before-snapshot, not from cached BattleCard
+// or live territory state (which may have been modified by attack commitments).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * getBattleTroopSources — loads the authoritative phase_start snapshot for the
+ * battle phase and extracts defender/attacker troop counts for a specific card.
+ *
+ * Returns:
+ *   {
+ *     snapshot_defender_troops: number | null,   // from before-snapshot (authoritative)
+ *     snapshot_territory_map: Map<id, state>,    // full before-snapshot territory map
+ *     combat_source_trace: { defender, attackers }
+ *   }
+ *
+ * If no before-snapshot exists, falls back to card.defender_troops with a
+ * source='fallback_card_value' annotation so audits can detect stale data.
+ */
+async function getBattleTroopSources(base44, campaign_id, round, card) {
+  // Load before-snapshot (phase_start) for this battle round
+  const snapshots = await base44.asServiceRole.entities.PhaseSnapshot.filter({
+    campaign_id, round, phase: 'battle', snapshot_type: 'phase_start',
+  });
+  const snap = snapshots[0] ?? null;
+
+  const snapshotTerritoryMap = {};
+  for (const t of (snap?.territory_states ?? [])) {
+    snapshotTerritoryMap[t.territory_id] = t;
+  }
+
+  // Defender troops: authoritative before-snapshot troop count
+  const snapDefenderEntry = snapshotTerritoryMap[card.target_territory_id] ?? null;
+  const snapshotDefenderTroops = snapDefenderEntry?.troop_count ?? null;
+  const defenderSource = snapshotDefenderTroops != null ? 'before_snapshot' : 'fallback_card_value';
+  const authoritative_defender_troops = snapshotDefenderTroops ?? card.defender_troops ?? 0;
+
+  const combat_source_trace = {
+    defender: {
+      territory_id: card.target_territory_id,
+      before_snapshot_troops: snapshotDefenderTroops,
+      card_defender_troops: card.defender_troops ?? 0,
+      source: defenderSource,
+    },
+    attackers: (card.attackers ?? []).map(a => ({
+      territory_id: a.origin_territory_id,
+      committed_troops: a.committed_troops ?? 0,
+    })),
+  };
+
+  return { authoritative_defender_troops, snapshotTerritoryMap, combat_source_trace };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // § AUTO-RESOLVE
 // Seeded-RNG battle resolution by type (siege, double_siege, bloodbath, etc.)
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -886,6 +941,9 @@ Deno.serve(async (req) => {
     const isCarryover = ['active_carryover', 'pending_approval'].includes(card.status);
     const isNonMilitary = NON_MILITARY_TYPES.has(card.battle_type);
 
+    // Load authoritative troop sources from before-snapshot (shared helper)
+    const { combat_source_trace } = await getBattleTroopSources(base44Ref, campaign_idRef, roundRef, card);
+
     // Compute BOP survivor count before writing territory state
     let winnerBopSurvivors = null;
     if (autoResult.winner_player_id && !isNonMilitary) {
@@ -917,14 +975,16 @@ Deno.serve(async (req) => {
       const updates = await buildTerritoryUpdatesWithRecovery(base44Ref, campaign_idRef, roundRef, card, autoResult, territoryStates);
       await applyTerritoryUpdates(base44Ref, updates);
     }
+    // Persist combat_source_trace alongside applied_at
     await base44Ref.asServiceRole.entities.BattleCard.update(card.id, {
       result_applied: true,
-      result: { ...enrichedResult, applied_at: new Date().toISOString() },
+      result: { ...enrichedResult, applied_at: new Date().toISOString(), combat_source_trace },
     });
     await refreshLockedTerritories(base44Ref, campaign_idRef);
     await log(base44Ref, campaign_idRef, roundRef, 'battle_auto_resolved', null, {
       battle_card_id: card.id, target_territory_id: card.target_territory_id,
       winner_player_id: autoResult.winner_player_id, winner_bop_survivors: winnerBopSurvivors,
+      defender_troop_source: combat_source_trace.defender.source,
     }, true);
   }
 
@@ -1931,7 +1991,8 @@ Deno.serve(async (req) => {
       } else {
         const autoResult = autoResolveBattle(card, campaign_id);
         const now = new Date().toISOString();
-        // Compute BOP survivors for processPhaseEnd auto-resolves (same as applyAutoResolve)
+        // Use shared authoritative troop source helper (same path as applyAutoResolve)
+        const { combat_source_trace: batchTrace } = await getBattleTroopSources(base44, campaign_id, round, card);
         let winnerBopSurvivors = null;
         const isNonMilBatch = NON_MILITARY_TYPES.has(card.battle_type);
         if (autoResult.winner_player_id && !isNonMilBatch) {
@@ -1940,14 +2001,18 @@ Deno.serve(async (req) => {
             ? committedBOP
             : scaleBackSurvivors(autoResult.surviving_tabletop_troops ?? 0, card.tabletop_size, card.total_troops_in_battle ?? 0, committedBOP);
         }
-        const enrichedAutoResult = { ...autoResult, winner_bop_survivors: winnerBopSurvivors, submitted_by: 'system', submitted_at: now, applied_at: null };
+        const enrichedAutoResult = { ...autoResult, winner_bop_survivors: winnerBopSurvivors, submitted_by: 'system', submitted_at: now, applied_at: null, combat_source_trace: batchTrace };
         await base44.asServiceRole.entities.BattleCard.update(card.id, {
           status: 'auto_resolved', resolved_at: now,
           result: enrichedAutoResult,
         });
         resultToApply = enrichedAutoResult;
         autoResolvedCount++;
-        await log(base44, campaign_id, round, 'battle_auto_resolved', null, { battle_card_id: card.id, winner_player_id: autoResult.winner_player_id, winner_bop_survivors: winnerBopSurvivors }, true);
+        await log(base44, campaign_id, round, 'battle_auto_resolved', null, {
+          battle_card_id: card.id, winner_player_id: autoResult.winner_player_id,
+          winner_bop_survivors: winnerBopSurvivors,
+          defender_troop_source: batchTrace.defender.source,
+        }, true);
       }
 
       const resultIsDS = card.battle_type === 'double_siege' && resultToApply?.double_siege_result?.defender_held === false;

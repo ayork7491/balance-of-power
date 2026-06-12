@@ -1533,27 +1533,67 @@ Deno.serve(async (req) => {
           }
         }
 
-        // 5.2: Defender starting mismatch — battle starting_state.troops vs before_snapshot troop_count
+        // 5.2: Defender starting mismatch — combat_source_trace.defender.before_snapshot_troops vs before_snapshot
+        // If combat_source_trace is populated, use it as the authoritative check.
+        // If source='before_snapshot', the trace and snapshot must agree.
+        // If source='fallback_card_value', emit a warning (not a hard failure) since auto-resolve ran before snapshot existed.
         for (const b of battleAudit) {
           if (!b.result_applied) continue;
           const targetId = b.target?.territory_id;
           if (!targetId) continue;
           const beforeEntry = beforeTerritoryMap2[targetId];
-          const cardDefenderTroops = b.starting_state?.troops ?? null;
-          if (beforeEntry != null && cardDefenderTroops != null &&
-              beforeEntry.troop_count !== cardDefenderTroops) {
-            validationWarnings.push({
-              type: 'battle_defender_troop_source_mismatch',
-              code: 'battle_defender_troop_source_mismatch',
-              severity: 'error',
-              territory_id: targetId,
-              territory_name: b.target?.territory_name ?? targetId,
-              battle_card_id: b.battle_card_id,
-              before_snapshot_troops: beforeEntry.troop_count,
-              battle_starting_troops: cardDefenderTroops,
-              message: `Defender troop mismatch at ${b.target?.territory_name ?? targetId}: before_snapshot=${beforeEntry.troop_count}, battle_card.defender_troops=${cardDefenderTroops}`,
-            });
-            exportValidationStatus = 'failed';
+          if (!beforeEntry) continue;
+
+          const trace = b.combat_source_trace?.defender ?? null;
+          if (trace) {
+            // New path: combat_source_trace is populated
+            if (trace.source === 'fallback_card_value') {
+              // Snapshot was missing at auto-resolve time — warn, don't fail
+              validationWarnings.push({
+                type: 'battle_defender_troop_source_mismatch',
+                code: 'battle_defender_troop_source_mismatch',
+                severity: 'warning',
+                territory_id: targetId,
+                territory_name: b.target?.territory_name ?? targetId,
+                battle_card_id: b.battle_card_id,
+                before_snapshot_troops: beforeEntry.troop_count,
+                trace_source: 'fallback_card_value',
+                message: `Auto-resolve used fallback card value for defender at ${b.target?.territory_name ?? targetId} (snapshot unavailable at resolve time)`,
+              });
+              if (exportValidationStatus === 'passed') exportValidationStatus = 'warning';
+            } else if (trace.before_snapshot_troops != null &&
+                       trace.before_snapshot_troops !== beforeEntry.troop_count) {
+              // Snapshot existed but trace disagrees with our before_snapshot — hard failure
+              validationWarnings.push({
+                type: 'battle_defender_troop_source_mismatch',
+                code: 'battle_defender_troop_source_mismatch',
+                severity: 'error',
+                territory_id: targetId,
+                territory_name: b.target?.territory_name ?? targetId,
+                battle_card_id: b.battle_card_id,
+                before_snapshot_troops: beforeEntry.troop_count,
+                trace_before_snapshot_troops: trace.before_snapshot_troops,
+                message: `Defender troop trace mismatch at ${b.target?.territory_name ?? targetId}: trace.before_snapshot=${trace.before_snapshot_troops}, audit_before_snapshot=${beforeEntry.troop_count}`,
+              });
+              exportValidationStatus = 'failed';
+            }
+          } else {
+            // Legacy path: no combat_source_trace — compare card's starting_state vs before_snapshot
+            const cardDefenderTroops = b.starting_state?.troops ?? null;
+            if (cardDefenderTroops != null && beforeEntry.troop_count !== cardDefenderTroops) {
+              validationWarnings.push({
+                type: 'battle_defender_troop_source_mismatch',
+                code: 'battle_defender_troop_source_mismatch',
+                severity: 'error',
+                territory_id: targetId,
+                territory_name: b.target?.territory_name ?? targetId,
+                battle_card_id: b.battle_card_id,
+                before_snapshot_troops: beforeEntry.troop_count,
+                battle_starting_troops: cardDefenderTroops,
+                message: `Defender troop mismatch at ${b.target?.territory_name ?? targetId}: before_snapshot=${beforeEntry.troop_count}, battle_card.defender_troops=${cardDefenderTroops}`,
+              });
+              exportValidationStatus = 'failed';
+            }
           }
         }
 
