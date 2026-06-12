@@ -1220,8 +1220,16 @@ Deno.serve(async (req) => {
 
     if (allAutoResolve && !hasForfeit) {
       const freshCards = await base44.asServiceRole.entities.BattleCard.filter({ id: battle_card_id });
-      const autoResult = autoResolveBattle(freshCards[0], campaign_id);
-      await applyAutoResolve(freshCards[0], autoResult, base44, campaign_id, round);
+      const freshCard = freshCards[0];
+      await ensureBattlePhaseStartSnapshot(base44, campaign_id, round, players);
+      const troopSources = await getBattleTroopSources(base44, campaign_id, round, freshCard);
+      const authCard = {
+        ...freshCard,
+        defender_troops: troopSources.authoritative_defender_troops,
+        total_troops_in_battle: (freshCard.total_attacking_troops ?? 0) + troopSources.authoritative_defender_troops,
+      };
+      const autoResult = autoResolveBattle(authCard, campaign_id);
+      await applyAutoResolve(authCard, autoResult, base44, campaign_id, round);
       return Response.json({ success: true, outcome, status: 'auto_resolved', result: autoResult });
     }
 
@@ -1350,8 +1358,16 @@ Deno.serve(async (req) => {
 
           if (remAutoResolve) {
             const freshConverted = await base44.asServiceRole.entities.BattleCard.filter({ id: battle_card_id });
-            const autoResult = autoResolveBattle(freshConverted[0], campaign_id);
-            await applyAutoResolve(freshConverted[0], autoResult, base44, campaign_id, round);
+            const freshConv = freshConverted[0];
+            await ensureBattlePhaseStartSnapshot(base44, campaign_id, round, players);
+            const convTroopSources = await getBattleTroopSources(base44, campaign_id, round, freshConv);
+            const convAuthCard = {
+              ...freshConv,
+              defender_troops: convTroopSources.authoritative_defender_troops,
+              total_troops_in_battle: (freshConv.total_attacking_troops ?? 0) + convTroopSources.authoritative_defender_troops,
+            };
+            const autoResult = autoResolveBattle(convAuthCard, campaign_id);
+            await applyAutoResolve(convAuthCard, autoResult, base44, campaign_id, round);
             return Response.json({ success: true, outcome: 'auto_resolve', status: 'auto_resolved', converted_to_siege: true, battle_card_id, result: autoResult });
           }
           if (remDelay) {
@@ -1792,8 +1808,16 @@ Deno.serve(async (req) => {
 
       if (allAutoResolve && !hasForfeit) {
         const freshCards = await base44.asServiceRole.entities.BattleCard.filter({ id: card.id });
-        const autoResult = autoResolveBattle(freshCards[0], campaign_id);
-        await applyAutoResolve(freshCards[0], autoResult, base44, campaign_id, round);
+        const freshCard = freshCards[0];
+        await ensureBattlePhaseStartSnapshot(base44, campaign_id, round, players);
+        const troopSources = await getBattleTroopSources(base44, campaign_id, round, freshCard);
+        const authCard = {
+          ...freshCard,
+          defender_troops: troopSources.authoritative_defender_troops,
+          total_troops_in_battle: (freshCard.total_attacking_troops ?? 0) + troopSources.authoritative_defender_troops,
+        };
+        const autoResult = autoResolveBattle(authCard, campaign_id);
+        await applyAutoResolve(authCard, autoResult, base44, campaign_id, round);
         results.push({ card_id: card.id, outcome: 'auto_resolved' });
         continue;
       }
@@ -1903,8 +1927,16 @@ Deno.serve(async (req) => {
 
               if (remAutoRes) {
                 const freshConverted = await base44.asServiceRole.entities.BattleCard.filter({ id: card.id });
-                const autoResult = autoResolveBattle(freshConverted[0], campaign_id);
-                await applyAutoResolve(freshConverted[0], autoResult, base44, campaign_id, round);
+                const freshConv = freshConverted[0];
+                await ensureBattlePhaseStartSnapshot(base44, campaign_id, round, players);
+                const convTroopSources = await getBattleTroopSources(base44, campaign_id, round, freshConv);
+                const convAuthCard = {
+                  ...freshConv,
+                  defender_troops: convTroopSources.authoritative_defender_troops,
+                  total_troops_in_battle: (freshConv.total_attacking_troops ?? 0) + convTroopSources.authoritative_defender_troops,
+                };
+                const autoResult = autoResolveBattle(convAuthCard, campaign_id);
+                await applyAutoResolve(convAuthCard, autoResult, base44, campaign_id, round);
                 results.push({ card_id: card.id, outcome: 'auto_resolved_after_conversion' });
               } else if (remDelayed) {
                 await base44.asServiceRole.entities.BattleCard.update(card.id, { status: 'delayed', delayed_at: now });
