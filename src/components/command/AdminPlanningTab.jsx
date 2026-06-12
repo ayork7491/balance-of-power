@@ -6,7 +6,7 @@
  *   - Force Advance / Reveal & Begin Attack Phase button
  *   - Start Deploy Phase manually (if not yet started)
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Loader2, AlertCircle, RefreshCw, Check, Play, Users, Lock } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import PhaseAuditExport from '@/components/command/PhaseAuditExport';
@@ -16,6 +16,7 @@ export default function AdminPlanningTab({ campaign, players, advancing, onProce
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
   const [startErr, setStartErr] = useState(null);
+  const advanceInFlightRef = useRef(false);
 
   const activePlayers = players?.filter(p => !p.is_eliminated) ?? [];
 

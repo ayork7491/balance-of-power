@@ -5,7 +5,7 @@
  * During deploy phase: shows PlanningPhaseLockBar + ResourceStagingPanel.
  * Other phases: unchanged.
  */
-import { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Shield, Coins, Feather, Settings } from 'lucide-react';
 
 import { base44 } from '@/api/base44Client';
@@ -302,7 +302,11 @@ function MilitaryContent({ campaign, players, myPlayer, actionPlayer, stateById,
 function AdminContent({ campaign, players, myPlayer, onPhaseChanged, isDeploy, isAttack }) {
   const [advancing, setAdvancing] = useState(false);
 
+  const advanceInFlightRef = React.useRef(false);
+
   const handleProcessDeployEnd = async () => {
+    if (advanceInFlightRef.current) return;
+    advanceInFlightRef.current = true;
     setAdvancing(true);
     try {
       await base44.functions.invoke('deployPhase', {
@@ -311,13 +315,20 @@ function AdminContent({ campaign, players, myPlayer, onPhaseChanged, isDeploy, i
       });
       onPhaseChanged?.();
     } catch (e) {
-      console.error(e);
+      if (e?.response?.data?.already_processed) {
+        onPhaseChanged?.();
+      } else {
+        console.error(e);
+      }
     } finally {
       setAdvancing(false);
+      advanceInFlightRef.current = false;
     }
   };
 
   const handleProcessAttackEnd = async () => {
+    if (advanceInFlightRef.current) return;
+    advanceInFlightRef.current = true;
     setAdvancing(true);
     try {
       await base44.functions.invoke('attackPhase', {
@@ -326,9 +337,14 @@ function AdminContent({ campaign, players, myPlayer, onPhaseChanged, isDeploy, i
       });
       onPhaseChanged?.();
     } catch (e) {
-      console.error(e);
+      if (e?.response?.data?.already_processed) {
+        onPhaseChanged?.();
+      } else {
+        console.error(e);
+      }
     } finally {
       setAdvancing(false);
+      advanceInFlightRef.current = false;
     }
   };
 

@@ -519,7 +519,12 @@ Deno.serve(async (req) => {
     });
 
     await log(base44, campaign_id, round, phase, 'movement_staged', actingPlayer.id, {
+      movement_id: newMovement.id,
       movement_count: updatedMovements.length,
+      origin_territory_id,
+      destination_territory_id,
+      committed_troops,
+      path: pathResult.path,
     }, false);
 
     return Response.json({ success: true, movement_id: newMovement.id, movements: updatedMovements });

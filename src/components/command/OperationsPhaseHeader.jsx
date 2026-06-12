@@ -53,6 +53,7 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
   const [locking, setLocking] = useState(false);
   const [error, setError] = useState(null);
   const retryRef = useRef(null);
+  const lockInFlightRef = useRef(false);
 
   const load = useCallback(async (isRetry = false) => {
     if (!campaign?.id || !myPlayer?.id) return;
@@ -104,7 +105,8 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
   }, [load]);
 
   const handleLock = async () => {
-    if (!campaign?.id) return;
+    if (!campaign?.id || lockInFlightRef.current) return;
+    lockInFlightRef.current = true;
     setLocking(true);
     setError(null);
     try {
@@ -119,11 +121,13 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
       setError(e?.response?.data?.error ?? 'Failed to lock operations phase.');
     } finally {
       setLocking(false);
+      lockInFlightRef.current = false;
     }
   };
 
   const handleUnlock = async () => {
-    if (!campaign?.id) return;
+    if (!campaign?.id || lockInFlightRef.current) return;
+    lockInFlightRef.current = true;
     setLocking(true);
     setError(null);
     try {
@@ -138,6 +142,7 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
       setError(e?.response?.data?.error ?? 'Failed to unlock operations phase.');
     } finally {
       setLocking(false);
+      lockInFlightRef.current = false;
     }
   };
 

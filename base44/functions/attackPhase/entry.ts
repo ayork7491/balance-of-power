@@ -463,7 +463,11 @@ Deno.serve(async (req) => {
 
     // Private log
     await log(base44, campaign_id, round, phase, 'attack_staged', actingPlayer.id, {
+      attack_id: newAttack.id,
       attack_count: updatedAttacks.length,
+      origin_territory_id,
+      target_territory_id,
+      committed_troops,
     }, false);
 
     return Response.json({ success: true, attack_id: newAttack.id, attacks: updatedAttacks });
@@ -537,6 +541,15 @@ Deno.serve(async (req) => {
     }
     if (campaign.current_phase !== 'attack') {
       return Response.json({ error: 'Not in attack phase' }, { status: 400 });
+    }
+
+    // ── DUPLICATE PHASE-END PROTECTION ───────────────────────────────────────
+    // Check if a phase_end snapshot already exists — if so, this call is a duplicate.
+    const existingAttackEndSnap = await base44.asServiceRole.entities.PhaseSnapshot.filter({
+      campaign_id, round, phase: 'attack', snapshot_type: 'phase_end',
+    });
+    if (existingAttackEndSnap.length > 0) {
+      return Response.json({ error: 'Attack phase already processed for this round', already_processed: true }, { status: 400 });
     }
 
     // ── Write authoritative before-snapshot for the attack phase ─────────────

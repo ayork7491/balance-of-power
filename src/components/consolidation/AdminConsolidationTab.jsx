@@ -7,7 +7,7 @@
  *   - Phase advancement control
  *   - Force advance option
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Loader2, RefreshCw, Check, Users, Lock, AlertCircle, ArrowRight } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import PhaseAuditExport from '@/components/command/PhaseAuditExport';
@@ -17,6 +17,7 @@ export default function AdminConsolidationTab({ campaign, players, onPhaseChange
   const [loading, setLoading] = useState(true);
   const [advancing, setAdvancing] = useState(false);
   const [advanceError, setAdvanceError] = useState(null);
+  const advanceInFlightRef = useRef(false);
 
   const round = campaign?.current_round ?? 1;
   const activePlayers = players?.filter(p => !p.is_eliminated) ?? [];
@@ -38,6 +39,8 @@ export default function AdminConsolidationTab({ campaign, players, onPhaseChange
   useEffect(() => { load(); }, [load]);
 
   const handleAdvance = async () => {
+    if (advanceInFlightRef.current) return;
+    advanceInFlightRef.current = true;
     setAdvancing(true);
     setAdvanceError(null);
     try {
@@ -47,9 +50,16 @@ export default function AdminConsolidationTab({ campaign, players, onPhaseChange
       });
       onPhaseChanged?.();
     } catch (e) {
-      setAdvanceError(e?.response?.data?.error ?? 'Failed to advance phase.');
+      const msg = e?.response?.data?.error ?? 'Failed to advance phase.';
+      // If already processed, treat as success (idempotent)
+      if (e?.response?.data?.already_processed) {
+        onPhaseChanged?.();
+      } else {
+        setAdvanceError(msg);
+      }
     } finally {
       setAdvancing(false);
+      advanceInFlightRef.current = false;
     }
   };
 

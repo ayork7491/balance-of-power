@@ -11,7 +11,7 @@
  *   onLocked           — called after successful lock-in
  *   onStatusLoaded     — called with the status object after load
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Lock, Unlock, Loader2, Shield, Coins, Feather, CheckCircle2, RefreshCw, Users } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 
@@ -53,6 +53,7 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
   const [unlocking, setUnlocking] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
+  const lockInFlightRef = useRef(false);
 
   const actingId = actingAsPlayerId ?? myPlayer?.id;
 
@@ -90,7 +91,8 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
   useEffect(() => { load(); }, [load]);
 
   const handleUnlock = async () => {
-    if (!campaign?.id) return;
+    if (!campaign?.id || lockInFlightRef.current) return;
+    lockInFlightRef.current = true;
     setUnlocking(true);
     setError(null);
     try {
@@ -106,11 +108,13 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
       setError(e?.response?.data?.error ?? 'Failed to unlock planning phase.');
     } finally {
       setUnlocking(false);
+      lockInFlightRef.current = false;
     }
   };
 
   const handleLock = async () => {
-    if (!campaign?.id) return;
+    if (!campaign?.id || lockInFlightRef.current) return;
+    lockInFlightRef.current = true;
     setLocking(true);
     setError(null);
     try {
@@ -126,8 +130,14 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
       setError(e?.response?.data?.error ?? 'Failed to lock planning phase.');
     } finally {
       setLocking(false);
+      lockInFlightRef.current = false;
     }
   };
+
+  // Re-trigger load when refreshTrigger changes (after staging changes)
+  useEffect(() => {
+    if (refreshTrigger > 0) load();
+  }, [refreshTrigger]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Show a minimal waiting state if deploy hasn't started yet (income not yet calculated)
   if (loading && !status) {
