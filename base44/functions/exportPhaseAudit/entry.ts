@@ -486,6 +486,16 @@ function getBattleResolutionAudit(allBattleCards, playerMap) {
         const sid = bc.source_player_id ?? attackerEntries[0]?.player_id ?? null;
         return sid ? (playerMap[sid]?.display_name ?? sid) : null;
       })(),
+      origin_action_id:   bc.source_operation_metadata?.origin_action_id ?? null,
+      origin_action_type: bc.battle_card_source ?? 'military_attack',
+      origin_phase:       bc.battle_card_source === 'military_attack' ? 'attack' : 'attack',
+      origin_round:       bc.round ?? null,
+      lifecycle: {
+        origin_action_id:   bc.source_operation_metadata?.origin_action_id ?? null,
+        battle_card_id:     bc.id,
+        resolution_id:      bc.result?.applied_at ? `res_${bc.id}` : null,
+        ownership_change_id: (bc.result_applied && bc.result?.winner_player_id && bc.result?.winner_player_id !== bc.defender_player_id) ? `own_${bc.id}` : null,
+      },
       defender:         bc.defender_player_id ? (playerMap[bc.defender_player_id]?.display_name ?? bc.defender_player_id) : null,
       defender_player_id: bc.defender_player_id ?? null,
 
@@ -1403,6 +1413,50 @@ Deno.serve(async (req) => {
       if (diagnostics.delta_generation !== 'success' && diagnostics.delta_generation !== 'skipped_missing_snapshots') exportValidationStatus = 'failed';
       if (diagnostics.battle_audit_generation !== 'success' && exportValidationStatus === 'passed') exportValidationStatus = 'warning';
 
+      // Battle source metadata missing — check audit entries
+      for (const b of battleAudit) {
+        const hasSourceId = b.source_player_id != null;
+        const hasSourceName = b.source_player_name != null;
+        const isPlayerAction = ['siege', 'double_siege', 'capture_objectives', 'bloodbath',
+          'supply_route_establishment', 'supply_route_race', 'supply_raid', 'supply_caravan_escort',
+          'uprising', 'labor_strike', 'tax_protest', 'manufactured_crisis'].includes(b.battle_type);
+        if (isPlayerAction && (!hasSourceId || !hasSourceName)) {
+          validationWarnings.push({
+            type: 'battle_source_metadata_missing', severity: 'medium',
+            code: 'battle_source_player_name_missing',
+            message: `Battle card ${b.battle_card_id} (${b.battle_type}) is missing source_player_${!hasSourceId ? 'id' : 'name'}.`,
+            battle_card_id: b.battle_card_id,
+          });
+          if (exportValidationStatus === 'passed') exportValidationStatus = 'warning';
+        }
+      }
+
+      // Territory troop mismatch — battle result troops vs live territory state
+      if (afterSnapshotData?.territory_states) {
+        const afterTroopMap = {};
+        for (const t of afterSnapshotData.territory_states) afterTroopMap[t.territory_id] = { troops: t.troop_count ?? 0, owner: t.owner_player_id };
+        for (const b of battleAudit) {
+          if (!b.result_applied || !b.ending_state?.owner_player_id) continue;
+          const targetId = b.target?.territory_id ?? b.target_territory_id;
+          const snap = afterTroopMap[targetId];
+          if (!snap) continue;
+          const expectedTroops = b.ending_state.troops;
+          if (expectedTroops != null && snap.troops !== expectedTroops) {
+            validationWarnings.push({
+              type: 'battle_result_territory_troop_mismatch', severity: 'error',
+              code: 'battle_result_territory_troop_mismatch',
+              message: `Territory troop count does not match battle ending troop count at ${b.target?.territory_name ?? targetId}: battle result=${expectedTroops}, snapshot=${snap.troops}.`,
+              battle_card_id: b.battle_card_id,
+              territory_id: targetId,
+              territory_name: b.target?.territory_name ?? targetId,
+              expected_troops: expectedTroops,
+              actual_troops: snap.troops,
+            });
+            exportValidationStatus = 'failed';
+          }
+        }
+      }
+
       diagnostics.export_validation = exportValidationStatus;
 
       // ── Assemble bundle ─────────────────────────────────────────────────
@@ -1510,6 +1564,18 @@ Deno.serve(async (req) => {
 
         validation_warnings: validationWarnings,
 
+        // validation_details: structured, machine-readable entries for every warning/error
+        validation_details: validationWarnings
+          .filter(w => w.severity !== 'info' && w.severity !== 'low')
+          .map(w => ({
+            severity: w.severity === 'critical' || w.severity === 'error' ? 'error' : 'warning',
+            code: w.code ?? w.type,
+            message: w.message ?? w.type,
+            ...(w.battle_card_id ? { battle_card_id: w.battle_card_id } : {}),
+            ...(w.territory_id ? { territory_id: w.territory_id, territory_name: w.territory_name ?? w.territory_id } : {}),
+            ...(w.player_id ? { player_id: w.player_id } : {}),
+          })),
+
         audit_health: (() => {
           // battle_cards_valid: all siege cards have source_player_id
           const siegeCards = battleAudit.filter(b => b.battle_type === 'siege' || b.battle_type === 'double_siege');
@@ -1518,8 +1584,9 @@ Deno.serve(async (req) => {
           // ownership_changes_valid: no mismatch warnings
           const ownershipChangesValid = !validationWarnings.some(w => w.type === 'ownership_mismatch' || w.type === 'ownership_changes_expected_but_empty');
 
-          // troop_counts_valid: no null ending troops on winner battles
-          const troopCountsValid = battleAudit.every(b => !b.ending_state?.owner_player_id || b.ending_state.troops != null);
+          // troop_counts_valid: no null ending troops on winner battles and no troop mismatch errors
+          const troopCountsValid = battleAudit.every(b => !b.ending_state?.owner_player_id || b.ending_state.troops != null)
+            && !validationWarnings.some(w => w.type === 'battle_result_territory_troop_mismatch');
 
           // resource_changes_valid: no negative resource warnings
           const resourceChangesValid = !validationWarnings.some(w => w.type === 'resource_total_negative' || w.type === 'resource_changes_expected_but_empty');
@@ -1533,13 +1600,25 @@ Deno.serve(async (req) => {
             !validationWarnings.some(w => w.type === 'snapshot_changes_expected_but_missing')
           );
 
+          // battle_source_metadata_valid: no missing source player id/name on player-action cards
+          const battleSourceMetadataValid = !validationWarnings.some(w => w.type === 'battle_source_metadata_missing');
+
+          // battle_lifecycle_valid: every battle result entry has a lifecycle object
+          const battleLifecycleValid = battleAudit.every(b => b.lifecycle != null && typeof b.lifecycle === 'object');
+
+          // validation_details_present: bundle always has validation_details array
+          const validationDetailsPresent = true; // always populated above
+
           return {
             battle_cards_valid: battleCardsValid,
             ownership_changes_valid: ownershipChangesValid,
             troop_counts_valid: troopCountsValid,
             resource_changes_valid: resourceChangesValid,
             snapshot_integrity_valid: snapshotIntegrityValid,
-            overall: battleCardsValid && ownershipChangesValid && troopCountsValid && resourceChangesValid && snapshotIntegrityValid,
+            battle_source_metadata_valid: battleSourceMetadataValid,
+            battle_lifecycle_valid: battleLifecycleValid,
+            validation_details_present: validationDetailsPresent,
+            overall: battleCardsValid && ownershipChangesValid && troopCountsValid && resourceChangesValid && snapshotIntegrityValid && battleSourceMetadataValid && battleLifecycleValid,
           };
         })(),
       };

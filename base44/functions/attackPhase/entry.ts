@@ -904,6 +904,7 @@ Deno.serve(async (req) => {
         status: 'pending',
         is_mutual: false,
         source_player_id: primaryAttacker.player_id,
+        source_player_name: players.find(p => p.id === primaryAttacker.player_id)?.display_name ?? null,
         battle_card_source: 'military_attack',
       });
 

@@ -1906,13 +1906,23 @@ Deno.serve(async (req) => {
       } else {
         const autoResult = autoResolveBattle(card, campaign_id);
         const now = new Date().toISOString();
+        // Compute BOP survivors for processPhaseEnd auto-resolves (same as applyAutoResolve)
+        let winnerBopSurvivors = null;
+        const isNonMilBatch = NON_MILITARY_TYPES.has(card.battle_type);
+        if (autoResult.winner_player_id && !isNonMilBatch) {
+          const committedBOP = getWinnerCommittedTroops(card, autoResult.winner_player_id);
+          winnerBopSurvivors = (card.tabletop_size ?? 0) <= 0
+            ? committedBOP
+            : scaleBackSurvivors(autoResult.surviving_tabletop_troops ?? 0, card.tabletop_size, card.total_troops_in_battle ?? 0, committedBOP);
+        }
+        const enrichedAutoResult = { ...autoResult, winner_bop_survivors: winnerBopSurvivors, submitted_by: 'system', submitted_at: now, applied_at: null };
         await base44.asServiceRole.entities.BattleCard.update(card.id, {
           status: 'auto_resolved', resolved_at: now,
-          result: { ...autoResult, submitted_by: 'system', submitted_at: now, applied_at: null },
+          result: enrichedAutoResult,
         });
-        resultToApply = autoResult;
+        resultToApply = enrichedAutoResult;
         autoResolvedCount++;
-        await log(base44, campaign_id, round, 'battle_auto_resolved', null, { battle_card_id: card.id, winner_player_id: autoResult.winner_player_id }, true);
+        await log(base44, campaign_id, round, 'battle_auto_resolved', null, { battle_card_id: card.id, winner_player_id: autoResult.winner_player_id, winner_bop_survivors: winnerBopSurvivors }, true);
       }
 
       const resultIsDS = card.battle_type === 'double_siege' && resultToApply?.double_siege_result?.defender_held === false;
