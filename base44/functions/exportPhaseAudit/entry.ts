@@ -497,8 +497,10 @@ function getBattleResolutionAudit(allBattleCards, playerMap, attackReveals) {
       origin_action_id:   (() => {
         // 1. Prefer what's stored directly on the battle card metadata
         if (bc.source_operation_metadata?.origin_action_id) return bc.source_operation_metadata.origin_action_id;
-        // 2. Fall back: look up via AttackReveal (which now stores attack_id)
+        // 2. Check attack_id on the primary attacker entry (stored since 5H.1)
         const primaryAtk = (bc.attackers ?? [])[0];
+        if (primaryAtk?.attack_id) return primaryAtk.attack_id;
+        // 3. Fall back: look up via AttackReveal records
         if (primaryAtk) {
           const key = `${primaryAtk.player_id}|${primaryAtk.origin_territory_id}|${bc.target_territory_id}`;
           if (attackIdLookup[key]) return attackIdLookup[key];
@@ -513,6 +515,7 @@ function getBattleResolutionAudit(allBattleCards, playerMap, attackReveals) {
         origin_action_id:   (() => {
           if (bc.source_operation_metadata?.origin_action_id) return bc.source_operation_metadata.origin_action_id;
           const primaryAtk = (bc.attackers ?? [])[0];
+          if (primaryAtk?.attack_id) return primaryAtk.attack_id;
           if (primaryAtk) {
             const key = `${primaryAtk.player_id}|${primaryAtk.origin_territory_id}|${bc.target_territory_id}`;
             if (attackIdLookup[key]) return attackIdLookup[key];
@@ -811,6 +814,7 @@ function buildGeneratedArtifacts(cache, round, playerMap) {
       origin_action_id:   (() => {
         if (bc.source_operation_metadata?.origin_action_id) return bc.source_operation_metadata.origin_action_id;
         const primaryAtk = (bc.attackers ?? [])[0];
+        if (primaryAtk?.attack_id) return primaryAtk.attack_id;
         if (primaryAtk) {
           for (const ar of (cache.attackReveals ?? [])) {
             if (ar.attack_id && ar.player_id === primaryAtk.player_id &&

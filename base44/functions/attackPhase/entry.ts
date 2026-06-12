@@ -897,6 +897,7 @@ Deno.serve(async (req) => {
           player_id:           a.player_id,
           origin_territory_id: a.origin_territory_id,
           committed_troops:    a.committed_troops,
+          attack_id:           a.id ?? null,
         })),
         total_attacking_troops: totalAttackingTroops,
         total_troops_in_battle: totalTroopsInBattle,
@@ -909,7 +910,7 @@ Deno.serve(async (req) => {
         battle_card_source: 'military_attack',
         source_operation_metadata: {
           origin_action_id:   primaryAttacker.id ?? null,
-          origin_action_type: 'attack',
+          origin_action_type: 'military_attack',
           origin_phase:       'attack',
           origin_round:       round,
         },

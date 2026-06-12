@@ -26,6 +26,10 @@
     "committed_troops": {
       "type": "number",
       "description": "Troops committed to this attack (already removed from origin territory)."
+    },
+    "attack_id": {
+      "type": "string",
+      "description": "Stable attack ID (atk_...) generated at stageAttack time. Used for audit traceability as origin_action_id."
     }
   },
   "required": [
