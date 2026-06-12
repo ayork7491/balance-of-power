@@ -174,37 +174,80 @@ function buildSides(card) {
  * source='fallback_card_value' annotation so audits can detect stale data.
  */
 async function getBattleTroopSources(base44, campaign_id, round, card) {
-  // Load before-snapshot (phase_start) for this battle round
+  const targetId = card.target_territory_id;
+  const cardDefenderTroops = card.defender_troops ?? 0;
+
+  // 1. Try the battle phase_start snapshot (authoritative historical record)
   const snapshots = await base44.asServiceRole.entities.PhaseSnapshot.filter({
     campaign_id, round, phase: 'battle', snapshot_type: 'phase_start',
   });
   const snap = snapshots[0] ?? null;
-
   const snapshotTerritoryMap = {};
   for (const t of (snap?.territory_states ?? [])) {
-    snapshotTerritoryMap[t.territory_id] = t;
+    if (t.territory_id) snapshotTerritoryMap[t.territory_id] = t;
   }
 
-  // Defender troops: authoritative before-snapshot troop count
-  const snapDefenderEntry = snapshotTerritoryMap[card.target_territory_id] ?? null;
-  const snapshotDefenderTroops = snapDefenderEntry?.troop_count ?? null;
-  const defenderSource = snapshotDefenderTroops != null ? 'before_snapshot' : 'fallback_card_value';
-  const authoritative_defender_troops = snapshotDefenderTroops ?? card.defender_troops ?? 0;
+  console.log(`[getBattleTroopSources] target=${targetId} snap_found=${!!snap} snap_territory_count=${Object.keys(snapshotTerritoryMap).length} snap_has_target=${!!snapshotTerritoryMap[targetId]}`);
 
+  const snapEntry = snapshotTerritoryMap[targetId] ?? null;
+  const snapshotDefenderTroops = (snapEntry != null && snapEntry.troop_count != null) ? snapEntry.troop_count : null;
+
+  if (snapshotDefenderTroops != null) {
+    // Best case: authoritative before-snapshot
+    console.log(`[getBattleTroopSources] source=authoritative_snapshot troops=${snapshotDefenderTroops} (card had ${cardDefenderTroops})`);
+    const combat_source_trace = {
+      defender: {
+        territory_id: targetId,
+        before_snapshot_troops: snapshotDefenderTroops,
+        authoritative_defender_troops: snapshotDefenderTroops,
+        card_defender_troops: cardDefenderTroops,
+        source: 'authoritative_snapshot',
+      },
+      attackers: (card.attackers ?? []).map(a => ({ territory_id: a.origin_territory_id, committed_troops: a.committed_troops ?? 0 })),
+    };
+    return { authoritative_defender_troops: snapshotDefenderTroops, snapshotTerritoryMap, combat_source_trace };
+  }
+
+  // 2. Snapshot missing or doesn't contain target — try live TerritoryState (second-best)
+  const liveStates = await base44.asServiceRole.entities.TerritoryState.filter({
+    campaign_id, territory_id: targetId,
+  });
+  const liveEntry = liveStates[0] ?? null;
+  const liveTroops = (liveEntry != null && liveEntry.troop_count != null) ? liveEntry.troop_count : null;
+
+  console.log(`[getBattleTroopSources] snapshot_miss — live_lookup: territory=${targetId} live_troops=${liveTroops} (card had ${cardDefenderTroops})`);
+
+  if (liveTroops != null) {
+    const combat_source_trace = {
+      defender: {
+        territory_id: targetId,
+        before_snapshot_troops: null,
+        authoritative_defender_troops: liveTroops,
+        card_defender_troops: cardDefenderTroops,
+        source: 'live_territory_state',
+        fallback_reason: snap ? 'snapshot_exists_but_missing_territory' : 'no_battle_phase_start_snapshot',
+      },
+      attackers: (card.attackers ?? []).map(a => ({ territory_id: a.origin_territory_id, committed_troops: a.committed_troops ?? 0 })),
+    };
+    return { authoritative_defender_troops: liveTroops, snapshotTerritoryMap, combat_source_trace };
+  }
+
+  // 3. Both lookups failed — record explicit error, do NOT silently use stale card value
+  console.error(`[getBattleTroopSources] LOOKUP_FAILED for ${targetId} — no snapshot, no live state. card.defender_troops=${cardDefenderTroops}`);
   const combat_source_trace = {
     defender: {
-      territory_id: card.target_territory_id,
-      before_snapshot_troops: snapshotDefenderTroops,
-      card_defender_troops: card.defender_troops ?? 0,
-      source: defenderSource,
+      territory_id: targetId,
+      before_snapshot_troops: null,
+      authoritative_defender_troops: null,
+      card_defender_troops: cardDefenderTroops,
+      source: 'lookup_failed',
+      fallback_reason: 'no_snapshot_and_no_live_state_found',
+      error: 'defender_troop_lookup_failed',
     },
-    attackers: (card.attackers ?? []).map(a => ({
-      territory_id: a.origin_territory_id,
-      committed_troops: a.committed_troops ?? 0,
-    })),
+    attackers: (card.attackers ?? []).map(a => ({ territory_id: a.origin_territory_id, committed_troops: a.committed_troops ?? 0 })),
   };
-
-  return { authoritative_defender_troops, snapshotTerritoryMap, combat_source_trace };
+  // Use card value as last resort but mark it clearly
+  return { authoritative_defender_troops: cardDefenderTroops, snapshotTerritoryMap, combat_source_trace };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
