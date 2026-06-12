@@ -1218,6 +1218,67 @@ Deno.serve(async (req) => {
       const targetCategory = phaseCategory(targetPhase);
       const troopDeltasNonZero = (deltaReport.troop_deltas ?? []).filter(d => d.troop_delta !== 0);
 
+      // ── Supplement troop_deltas with battle-derived troop changes ────────────
+      // When snapshot-based deltas are empty (snapshots identical) but battles
+      // resolved and changed territory ownership/troop counts, synthesize deltas
+      // from the battle audit entries so troop_deltas is never empty.
+      const battleDerivedTroopDeltas = [];
+      if (troopDeltasNonZero.length === 0 && battleAudit.some(b => b.result_applied)) {
+        // Build a before-troop map from the before snapshot
+        const beforeTroopMap = {};
+        for (const t of (beforeSnapshotData?.territory_states ?? [])) {
+          beforeTroopMap[t.territory_id] = { troops: t.troop_count ?? 0, owner: t.owner_player_id ?? null };
+        }
+        // For each resolved battle, emit origin troop loss + target troop change
+        for (const b of battleAudit) {
+          if (!b.result_applied) continue;
+          const targetId = b.target?.territory_id;
+
+          // Origin territory: troops were committed out (already in before snapshot as reduced)
+          for (const atk of (b.attacker_entries ?? [])) {
+            const originId = atk.origin?.territory_id;
+            if (!originId) continue;
+            const beforeTroops = beforeTroopMap[originId]?.troops ?? 0;
+            const committedLoss = atk.committed_troops ?? 0;
+            if (committedLoss > 0) {
+              battleDerivedTroopDeltas.push({
+                territory_id: originId,
+                territory_name: atk.origin?.territory_name ?? originId,
+                player_id: atk.player_id,
+                player: atk.player_name ?? atk.player_id,
+                before: beforeTroops,
+                after: Math.max(0, beforeTroops - committedLoss),
+                delta: -committedLoss,
+                cause: 'attack_committed',
+                source: 'battle_audit',
+              });
+            }
+          }
+
+          // Target territory: ownership/troop change from battle resolution
+          if (targetId) {
+            const beforeEntry = beforeTroopMap[targetId] ?? { troops: b.starting_state?.troops ?? 0, owner: b.defender_player_id ?? null };
+            const afterTroops = b.ending_state?.troops ?? null;
+            const afterOwner = b.ending_state?.owner_player_id ?? null;
+            if (afterTroops != null) {
+              battleDerivedTroopDeltas.push({
+                territory_id: targetId,
+                territory_name: b.target?.territory_name ?? targetId,
+                player_id: afterOwner,
+                player: b.winner ?? (afterOwner ? (playerMap[afterOwner]?.display_name ?? afterOwner) : 'unoccupied'),
+                from_owner: b.defender ?? (beforeEntry.owner ? (playerMap[beforeEntry.owner]?.display_name ?? beforeEntry.owner) : 'unoccupied'),
+                to_owner: b.winner ?? 'unoccupied',
+                before: beforeEntry.troops,
+                after: afterTroops,
+                delta: afterTroops - beforeEntry.troops,
+                cause: 'battle_resolution_survivors',
+                source: 'battle_audit',
+              });
+            }
+          }
+        }
+      }
+
       // ── Validation warnings — PHASE-AWARE (Issue 5) ─────────────────────
       const validationWarnings = [];
       let exportValidationStatus = 'passed';
@@ -1349,12 +1410,22 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Snapshot identity check — only when there are phase-relevant actions
+      // Snapshot identity check — only when there are phase-relevant actions AND no actual deltas exist
       const hasAnyActions = enrichedActions.all.length > 0 || allBattleCards.some(bc => bc.result_applied);
       if (canDelta && hasAnyActions && beforeSnapshotData && afterSnapshotData) {
         const beforeHash = JSON.stringify((beforeSnapshotData.territory_states ?? []).map(t => `${t.territory_id}:${t.owner_player_id}:${t.troop_count}`).sort());
         const afterHash  = JSON.stringify((afterSnapshotData.territory_states ?? []).map(t => `${t.territory_id}:${t.owner_player_id}:${t.troop_count}`).sort());
-        if (beforeHash === afterHash && troopDeltasNonZero.length === 0 && ['operations', 'conflict'].includes(targetCategory)) {
+        // Only raise this warning if there are truly no detectable changes anywhere
+        const hasAnyDetectedChanges = (
+          troopDeltasNonZero.length > 0 ||
+          ownershipChanges.length > 0 ||
+          (deltaReport.resource_deltas ?? []).length > 0 ||
+          ((deltaReport.permanent_influence_deltas ?? []).length + (deltaReport.spendable_influence_deltas ?? []). length) > 0 ||
+          (deltaReport.structure_changes ?? []).length > 0 ||
+          battleAudit.some(b => b.result_applied) ||
+          beforeHash !== afterHash
+        );
+        if (!hasAnyDetectedChanges && ['operations', 'conflict'].includes(targetCategory)) {
           validationWarnings.push({ type: 'snapshot_changes_expected_but_missing', severity: 'high',
             message: 'Before and after snapshots are identical despite submitted actions.' });
           if (exportValidationStatus === 'passed') exportValidationStatus = 'warning';
@@ -1511,7 +1582,7 @@ Deno.serve(async (req) => {
 
         resolution_results: {
           ownership_changes:           ownershipChanges,
-          troop_movements:             troopDeltasNonZero,
+          troop_movements:             troopDeltasNonZero.length > 0 ? troopDeltasNonZero : battleDerivedTroopDeltas,
           resource_changes:            (() => {
             // Prefer snapshot-based deltas (Issue 4); fall back to activation log for Planning
             const fromDelta = deltaReport.resource_deltas ?? [];
@@ -1545,9 +1616,13 @@ Deno.serve(async (req) => {
         after_snapshot: afterSnapshotData,
 
         delta_report: (() => {
+          // Inject battle-derived troop deltas when snapshot-based ones are empty
+          const enrichedDelta = (deltaReport.troop_deltas ?? []).length === 0 && battleDerivedTroopDeltas.length > 0
+            ? { ...deltaReport, troop_deltas: battleDerivedTroopDeltas }
+            : deltaReport;
           // If snapshots already have resource_deltas, return as-is.
           // For Planning only: if snapshot resource_deltas are empty, inject from activation log.
-          if ((deltaReport.resource_deltas ?? []).length > 0 || targetCategory !== 'planning') return deltaReport;
+          if ((enrichedDelta.resource_deltas ?? []).length > 0 || targetCategory !== 'planning') return enrichedDelta;
           const entries = [];
           for (const action of enrichedActions.economic.filter(a => a.action_type === 'activate_resources')) {
             for (const d of (action.activation_details ?? [])) {
@@ -1564,7 +1639,7 @@ Deno.serve(async (req) => {
               });
             }
           }
-          return entries.length > 0 ? { ...deltaReport, resource_deltas: entries } : deltaReport;
+          return entries.length > 0 ? { ...enrichedDelta, resource_deltas: entries } : enrichedDelta;
         })(),
 
         validation_warnings: validationWarnings,

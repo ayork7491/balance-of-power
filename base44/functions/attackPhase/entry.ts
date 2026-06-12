@@ -608,12 +608,13 @@ Deno.serve(async (req) => {
       campaign_id, phase: 'attack', round,
     });
 
-    // Flatten all attacks across all players
+    // Flatten all attacks across all players — preserve attack id for audit traceability
     const allAttacks = [];
     const rejectedAttacks = [];
     for (const dec of finalDecisions) {
       for (const atk of (dec.data?.attacks ?? [])) {
-        allAttacks.push({ ...atk, player_id: dec.player_id });
+        // Ensure each attack has a stable id (should already have one from stageAttack)
+        allAttacks.push({ ...atk, player_id: dec.player_id, id: atk.id ?? `atk_${dec.player_id}_${atk.origin_territory_id}_${atk.target_territory_id}` });
       }
     }
 
