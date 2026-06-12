@@ -481,6 +481,11 @@ function getBattleResolutionAudit(allBattleCards, playerMap) {
       target:           tEnrich(bc.target_territory_id),
       attacker:         attackerEntries[0]?.player_name ?? null,
       attacker_entries: attackerEntries,
+      source_player_id: bc.source_player_id ?? attackerEntries[0]?.player_id ?? null,
+      source_player_name: (() => {
+        const sid = bc.source_player_id ?? attackerEntries[0]?.player_id ?? null;
+        return sid ? (playerMap[sid]?.display_name ?? sid) : null;
+      })(),
       defender:         bc.defender_player_id ? (playerMap[bc.defender_player_id]?.display_name ?? bc.defender_player_id) : null,
       defender_player_id: bc.defender_player_id ?? null,
 
@@ -494,7 +499,20 @@ function getBattleResolutionAudit(allBattleCards, playerMap) {
       ending_state: {
         owner:  winnerName ?? 'unclaimed',
         owner_player_id: winnerPlayerId,
-        troops: result.winner_bop_survivors ?? null,
+        troops: (() => {
+          // winner_bop_survivors is written by battlePhase since 5F.8.
+          // For older cards that lack it, compute it inline from TT survivors.
+          if (result.winner_bop_survivors != null) return result.winner_bop_survivors;
+          if (!winnerPlayerId) return null;
+          const committedBOP = (bc.attackers ?? []).filter(a => a.player_id === winnerPlayerId).reduce((s, a) => s + (a.committed_troops ?? 0), 0) || (bc.defender_player_id === winnerPlayerId ? (bc.defender_troops ?? 0) : 0);
+          const survivingTT = result.surviving_tabletop_troops ?? 0;
+          const tabletopSz  = bc.tabletop_size ?? 0;
+          const totalTroops = bc.total_troops_in_battle ?? 0;
+          if (tabletopSz <= 0) return committedBOP;
+          const ratio = Math.max(0, Math.min(1, survivingTT / tabletopSz));
+          const raw   = Math.round(ratio * totalTroops);
+          return committedBOP > 0 ? Math.min(raw, committedBOP) : raw;
+        })(),
         surviving_tabletop: result.surviving_tabletop_troops ?? null,
       },
 
@@ -749,7 +767,10 @@ function buildGeneratedArtifacts(cache, round, playerMap) {
       id: bc.id, battle_type: bc.battle_type, battle_pillar: bc.battle_pillar,
       target: tEnrich(bc.target_territory_id),
       source_player_id: bc.source_player_id ?? null,
-      source_player_name: bc.source_player_id ? (playerMap[bc.source_player_id]?.display_name ?? bc.source_player_id) : null,
+      source_player_name: (() => {
+        const sid = bc.source_player_id ?? bc.attackers?.[0]?.player_id ?? null;
+        return sid ? (playerMap[sid]?.display_name ?? sid) : null;
+      })(),
       status: bc.status,
     })),
     trade_proposals_generated: dipActions.filter(a => a.action_type === 'trade_proposal').map(a => ({
@@ -1488,6 +1509,39 @@ Deno.serve(async (req) => {
         })(),
 
         validation_warnings: validationWarnings,
+
+        audit_health: (() => {
+          // battle_cards_valid: all siege cards have source_player_id
+          const siegeCards = battleAudit.filter(b => b.battle_type === 'siege' || b.battle_type === 'double_siege');
+          const battleCardsValid = siegeCards.length === 0 || siegeCards.every(b => b.source_player_id != null);
+
+          // ownership_changes_valid: no mismatch warnings
+          const ownershipChangesValid = !validationWarnings.some(w => w.type === 'ownership_mismatch' || w.type === 'ownership_changes_expected_but_empty');
+
+          // troop_counts_valid: no null ending troops on winner battles
+          const troopCountsValid = battleAudit.every(b => !b.ending_state?.owner_player_id || b.ending_state.troops != null);
+
+          // resource_changes_valid: no negative resource warnings
+          const resourceChangesValid = !validationWarnings.some(w => w.type === 'resource_total_negative' || w.type === 'resource_changes_expected_but_empty');
+
+          // snapshot_integrity_valid: snapshots present and no consistency warnings
+          const snapshotIntegrityValid = (
+            diagnostics.before_snapshot_source !== 'missing' &&
+            diagnostics.after_snapshot_source !== 'missing' &&
+            beforeTerritoryCount > 0 &&
+            afterTerritoryCount > 0 &&
+            !validationWarnings.some(w => w.type === 'snapshot_changes_expected_but_missing')
+          );
+
+          return {
+            battle_cards_valid: battleCardsValid,
+            ownership_changes_valid: ownershipChangesValid,
+            troop_counts_valid: troopCountsValid,
+            resource_changes_valid: resourceChangesValid,
+            snapshot_integrity_valid: snapshotIntegrityValid,
+            overall: battleCardsValid && ownershipChangesValid && troopCountsValid && resourceChangesValid && snapshotIntegrityValid,
+          };
+        })(),
       };
 
       return Response.json({ success: true, bundle });

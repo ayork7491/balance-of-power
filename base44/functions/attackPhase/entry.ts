@@ -880,11 +880,15 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      // Primary attacker = first attacker entry (single attacker for siege)
+      const primaryAttacker = attacksOnTarget[0];
+
       // Create BattleCard for siege / double_siege / capture_objectives
       const card = await base44.asServiceRole.entities.BattleCard.create({
         campaign_id,
         round,
         battle_type: battleType,
+        battle_pillar: 'military',
         target_territory_id: targetId,
         defender_player_id:  postCommitStateById[targetId]?.owner_player_id ?? null,
         defender_troops:     defenderTroops,
@@ -899,6 +903,8 @@ Deno.serve(async (req) => {
         tabletop_size,
         status: 'pending',
         is_mutual: false,
+        source_player_id: primaryAttacker.player_id,
+        battle_card_source: 'military_attack',
       });
 
       battleCards.push(card);

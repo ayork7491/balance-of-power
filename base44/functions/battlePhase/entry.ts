@@ -885,10 +885,30 @@ Deno.serve(async (req) => {
     const now = new Date().toISOString();
     const isCarryover = ['active_carryover', 'pending_approval'].includes(card.status);
     const isNonMilitary = NON_MILITARY_TYPES.has(card.battle_type);
+
+    // Compute BOP survivor count before writing territory state
+    let winnerBopSurvivors = null;
+    if (autoResult.winner_player_id && !isNonMilitary) {
+      const committedBOP = getWinnerCommittedTroops(card, autoResult.winner_player_id);
+      if ((card.tabletop_size ?? 0) <= 0) {
+        winnerBopSurvivors = committedBOP;
+      } else {
+        winnerBopSurvivors = scaleBackSurvivors(autoResult.surviving_tabletop_troops ?? 0, card.tabletop_size, card.total_troops_in_battle ?? 0, committedBOP);
+      }
+    }
+
+    const enrichedResult = {
+      ...autoResult,
+      winner_bop_survivors: winnerBopSurvivors,
+      submitted_by: 'system',
+      submitted_at: now,
+      applied_at: null,
+    };
+
     await base44Ref.asServiceRole.entities.BattleCard.update(card.id, {
       status: 'auto_resolved', resolved_at: now,
       ...(isCarryover ? { resolved_in_battle_round: roundRef } : {}),
-      result: { ...autoResult, submitted_by: 'system', submitted_at: now, applied_at: null },
+      result: enrichedResult,
     });
     if (isNonMilitary) {
       await applyNonMilitaryConsequences(base44Ref, campaign_idRef, roundRef, card, autoResult);
@@ -899,11 +919,12 @@ Deno.serve(async (req) => {
     }
     await base44Ref.asServiceRole.entities.BattleCard.update(card.id, {
       result_applied: true,
-      result: { ...autoResult, submitted_by: 'system', submitted_at: now, applied_at: new Date().toISOString() },
+      result: { ...enrichedResult, applied_at: new Date().toISOString() },
     });
     await refreshLockedTerritories(base44Ref, campaign_idRef);
     await log(base44Ref, campaign_idRef, roundRef, 'battle_auto_resolved', null, {
-      battle_card_id: card.id, target_territory_id: card.target_territory_id, winner_player_id: autoResult.winner_player_id,
+      battle_card_id: card.id, target_territory_id: card.target_territory_id,
+      winner_player_id: autoResult.winner_player_id, winner_bop_survivors: winnerBopSurvivors,
     }, true);
   }
 
@@ -1302,16 +1323,23 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Compute BOP survivors at submission time so ending_state.troops is never null
+    const committedBOP = getWinnerCommittedTroops(card, winner_player_id);
+    const winnerBopSurvivors = (card.tabletop_size ?? 0) <= 0
+      ? committedBOP
+      : scaleBackSurvivors(clampedSurvivors, card.tabletop_size, card.total_troops_in_battle ?? 0, committedBOP);
+
     const now = new Date().toISOString();
     await base44.asServiceRole.entities.BattleCard.update(battle_card_id, {
       status: newStatus, approvals: [],
       result: {
         winner_player_id, surviving_tabletop_troops: clampedSurvivors,
+        winner_bop_survivors: winnerBopSurvivors,
         loser_tabletop_survivors: clampedLoserSurvivors ?? null,
         notes: notes ?? '', submitted_by: myPlayer.id, submitted_at: now, result_source: 'manual', applied_at: null,
       },
     });
-    await log(base44, campaign_id, card.round, 'battle_result_submitted', myPlayer.id, { battle_card_id, winner_player_id, surviving_tabletop_troops: clampedSurvivors }, true);
+    await log(base44, campaign_id, card.round, 'battle_result_submitted', myPlayer.id, { battle_card_id, winner_player_id, surviving_tabletop_troops: clampedSurvivors, winner_bop_survivors: winnerBopSurvivors }, true);
     return Response.json({ success: true, status: newStatus });
   }
 
@@ -1918,13 +1946,57 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── Snapshot consistency check: verify player_standings.troop_total matches territory sum ──
+    const snapConsistencyWarnings = [];
+    for (const p of activePlayers) {
+      const ownedTerritories = finalStates.filter(ts => ts.owner_player_id === p.id);
+      const territoryTroopSum = ownedTerritories.reduce((s, ts) => s + (ts.troop_count || 0), 0);
+      const standingTroopTotal = p.troop_count ?? territoryTroopSum;
+      if (Math.abs(territoryTroopSum - standingTroopTotal) > 0) {
+        snapConsistencyWarnings.push({
+          player_id: p.id, display_name: p.display_name,
+          territory_sum: territoryTroopSum, standing_total: standingTroopTotal,
+          delta: territoryTroopSum - standingTroopTotal,
+        });
+      }
+    }
+    if (snapConsistencyWarnings.length > 0) {
+      await log(base44, campaign_id, round, 'snapshot_consistency_mismatch', null, {
+        warnings: snapConsistencyWarnings,
+        severity: 'error',
+        message: 'Player standing troop totals do not match sum of territory troops.',
+      }, false);
+    }
+
+    const [battleEndInfluence, battleEndPools, battleEndBuildings, battleEndRoutes, battleEndObjectives, battleEndVictory] = await Promise.all([
+      base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id }),
+      base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id }),
+      base44.asServiceRole.entities.TerritoryBuilding.filter({ campaign_id }),
+      base44.asServiceRole.entities.SupplyRoute.filter({ campaign_id }),
+      base44.asServiceRole.entities.PlayerInfluenceLedger.filter({ campaign_id }),
+      base44.asServiceRole.entities.VictoryTracker.filter({ campaign_id }),
+    ]);
+
     await base44.asServiceRole.entities.PhaseSnapshot.create({
       campaign_id, round, phase: 'battle', snapshot_type: 'phase_end',
-      territory_states: finalStates.map(ts => ({ territory_id: ts.territory_id, owner_player_id: ts.owner_player_id ?? null, troop_count: ts.troop_count ?? 0 })),
+      _schema_version: 2,
+      territory_states: finalStates.map(ts => ({
+        territory_id: ts.territory_id, owner_player_id: ts.owner_player_id ?? null,
+        troop_count: ts.troop_count ?? 0, resource_storage: ts.resource_storage ?? {},
+        has_resource_hub: ts.has_resource_hub ?? false, structures: ts.structures ?? [],
+        resource_type: ts.resource_type ?? null,
+      })),
       player_standings: activePlayers.map(p => {
         const owned = finalStates.filter(ts => ts.owner_player_id === p.id);
-        return { player_id: p.id, display_name: p.display_name, territory_count: owned.length, troop_total: owned.reduce((s, ts) => s + (ts.troop_count || 0), 0), is_eliminated: eliminatedNow.includes(p.id) || p.is_eliminated };
+        const troopTotal = owned.reduce((s, ts) => s + (ts.troop_count || 0), 0);
+        return { player_id: p.id, display_name: p.display_name, territory_count: owned.length, troop_total: troopTotal, is_eliminated: eliminatedNow.includes(p.id) || p.is_eliminated };
       }),
+      permanent_influence: battleEndInfluence.map(i => ({ territory_id: i.territory_id, player_id: i.player_id, influence_amount: i.influence_amount ?? 0 })),
+      spendable_influence: battleEndPools.map(p => ({ region_id: p.region_id, player_id: p.player_id, spendable_influence: p.spendable_influence ?? 0 })),
+      buildings: battleEndBuildings.map(b => ({ territory_id: b.territory_id, player_id: b.player_id, building_type: b.building_type, pillar_type: b.pillar_type, status: b.status, started_round: b.started_round, completed_round: b.completed_round })),
+      supply_routes: battleEndRoutes.map(r => ({ id: r.id, owner_player_id: r.owner_player_id, hub_territory_id: r.hub_territory_id, source_territory_id: r.source_territory_id, route_status: r.route_status, resource_type: r.resource_type, created_round: r.created_round })),
+      objectives: battleEndObjectives.map(o => ({ player_id: o.player_id, global_influence: o.global_influence ?? 0, objective_cards: o.objective_cards_json ?? {} })),
+      victory_scores: battleEndVictory.map(v => ({ player_id: v.player_id, occupancy_score: v.occupancy_score ?? 0, wealth_score: v.wealth_score ?? 0, influence_score: v.influence_score ?? 0, has_won: v.has_won ?? false, winning_condition: v.winning_condition ?? null })),
     });
 
     await log(base44, campaign_id, round, 'phase_advanced', null, { next_phase: 'fortify', round, battles_resolved: resolvedCount, battles_auto_resolved: autoResolvedCount, battles_forfeited: forfeitedCount, battles_delayed: delayedCount }, true);
