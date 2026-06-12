@@ -487,9 +487,10 @@ function getBattleResolutionAudit(allBattleCards, playerMap) {
         return sid ? (playerMap[sid]?.display_name ?? sid) : null;
       })(),
       origin_action_id:   bc.source_operation_metadata?.origin_action_id ?? null,
-      origin_action_type: bc.battle_card_source ?? 'military_attack',
-      origin_phase:       bc.battle_card_source === 'military_attack' ? 'attack' : 'attack',
-      origin_round:       bc.round ?? null,
+      origin_action_type: bc.source_operation_metadata?.origin_action_type ?? bc.battle_card_source ?? 'military_attack',
+      origin_phase:       bc.source_operation_metadata?.origin_phase ?? (bc.battle_card_source === 'military_attack' ? 'attack' : 'attack'),
+      origin_round:       bc.source_operation_metadata?.origin_round ?? bc.round ?? null,
+      result_applied:     bc.result_applied ?? false,
       lifecycle: {
         origin_action_id:   bc.source_operation_metadata?.origin_action_id ?? null,
         battle_card_id:     bc.id,
@@ -781,6 +782,10 @@ function buildGeneratedArtifacts(cache, round, playerMap) {
         const sid = bc.source_player_id ?? bc.attackers?.[0]?.player_id ?? null;
         return sid ? (playerMap[sid]?.display_name ?? sid) : null;
       })(),
+      origin_action_id:   bc.source_operation_metadata?.origin_action_id ?? null,
+      origin_action_type: bc.source_operation_metadata?.origin_action_type ?? bc.battle_card_source ?? null,
+      origin_phase:       bc.source_operation_metadata?.origin_phase ?? (bc.battle_card_source === 'military_attack' ? 'attack' : null),
+      origin_round:       bc.source_operation_metadata?.origin_round ?? bc.round ?? null,
       status: bc.status,
     })),
     trade_proposals_generated: dipActions.filter(a => a.action_type === 'trade_proposal').map(a => ({

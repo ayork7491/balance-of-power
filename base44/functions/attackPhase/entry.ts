@@ -906,6 +906,12 @@ Deno.serve(async (req) => {
         source_player_id: primaryAttacker.player_id,
         source_player_name: players.find(p => p.id === primaryAttacker.player_id)?.display_name ?? null,
         battle_card_source: 'military_attack',
+        source_operation_metadata: {
+          origin_action_id:   primaryAttacker.id ?? null,
+          origin_action_type: 'attack',
+          origin_phase:       'attack',
+          origin_round:       round,
+        },
       });
 
       battleCards.push(card);
