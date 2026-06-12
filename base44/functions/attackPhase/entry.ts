@@ -926,7 +926,7 @@ Deno.serve(async (req) => {
       }, true);
     }
 
-    // Write public AttackReveal records (only valid attacks)
+    // Write public AttackReveal records (only valid attacks — include attack_id for audit traceability)
     for (const atk of validatedAttacks) {
       await base44.asServiceRole.entities.AttackReveal.create({
         campaign_id,
@@ -935,6 +935,7 @@ Deno.serve(async (req) => {
         origin_territory_id: atk.origin_territory_id,
         target_territory_id: atk.target_territory_id,
         committed_troops: atk.committed_troops,
+        attack_id: atk.id ?? null,
       });
     }
 

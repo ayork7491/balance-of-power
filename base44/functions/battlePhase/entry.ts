@@ -1987,20 +1987,32 @@ Deno.serve(async (req) => {
       base44.asServiceRole.entities.VictoryTracker.filter({ campaign_id }),
     ]);
 
+    // Re-fetch final territory states immediately before snapshot to ensure post-resolution values
+    const authoritativeFinalStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+
+    // Build authoritative player standings from live territory records (never reuse cached values)
+    const allPlayersForSnapshot = players; // includes all players, eliminated or not
+    const authoritativeStandings = allPlayersForSnapshot.map(p => {
+      const owned = authoritativeFinalStates.filter(ts => ts.owner_player_id === p.id);
+      const troopTotal = owned.reduce((s, ts) => s + (ts.troop_count || 0), 0);
+      const isElimNow = eliminatedNow.includes(p.id);
+      return {
+        player_id: p.id, display_name: p.display_name,
+        territory_count: owned.length, troop_total: troopTotal,
+        is_eliminated: isElimNow || p.is_eliminated,
+      };
+    });
+
     await base44.asServiceRole.entities.PhaseSnapshot.create({
       campaign_id, round, phase: 'battle', snapshot_type: 'phase_end',
       _schema_version: 2,
-      territory_states: finalStates.map(ts => ({
+      territory_states: authoritativeFinalStates.map(ts => ({
         territory_id: ts.territory_id, owner_player_id: ts.owner_player_id ?? null,
         troop_count: ts.troop_count ?? 0, resource_storage: ts.resource_storage ?? {},
         has_resource_hub: ts.has_resource_hub ?? false, structures: ts.structures ?? [],
         resource_type: ts.resource_type ?? null,
       })),
-      player_standings: activePlayers.map(p => {
-        const owned = finalStates.filter(ts => ts.owner_player_id === p.id);
-        const troopTotal = owned.reduce((s, ts) => s + (ts.troop_count || 0), 0);
-        return { player_id: p.id, display_name: p.display_name, territory_count: owned.length, troop_total: troopTotal, is_eliminated: eliminatedNow.includes(p.id) || p.is_eliminated };
-      }),
+      player_standings: authoritativeStandings,
       permanent_influence: battleEndInfluence.map(i => ({ territory_id: i.territory_id, player_id: i.player_id, influence_amount: i.influence_amount ?? 0 })),
       spendable_influence: battleEndPools.map(p => ({ region_id: p.region_id, player_id: p.player_id, spendable_influence: p.spendable_influence ?? 0 })),
       buildings: battleEndBuildings.map(b => ({ territory_id: b.territory_id, player_id: b.player_id, building_type: b.building_type, pillar_type: b.pillar_type, status: b.status, started_round: b.started_round, completed_round: b.completed_round })),

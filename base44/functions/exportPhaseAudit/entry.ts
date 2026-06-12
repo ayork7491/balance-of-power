@@ -434,9 +434,17 @@ function nextPhase(phase) {
 const BEFORE_TYPES = new Set(['before', 'start', 'phase_start', 'phase_before']);
 const AFTER_TYPES  = new Set(['after', 'end', 'phase_end', 'phase_after']);
 
-// ── Battle Resolution Audit (uses pre-fetched allBattleCards) ─────────────────
+// ── Battle Resolution Audit (uses pre-fetched allBattleCards + attackReveals) ─
 
-function getBattleResolutionAudit(allBattleCards, playerMap) {
+function getBattleResolutionAudit(allBattleCards, playerMap, attackReveals) {
+  // Build a lookup: origin→target→attack_id from AttackReveal records (which carry the stable attack_id)
+  const attackIdLookup = {};
+  for (const ar of (attackReveals ?? [])) {
+    if (ar.attack_id) {
+      const key = `${ar.player_id}|${ar.origin_territory_id}|${ar.target_territory_id}`;
+      attackIdLookup[key] = ar.attack_id;
+    }
+  }
   const resolved = allBattleCards.filter(bc => bc.result_applied === true);
   const audit = [];
 
@@ -486,13 +494,31 @@ function getBattleResolutionAudit(allBattleCards, playerMap) {
         const sid = bc.source_player_id ?? attackerEntries[0]?.player_id ?? null;
         return sid ? (playerMap[sid]?.display_name ?? sid) : null;
       })(),
-      origin_action_id:   bc.source_operation_metadata?.origin_action_id ?? null,
+      origin_action_id:   (() => {
+        // 1. Prefer what's stored directly on the battle card metadata
+        if (bc.source_operation_metadata?.origin_action_id) return bc.source_operation_metadata.origin_action_id;
+        // 2. Fall back: look up via AttackReveal (which now stores attack_id)
+        const primaryAtk = (bc.attackers ?? [])[0];
+        if (primaryAtk) {
+          const key = `${primaryAtk.player_id}|${primaryAtk.origin_territory_id}|${bc.target_territory_id}`;
+          if (attackIdLookup[key]) return attackIdLookup[key];
+        }
+        return null;
+      })(),
       origin_action_type: bc.source_operation_metadata?.origin_action_type ?? bc.battle_card_source ?? 'military_attack',
       origin_phase:       bc.source_operation_metadata?.origin_phase ?? (bc.battle_card_source === 'military_attack' ? 'attack' : 'attack'),
       origin_round:       bc.source_operation_metadata?.origin_round ?? bc.round ?? null,
       result_applied:     bc.result_applied ?? false,
       lifecycle: {
-        origin_action_id:   bc.source_operation_metadata?.origin_action_id ?? null,
+        origin_action_id:   (() => {
+          if (bc.source_operation_metadata?.origin_action_id) return bc.source_operation_metadata.origin_action_id;
+          const primaryAtk = (bc.attackers ?? [])[0];
+          if (primaryAtk) {
+            const key = `${primaryAtk.player_id}|${primaryAtk.origin_territory_id}|${bc.target_territory_id}`;
+            if (attackIdLookup[key]) return attackIdLookup[key];
+          }
+          return null;
+        })(),
         battle_card_id:     bc.id,
         resolution_id:      bc.result?.applied_at ? `res_${bc.id}` : null,
         ownership_change_id: (bc.result_applied && bc.result?.winner_player_id && bc.result?.winner_player_id !== bc.defender_player_id) ? `own_${bc.id}` : null,
@@ -782,7 +808,18 @@ function buildGeneratedArtifacts(cache, round, playerMap) {
         const sid = bc.source_player_id ?? bc.attackers?.[0]?.player_id ?? null;
         return sid ? (playerMap[sid]?.display_name ?? sid) : null;
       })(),
-      origin_action_id:   bc.source_operation_metadata?.origin_action_id ?? null,
+      origin_action_id:   (() => {
+        if (bc.source_operation_metadata?.origin_action_id) return bc.source_operation_metadata.origin_action_id;
+        const primaryAtk = (bc.attackers ?? [])[0];
+        if (primaryAtk) {
+          for (const ar of (cache.attackReveals ?? [])) {
+            if (ar.attack_id && ar.player_id === primaryAtk.player_id &&
+                ar.origin_territory_id === primaryAtk.origin_territory_id &&
+                ar.target_territory_id === bc.target_territory_id) return ar.attack_id;
+          }
+        }
+        return null;
+      })(),
       origin_action_type: bc.source_operation_metadata?.origin_action_type ?? bc.battle_card_source ?? null,
       origin_phase:       bc.source_operation_metadata?.origin_phase ?? (bc.battle_card_source === 'military_attack' ? 'attack' : null),
       origin_round:       bc.source_operation_metadata?.origin_round ?? bc.round ?? null,
@@ -1146,7 +1183,7 @@ Deno.serve(async (req) => {
       // ── Battle resolution audit — uses cache, no extra queries ──────────
       let battleAudit = [];
       try {
-        battleAudit = getBattleResolutionAudit(allBattleCards, playerMap);
+        battleAudit = getBattleResolutionAudit(allBattleCards, playerMap, cache.attackReveals);
         diagnostics.battle_audit_generation = 'success';
       } catch (e) {
         diagnostics.battle_audit_generation = `error: ${e.message}`;
@@ -1489,6 +1526,55 @@ Deno.serve(async (req) => {
       if (diagnostics.delta_generation !== 'success' && diagnostics.delta_generation !== 'skipped_missing_snapshots') exportValidationStatus = 'failed';
       if (diagnostics.battle_audit_generation !== 'success' && exportValidationStatus === 'passed') exportValidationStatus = 'warning';
 
+      // ── snapshot_vs_delta_consistency: Σ territory troop changes = Σ player standing changes ──
+      // Validates that the sum of all territory troop deltas matches the sum of all player standing troop changes.
+      // A mismatch indicates stale player standings or incorrect snapshot territory data.
+      let snapshotVsDeltaConsistencyValid = true;
+      if (canDelta && beforeSnapshotData?.player_standings && afterSnapshotData?.player_standings) {
+        // Calculate total troop delta from territory states
+        const beforeTerritoryTroopMap = {};
+        for (const t of (beforeSnapshotData.territory_states ?? [])) {
+          beforeTerritoryTroopMap[t.territory_id] = t.troop_count ?? 0;
+        }
+        let totalTerritoryTroopDelta = 0;
+        for (const t of (afterSnapshotData.territory_states ?? [])) {
+          const before = beforeTerritoryTroopMap[t.territory_id] ?? 0;
+          totalTerritoryTroopDelta += (t.troop_count ?? 0) - before;
+        }
+
+        // Calculate total player standing troop delta
+        const beforeStandingMap = {};
+        for (const s of (beforeSnapshotData.player_standings ?? [])) {
+          beforeStandingMap[s.player_id] = s.troop_total ?? 0;
+        }
+        let totalStandingTroopDelta = 0;
+        for (const s of (afterSnapshotData.player_standings ?? [])) {
+          const before = beforeStandingMap[s.player_id] ?? 0;
+          totalStandingTroopDelta += (s.troop_total ?? 0) - before;
+        }
+
+        const consistencyDelta = Math.abs(totalTerritoryTroopDelta - totalStandingTroopDelta);
+        // Allow small rounding tolerance (±1 per player)
+        const tolerance = (afterSnapshotData.player_standings ?? []).length;
+        if (consistencyDelta > tolerance) {
+          snapshotVsDeltaConsistencyValid = false;
+          validationWarnings.push({
+            type: 'snapshot_vs_delta_consistency', severity: 'error',
+            code: 'snapshot_vs_delta_consistency',
+            message: `Territory troop delta (${totalTerritoryTroopDelta}) ≠ player standing troop delta (${totalStandingTroopDelta}). Difference: ${consistencyDelta}. Player standings may be stale.`,
+            territory_troop_delta: totalTerritoryTroopDelta,
+            standing_troop_delta: totalStandingTroopDelta,
+            discrepancy: consistencyDelta,
+          });
+          exportValidationStatus = 'failed';
+        }
+        diagnostics.snapshot_vs_delta_consistency = snapshotVsDeltaConsistencyValid
+          ? `passed (territory_delta=${totalTerritoryTroopDelta}, standing_delta=${totalStandingTroopDelta})`
+          : `failed (discrepancy=${consistencyDelta})`;
+      } else {
+        diagnostics.snapshot_vs_delta_consistency = 'skipped_missing_data';
+      }
+
       // Battle source metadata missing — check audit entries
       for (const b of battleAudit) {
         const hasSourceId = b.source_player_id != null;
@@ -1550,7 +1636,7 @@ Deno.serve(async (req) => {
           exported_by_user_id: user.id,
           exported_by_name: user.full_name ?? user.email,
           bundle_status: bundleStatus,
-          game_version: '5F.7',
+          game_version: '5H.1',
           active_win_conditions: campaign.settings?.active_win_conditions ?? [],
           phase_started_at:              phaseStartedAt,
           phase_completed_at:            phaseCompletedAt,
@@ -1689,6 +1775,9 @@ Deno.serve(async (req) => {
           // validation_details_present: bundle always has validation_details array
           const validationDetailsPresent = true; // always populated above
 
+          // snapshot_vs_delta_consistency_valid: no standing/territory mismatch
+          const snapshotVsDeltaConsistencyCheck = !validationWarnings.some(w => w.type === 'snapshot_vs_delta_consistency');
+
           return {
             battle_cards_valid: battleCardsValid,
             ownership_changes_valid: ownershipChangesValid,
@@ -1697,8 +1786,9 @@ Deno.serve(async (req) => {
             snapshot_integrity_valid: snapshotIntegrityValid,
             battle_source_metadata_valid: battleSourceMetadataValid,
             battle_lifecycle_valid: battleLifecycleValid,
+            snapshot_vs_delta_consistency_valid: snapshotVsDeltaConsistencyCheck,
             validation_details_present: validationDetailsPresent,
-            overall: battleCardsValid && ownershipChangesValid && troopCountsValid && resourceChangesValid && snapshotIntegrityValid && battleSourceMetadataValid && battleLifecycleValid,
+            overall: battleCardsValid && ownershipChangesValid && troopCountsValid && resourceChangesValid && snapshotIntegrityValid && battleSourceMetadataValid && battleLifecycleValid && snapshotVsDeltaConsistencyCheck,
           };
         })(),
       };
