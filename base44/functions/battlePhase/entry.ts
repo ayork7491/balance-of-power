@@ -173,6 +173,41 @@ function buildSides(card) {
  * If no before-snapshot exists, falls back to card.defender_troops with a
  * source='fallback_card_value' annotation so audits can detect stale data.
  */
+/**
+ * ensureBattlePhaseStartSnapshot — guarantees the battle phase_start snapshot
+ * exists before auto-resolve runs. Creates it from live TerritoryState if absent.
+ * Idempotent — safe to call multiple times per round.
+ */
+async function ensureBattlePhaseStartSnapshot(base44, campaign_id, round, players) {
+  const existing = await base44.asServiceRole.entities.PhaseSnapshot.filter({
+    campaign_id, round, phase: 'battle', snapshot_type: 'phase_start',
+  });
+  if (existing.length > 0) return existing[0];
+
+  console.log(`[ensureBattlePhaseStartSnapshot] No battle phase_start snapshot found for round ${round} — creating from live state.`);
+  const liveStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+  const activePlayers = (players ?? []).filter(p => !p.is_eliminated);
+  const snap = await base44.asServiceRole.entities.PhaseSnapshot.create({
+    campaign_id, round, phase: 'battle', snapshot_type: 'phase_start',
+    territory_states: liveStates.map(ts => ({
+      territory_id: ts.territory_id,
+      owner_player_id: ts.owner_player_id ?? null,
+      troop_count: ts.troop_count ?? 0,
+    })),
+    player_standings: activePlayers.map(p => {
+      const owned = liveStates.filter(ts => ts.owner_player_id === p.id);
+      return {
+        player_id: p.id, display_name: p.display_name,
+        territory_count: owned.length,
+        troop_total: owned.reduce((s, ts) => s + (ts.troop_count || 0), 0),
+        is_eliminated: p.is_eliminated ?? false,
+      };
+    }),
+  });
+  console.log(`[ensureBattlePhaseStartSnapshot] Created snapshot with ${liveStates.length} territories.`);
+  return snap;
+}
+
 async function getBattleTroopSources(base44, campaign_id, round, card) {
   const targetId = card.target_territory_id;
   const cardDefenderTroops = card.defender_troops ?? 0;
@@ -983,6 +1018,9 @@ Deno.serve(async (req) => {
     const now = new Date().toISOString();
     const isCarryover = ['active_carryover', 'pending_approval'].includes(card.status);
     const isNonMilitary = NON_MILITARY_TYPES.has(card.battle_type);
+
+    // Guarantee phase_start snapshot exists before reading troop sources
+    await ensureBattlePhaseStartSnapshot(base44Ref, campaign_idRef, roundRef, players);
 
     // Load authoritative troop sources from before-snapshot (shared helper)
     const { authoritative_defender_troops, combat_source_trace } = await getBattleTroopSources(base44Ref, campaign_idRef, roundRef, card);
@@ -1955,24 +1993,8 @@ Deno.serve(async (req) => {
     if (!isAdmin) return Response.json({ error: 'Admin only' }, { status: 403 });
     if (campaign.current_phase !== 'battle') return Response.json({ error: 'Not in battle phase' }, { status: 400 });
 
-    // ── Write authoritative before-snapshot for the battle phase ─────────────
-    const existingBeforeSnaps = await base44.asServiceRole.entities.PhaseSnapshot.filter({
-      campaign_id, round, phase: 'battle', snapshot_type: 'phase_start',
-    });
-    if (existingBeforeSnaps.length === 0) {
-      const beforeStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
-      const activePBefore = players.filter(p => !p.is_eliminated);
-      await base44.asServiceRole.entities.PhaseSnapshot.create({
-        campaign_id, round, phase: 'battle', snapshot_type: 'phase_start',
-        territory_states: beforeStates.map(ts => ({
-          territory_id: ts.territory_id, owner_player_id: ts.owner_player_id ?? null, troop_count: ts.troop_count ?? 0,
-        })),
-        player_standings: activePBefore.map(p => {
-          const owned = beforeStates.filter(ts => ts.owner_player_id === p.id);
-          return { player_id: p.id, display_name: p.display_name, territory_count: owned.length, troop_total: owned.reduce((s, ts) => s + (ts.troop_count || 0), 0), is_eliminated: p.is_eliminated ?? false };
-        }),
-      });
-    }
+    // ── Guarantee battle phase_start snapshot exists before any auto-resolve ──
+    await ensureBattlePhaseStartSnapshot(base44, campaign_id, round, players);
 
     const currentRoundCards = await base44.asServiceRole.entities.BattleCard.filter({ campaign_id, round });
 
