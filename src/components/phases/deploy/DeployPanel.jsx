@@ -98,7 +98,7 @@ export default function DeployPanel({
       {!deployStarted && (
         <div className="flex items-center gap-2 px-3 py-2 rounded border border-border bg-muted/20 text-xs text-muted-foreground">
           <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-          <span>Phase starting… Income is being calculated.</span>
+          <span>Waiting for admin to start the deploy phase…</span>
         </div>
       )}
 

@@ -962,11 +962,16 @@ Deno.serve(async (req) => {
     const allLocked = status.every(s => s.planning_locked);
     const lockedCount = status.filter(s => s.planning_locked).length;
 
+    // Check if deploy phase has actually been started (income records exist)
+    const deployIncomes = await base44.asServiceRole.entities.DeployIncome.filter({ campaign_id, round });
+    const phaseStarted = deployIncomes.length > 0;
+
     return Response.json({
       success: true,
       all_locked: allLocked,
       locked_count: lockedCount,
       total_players: activePlayers.length,
+      phase_started: phaseStarted,
       status,
     });
   }
