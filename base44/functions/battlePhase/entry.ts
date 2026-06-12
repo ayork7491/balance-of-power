@@ -936,22 +936,32 @@ Deno.serve(async (req) => {
     return { ok: false, error: 'Only campaign admins can act as other players' };
   }
 
-  async function applyAutoResolve(card, autoResult, base44Ref, campaign_idRef, roundRef) {
+  async function applyAutoResolve(card, _autoResult, base44Ref, campaign_idRef, roundRef) {
     const now = new Date().toISOString();
     const isCarryover = ['active_carryover', 'pending_approval'].includes(card.status);
     const isNonMilitary = NON_MILITARY_TYPES.has(card.battle_type);
 
     // Load authoritative troop sources from before-snapshot (shared helper)
-    const { combat_source_trace } = await getBattleTroopSources(base44Ref, campaign_idRef, roundRef, card);
+    const { authoritative_defender_troops, combat_source_trace } = await getBattleTroopSources(base44Ref, campaign_idRef, roundRef, card);
 
-    // Compute BOP survivor count before writing territory state
+    // Build authoritative card with snapshot defender troops so autoResolveBattle
+    // and all downstream helpers use the correct starting troop counts.
+    const authCard = {
+      ...card,
+      defender_troops: authoritative_defender_troops,
+      total_troops_in_battle: (card.total_attacking_troops ?? 0) + authoritative_defender_troops,
+    };
+
+    const autoResult = autoResolveBattle(authCard, campaign_idRef);
+
+    // Compute BOP survivor count using authoritative card
     let winnerBopSurvivors = null;
     if (autoResult.winner_player_id && !isNonMilitary) {
-      const committedBOP = getWinnerCommittedTroops(card, autoResult.winner_player_id);
-      if ((card.tabletop_size ?? 0) <= 0) {
+      const committedBOP = getWinnerCommittedTroops(authCard, autoResult.winner_player_id);
+      if ((authCard.tabletop_size ?? 0) <= 0) {
         winnerBopSurvivors = committedBOP;
       } else {
-        winnerBopSurvivors = scaleBackSurvivors(autoResult.surviving_tabletop_troops ?? 0, card.tabletop_size, card.total_troops_in_battle ?? 0, committedBOP);
+        winnerBopSurvivors = scaleBackSurvivors(autoResult.surviving_tabletop_troops ?? 0, authCard.tabletop_size, authCard.total_troops_in_battle ?? 0, committedBOP);
       }
     }
 
@@ -969,10 +979,10 @@ Deno.serve(async (req) => {
       result: enrichedResult,
     });
     if (isNonMilitary) {
-      await applyNonMilitaryConsequences(base44Ref, campaign_idRef, roundRef, card, autoResult);
+      await applyNonMilitaryConsequences(base44Ref, campaign_idRef, roundRef, authCard, autoResult);
     } else {
       const territoryStates = await base44Ref.asServiceRole.entities.TerritoryState.filter({ campaign_id: campaign_idRef });
-      const updates = await buildTerritoryUpdatesWithRecovery(base44Ref, campaign_idRef, roundRef, card, autoResult, territoryStates);
+      const updates = await buildTerritoryUpdatesWithRecovery(base44Ref, campaign_idRef, roundRef, authCard, autoResult, territoryStates);
       await applyTerritoryUpdates(base44Ref, updates);
     }
     // Persist combat_source_trace alongside applied_at
@@ -985,6 +995,7 @@ Deno.serve(async (req) => {
       battle_card_id: card.id, target_territory_id: card.target_territory_id,
       winner_player_id: autoResult.winner_player_id, winner_bop_survivors: winnerBopSurvivors,
       defender_troop_source: combat_source_trace.defender.source,
+      authoritative_defender_troops,
     }, true);
   }
 
@@ -1989,45 +2000,55 @@ Deno.serve(async (req) => {
         resultToApply = card.result;
         resolvedCount++;
       } else {
-        const autoResult = autoResolveBattle(card, campaign_id);
         const now = new Date().toISOString();
-        // Use shared authoritative troop source helper (same path as applyAutoResolve)
-        const { combat_source_trace: batchTrace } = await getBattleTroopSources(base44, campaign_id, round, card);
+        // Use shared authoritative troop source helper — build authCard before calling autoResolveBattle
+        const { authoritative_defender_troops: batchDefTroops, combat_source_trace: batchTrace } = await getBattleTroopSources(base44, campaign_id, round, card);
+        const batchAuthCard = {
+          ...card,
+          defender_troops: batchDefTroops,
+          total_troops_in_battle: (card.total_attacking_troops ?? 0) + batchDefTroops,
+        };
+        const autoResult = autoResolveBattle(batchAuthCard, campaign_id);
         let winnerBopSurvivors = null;
         const isNonMilBatch = NON_MILITARY_TYPES.has(card.battle_type);
         if (autoResult.winner_player_id && !isNonMilBatch) {
-          const committedBOP = getWinnerCommittedTroops(card, autoResult.winner_player_id);
-          winnerBopSurvivors = (card.tabletop_size ?? 0) <= 0
+          const committedBOP = getWinnerCommittedTroops(batchAuthCard, autoResult.winner_player_id);
+          winnerBopSurvivors = (batchAuthCard.tabletop_size ?? 0) <= 0
             ? committedBOP
-            : scaleBackSurvivors(autoResult.surviving_tabletop_troops ?? 0, card.tabletop_size, card.total_troops_in_battle ?? 0, committedBOP);
+            : scaleBackSurvivors(autoResult.surviving_tabletop_troops ?? 0, batchAuthCard.tabletop_size, batchAuthCard.total_troops_in_battle ?? 0, committedBOP);
         }
         const enrichedAutoResult = { ...autoResult, winner_bop_survivors: winnerBopSurvivors, submitted_by: 'system', submitted_at: now, applied_at: null, combat_source_trace: batchTrace };
         await base44.asServiceRole.entities.BattleCard.update(card.id, {
           status: 'auto_resolved', resolved_at: now,
           result: enrichedAutoResult,
         });
-        resultToApply = enrichedAutoResult;
+        resultToApply = { ...enrichedAutoResult, _authCard: batchAuthCard };
         autoResolvedCount++;
         await log(base44, campaign_id, round, 'battle_auto_resolved', null, {
           battle_card_id: card.id, winner_player_id: autoResult.winner_player_id,
           winner_bop_survivors: winnerBopSurvivors,
           defender_troop_source: batchTrace.defender.source,
+          authoritative_defender_troops: batchDefTroops,
         }, true);
       }
 
       const resultIsDS = card.battle_type === 'double_siege' && resultToApply?.double_siege_result?.defender_held === false;
       if (resultToApply?.winner_player_id || resultIsDS) {
         const wasCarryover = card.round < round;
+        // Use authCard if available (auto-resolve path), otherwise use original card
+        const cardForUpdates = resultToApply._authCard ?? card;
+        const cleanResult = { ...resultToApply };
+        delete cleanResult._authCard;
         if (NON_MILITARY_TYPES.has(card.battle_type)) {
-          await applyNonMilitaryConsequences(base44, campaign_id, round, card, resultToApply);
+          await applyNonMilitaryConsequences(base44, campaign_id, round, cardForUpdates, cleanResult);
         } else {
           const freshStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
-          await applyTerritoryUpdates(base44, await buildTerritoryUpdatesWithRecovery(base44, campaign_id, round, card, resultToApply, freshStates));
+          await applyTerritoryUpdates(base44, await buildTerritoryUpdatesWithRecovery(base44, campaign_id, round, cardForUpdates, cleanResult, freshStates));
         }
         await base44.asServiceRole.entities.BattleCard.update(card.id, {
           result_applied: true,
           ...(wasCarryover ? { resolved_in_battle_round: round } : {}),
-          result: { ...resultToApply, applied_at: new Date().toISOString() },
+          result: { ...cleanResult, applied_at: new Date().toISOString() },
         });
       }
     }
