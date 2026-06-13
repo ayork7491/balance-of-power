@@ -23,6 +23,7 @@ import { Check, ChevronRight, AlertCircle, Loader2, Clock } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import ObjectiveCardDisplay from './ObjectiveCardDisplay';
 import { OBJECTIVE_CATEGORY_CONFIG } from '@/config/objectiveDefinitions';
+import { usePlanningStagingStore } from '@/features/campaigns/deploy/usePlanningStagingStore';
 
 const MAX_HAND = 3;
 
@@ -36,24 +37,34 @@ export default function ObjectiveOpportunity({
   planningStatus,
   autoDealt,
 }) {
+  const round = planningStatus?.round ?? 1;
+  const stagingStore = usePlanningStagingStore({
+    campaignId,
+    playerId: actingPlayer?.id,
+    round,
+  });
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [selectedCard, setSelectedCard] = useState(null);
-  const [replaceCard, setReplaceCard] = useState(null);
-  const [stagingDone, setStagingDone] = useState(false);
+
+  // Initialize selectedCard/replaceCard from localStorage or server state
+  const localDiplo = stagingStore.getDiplomaticStaging();
+  const [selectedCard, setSelectedCard] = useState(localDiplo?.kept_card_id ?? null);
+  const [replaceCard, setReplaceCard] = useState(localDiplo?.replace_card_id ?? null);
+  const [stagingDone, setStagingDone] = useState(!!localDiplo?.kept_card_id);
 
   const hasPending = pendingDraw && pendingDraw.length > 0;
   const atCap = (currentHeld?.length ?? 0) >= MAX_HAND;
   const diplomaticLocked = planningStatus?.diplomatic?.is_locked ?? false;
-  const diplomaticStaged = planningStatus?.diplomatic?.diplomatic_staged;
+  const diplomaticStaged = localDiplo ?? planningStatus?.diplomatic?.diplomatic_staged;
 
-  // Pre-fill staged selection if already staged
+  // Pre-fill staged selection from server status if localStorage is empty
   useEffect(() => {
     if (diplomaticStaged?.kept_card_id && !selectedCard) {
       setSelectedCard(diplomaticStaged.kept_card_id);
       if (diplomaticStaged.replace_card_id) setReplaceCard(diplomaticStaged.replace_card_id);
     }
-  }, [diplomaticStaged?.kept_card_id]);
+  }, [diplomaticStaged?.kept_card_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-deal on mount if not dealt yet
   useEffect(() => {
@@ -86,8 +97,15 @@ export default function ObjectiveOpportunity({
       setError('You have 3 active objectives. Select one to replace.');
       return;
     }
-    setLoading(true);
     setError(null);
+
+    // Persist locally immediately — lock bar updates without server round-trip
+    const staging = { kept_card_id: selectedCard, replace_card_id: replaceCard ?? null };
+    stagingStore.setDiplomaticStaging(staging);
+    window.dispatchEvent(new Event('storage'));
+    setStagingDone(true);
+
+    // Also call server to persist (non-blocking)
     try {
       await base44.functions.invoke('planningPhase', {
         action: 'stageObjectiveKeep',
@@ -96,12 +114,10 @@ export default function ObjectiveOpportunity({
         kept_card_id: selectedCard,
         replace_card_id: replaceCard ?? undefined,
       });
-      setStagingDone(true);
       onResolved?.();
     } catch (err) {
-      setError(err?.response?.data?.error ?? 'Failed to stage objective selection.');
-    } finally {
-      setLoading(false);
+      // Non-fatal — local state is the source of truth; server will receive it at lock time
+      console.warn('[stageObjectiveKeep server]', err?.response?.data?.error ?? err?.message);
     }
   };
 

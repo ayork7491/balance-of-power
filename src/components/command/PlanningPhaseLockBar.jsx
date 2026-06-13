@@ -14,6 +14,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Lock, Unlock, Loader2, Shield, Coins, Feather, CheckCircle2, RefreshCw, Users } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
+import { usePlanningStagingStore } from '@/features/campaigns/deploy/usePlanningStagingStore';
 
 function PillarProgress({ icon: IconComp, label, staged, total, isLocked, color, note }) {
   const Icon = IconComp;
@@ -52,10 +53,17 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
   const [locking, setLocking] = useState(false);
   const [unlocking, setUnlocking] = useState(false);
   const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(false);
+  const [localTick, setLocalTick] = useState(0);
   const lockInFlightRef = useRef(false);
 
   const actingId = actingAsPlayerId ?? myPlayer?.id;
+  const round = campaign?.current_round ?? 1;
+
+  const stagingStore = usePlanningStagingStore({
+    campaignId: campaign?.id,
+    playerId: actingId,
+    round,
+  });
 
   const load = useCallback(async () => {
     if (!campaign?.id || !myPlayer?.id) return;
@@ -101,7 +109,6 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
         campaign_id: campaign.id,
         acting_as_player_id: actingAsPlayerId ?? undefined,
       });
-      setSuccess(false);
       await load();
       onLocked?.();
     } catch (e) {
@@ -118,12 +125,21 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
     setLocking(true);
     setError(null);
     try {
+      // Build payload from local staging store so the server gets the latest state
+      const localPlacements = stagingStore.getMilitaryPlacements();
+      const localEcon = stagingStore.getEconomicSelections();
+      const localDiplo = stagingStore.getDiplomaticStaging();
+
       await base44.functions.invoke('planningPhase', {
         action: 'lockPlanningPhase',
         campaign_id: campaign.id,
         acting_as_player_id: actingAsPlayerId ?? undefined,
+        // Pass local staging data so server has latest values even if stageActivations wasn't called
+        _local_economic_staged: localEcon ?? undefined,
+        _local_diplomatic_staged: localDiplo ?? undefined,
+        _local_military_placements: localPlacements ?? undefined,
       });
-      setSuccess(true);
+      stagingStore.clearAll();
       await load();
       onLocked?.();
     } catch (e) {
@@ -138,6 +154,14 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
   useEffect(() => {
     if (refreshTrigger > 0) load();
   }, [refreshTrigger]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Listen for localStorage changes (other tabs or within-page writes via storage event)
+  // Also re-render when localTick increments (triggered by in-page writes)
+  useEffect(() => {
+    const onStorage = () => setLocalTick(t => t + 1);
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
 
   // Show a minimal waiting state if deploy hasn't started yet (income not yet calculated)
   if (loading && !status) {
@@ -166,10 +190,34 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
   const lockedCount = playerLocks.filter(p => p.planning_locked).length;
   const totalPlayers = playerLocks.length;
 
-  // Determine readiness
-  const militaryReady = military?.is_locked || military?.ready;
-  const economicReady = economic?.is_locked || economic?.ready;
-  const diplomaticReady = !diplomatic?.required || diplomatic?.is_locked || diplomatic?.ready;
+  // ── Local-first overrides ──────────────────────────────────────────────────
+  // Read from localStorage so readiness updates immediately when the user stages
+  // changes in any pillar tab, without waiting for a server round-trip.
+  const localMilitaryPlacements = stagingStore.getMilitaryPlacements();
+  const localEconomicSelections = stagingStore.getEconomicSelections();
+  const localDiplomaticStaging  = stagingStore.getDiplomaticStaging();
+
+  const militaryTroopsTotal  = military?.troops_total ?? 0;
+  const militaryTroopsStaged = localMilitaryPlacements != null
+    ? Object.values(localMilitaryPlacements).reduce((s, n) => s + (parseInt(n) || 0), 0)
+    : (military?.troops_staged ?? 0);
+  const militaryLocalReady = militaryTroopsTotal > 0
+    ? militaryTroopsStaged >= militaryTroopsTotal
+    : false;
+
+  const economicLimit  = economic?.activations_limit ?? 0;
+  const economicStaged = localEconomicSelections != null
+    ? localEconomicSelections.length
+    : (economic?.activations_staged ?? 0);
+  const economicLocalReady = economicLimit === 0 || economicStaged >= economicLimit;
+
+  const diplomaticLocalStaged = localDiplomaticStaging ?? diplomatic?.diplomatic_staged ?? null;
+  const diplomaticLocalReady  = !diplomatic?.required || !!diplomaticLocalStaged;
+
+  // Determine readiness (server locked state takes priority; local state used when not yet locked)
+  const militaryReady   = military?.is_locked || militaryLocalReady;
+  const economicReady   = economic?.is_locked || economicLocalReady;
+  const diplomaticReady = diplomatic?.is_locked || diplomaticLocalReady;
   const allReady = militaryReady && economicReady && diplomaticReady;
 
   return (
@@ -178,31 +226,31 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
       <PillarProgress
         icon={Shield}
         label="Military"
-        staged={military?.troops_staged ?? 0}
-        total={military?.troops_total ?? 0}
+        staged={militaryTroopsStaged}
+        total={militaryTroopsTotal}
         isLocked={military?.is_locked}
         color="text-red-400"
-        note={`${military?.troops_staged ?? 0} / ${military?.troops_total ?? 0} troops`}
+        note={`${militaryTroopsStaged} / ${militaryTroopsTotal} troops`}
       />
       <PillarProgress
         icon={Coins}
         label="Economic"
-        staged={economic?.activations_staged ?? 0}
-        total={economic?.activations_limit ?? 0}
+        staged={economicStaged}
+        total={economicLimit}
         isLocked={economic?.is_locked}
         color="text-amber-400"
-        note={`${economic?.activations_staged ?? 0} / ${economic?.activations_limit ?? 0} activations`}
+        note={`${economicStaged} / ${economicLimit} activations`}
       />
       <PillarProgress
         icon={Feather}
         label="Diplomatic"
-        staged={diplomatic?.diplomatic_staged ? 1 : 0}
+        staged={diplomaticLocalStaged ? 1 : 0}
         total={diplomatic?.required ? 1 : 0}
         isLocked={diplomatic?.is_locked}
         color="text-purple-400"
         note={
           !diplomatic?.required ? 'No action required' :
-          diplomatic?.diplomatic_staged ? 'Objective staged' :
+          diplomaticLocalStaged ? 'Objective staged' :
           diplomatic?.has_pending_draw ? 'Select objective' :
           'Awaiting deal'
         }

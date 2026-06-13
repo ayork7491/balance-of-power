@@ -597,8 +597,24 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Not in deploy phase' }, { status: 400 });
     }
 
+    // Accept local-first payloads from the UI staging store.
+    // These are used when the player changed state locally but didn't make a separate
+    // stageActivations / stageObjectiveKeep server call before locking.
+    const localEconomicStaged  = body._local_economic_staged  ?? null;
+    const localDiplomaticStaged = body._local_diplomatic_staged ?? null;
+    const localMilitaryPlacements = body._local_military_placements ?? null;
+
     const staging = await getStagingDecision(base44, campaign_id, actingPlayer.id, round);
     const stagingData = staging?.data ?? emptyStaging();
+
+    // Merge local-first economic staging into stagingData if provided and not already server-staged
+    if (localEconomicStaged && !stagingData.economic_locked && (!stagingData.economic_staged || stagingData.economic_staged.length === 0)) {
+      stagingData.economic_staged = localEconomicStaged;
+    }
+    // Merge local-first diplomatic staging into stagingData if provided and not already staged
+    if (localDiplomaticStaged?.kept_card_id && !stagingData.diplomatic_locked && !stagingData.diplomatic_staged) {
+      stagingData.diplomatic_staged = localDiplomaticStaged;
+    }
 
     // Idempotency: already locked
     if (stagingData.locked_at) {
@@ -621,7 +637,8 @@ Deno.serve(async (req) => {
       // Lock deploy via direct entity update (same logic as deployPhase/lockDeploy)
       const deployIncome = await getDeployIncome(base44, campaign_id, actingPlayer.id, round);
       const allowedTroops = deployIncome?.total ?? 0;
-      const placements = deployDecision.data?.placements ?? {};
+      // Use local-first placements if provided by the UI (latest state); fall back to server decision
+      const placements = localMilitaryPlacements ?? deployDecision.data?.placements ?? {};
       const totalPlaced = Object.values(placements).reduce((s, n) => s + (n || 0), 0);
 
       // Auto-fill remaining if not all placed

@@ -15,9 +15,10 @@
  */
 import { useState, useEffect, useCallback } from 'react';
 import { base44 } from '@/api/base44Client';
-import { Loader2, RefreshCw, Package, CheckCircle2 } from 'lucide-react';
+import { Loader2, RefreshCw, CheckCircle2, Package } from 'lucide-react';
 import { RESOURCE_KEYS, RESOURCE_CONFIG, calcActivationLimit, sumStorage } from '@/config/resourceConfig';
 import { SC_TERRITORY_BY_ID } from '@/shared/maps/shatteredCrownConfig';
+import { usePlanningStagingStore } from '@/features/campaigns/deploy/usePlanningStagingStore';
 
 function ResourceBadge({ type, amount }) {
   const cfg = RESOURCE_CONFIG[type] ?? { label: type, icon: '?', color: 'text-foreground', bg: 'bg-muted/20', border: 'border-border' };
@@ -43,13 +44,23 @@ export default function ResourceStagingPanel({ campaign, myPlayer, mapDef, actin
   // actingPlayerId is the canonical player for ALL operations in this panel.
   // Never use myPlayer.id directly — it may differ from actingAsPlayerId in test/admin mode.
   const actingPlayerId = actingAsPlayerId ?? myPlayer?.id;
+  const round = campaign?.current_round ?? 1;
+
+  const stagingStore = usePlanningStagingStore({
+    campaignId: campaign?.id,
+    playerId: actingPlayerId,
+    round,
+  });
 
   const [state, setState] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [selected, setSelected] = useState(new Set());
-  const [staging, setStaging] = useState(false);
-  const [stagingResult, setStagingResult] = useState(null);
+  const [selected, setSelected] = useState(() => {
+    // Initialize from localStorage on mount
+    const local = stagingStore.getEconomicSelections();
+    return new Set(local ?? []);
+  });
+
 
   const isLocked = planningStatus?.economic?.is_locked ?? false;
 
@@ -71,22 +82,25 @@ export default function ResourceStagingPanel({ campaign, myPlayer, mapDef, actin
     }
   }, [campaign?.id, actingPlayerId]);
 
-  // Reset selection whenever the acting player changes
+  // Reset selection whenever the acting player changes — reload from their localStorage
   useEffect(() => {
-    setSelected(new Set());
-    setStagingResult(null);
-  }, [actingPlayerId]);
+    const local = stagingStore.getEconomicSelections();
+    setSelected(new Set(local ?? []));
+  }, [actingPlayerId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load(); }, [load]);
 
-  // Sync staged selections from planningStatus only if it belongs to the same acting player
+  // Sync staged selections from planningStatus only if localStorage is empty and status belongs to acting player
   useEffect(() => {
     const stagedIds = planningStatus?.economic?.staged_territory_ids;
     const statusPlayerId = planningStatus?.player_id;
     if (stagedIds && stagedIds.length > 0 && statusPlayerId === actingPlayerId) {
-      setSelected(new Set(stagedIds));
+      const local = stagingStore.getEconomicSelections();
+      if (!local || local.length === 0) {
+        setSelected(new Set(stagedIds));
+      }
     }
-  }, [planningStatus?.economic?.staged_territory_ids, planningStatus?.player_id, actingPlayerId]);
+  }, [planningStatus?.economic?.staged_territory_ids, planningStatus?.player_id, actingPlayerId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const territories = state?.territories ?? [];
   const hubCount = state?.hub_count ?? territories.filter(t => t.has_resource_hub).length;
@@ -102,30 +116,16 @@ export default function ResourceStagingPanel({ campaign, myPlayer, mapDef, actin
         if (next.size >= activationLimit) return prev;
         next.add(tid);
       }
+      // Persist to localStorage immediately so PlanningPhaseLockBar updates reactively
+      stagingStore.setEconomicSelections([...next]);
+      // Dispatch storage event so other components (PlanningPhaseLockBar) re-render
+      window.dispatchEvent(new Event('storage'));
+      onStaged?.([...next]);
       return next;
     });
   };
 
-  const handleStage = async () => {
-    if (staging || isLocked) return;
-    setStaging(true);
-    setStagingResult(null);
-    setError(null);
-    try {
-      const res = await base44.functions.invoke('planningPhase', {
-        action: 'stageActivations',
-        campaign_id: campaign.id,
-        territory_ids: [...selected],
-        acting_as_player_id: actingPlayerId,
-      });
-      setStagingResult(res.data);
-      onStaged?.([...selected]);
-    } catch (e) {
-      setError(e?.response?.data?.error ?? 'Failed to stage activations');
-    } finally {
-      setStaging(false);
-    }
-  };
+
 
   const aggregateTotals = territories.reduce((acc, t) => {
     for (const r of RESOURCE_KEYS) {
@@ -199,10 +199,10 @@ export default function ResourceStagingPanel({ campaign, myPlayer, mapDef, actin
                 Resources generate when you lock in Planning Phase.
               </p>
 
-              {(stagingResult || planningStatus?.economic?.staged_territory_ids?.length > 0) && !isLocked && (
+              {selected.size > 0 && !isLocked && (
                 <div className="flex items-center gap-1.5 text-[10px] text-amber-400">
                   <CheckCircle2 className="w-3 h-3" />
-                  {selected.size} activation{selected.size !== 1 ? 's' : ''} staged. Lock in Planning Phase to commit.
+                  {selected.size} activation{selected.size !== 1 ? 's' : ''} staged locally. Lock in Planning Phase to commit.
                 </div>
               )}
 
@@ -260,20 +260,11 @@ export default function ResourceStagingPanel({ campaign, myPlayer, mapDef, actin
                 })}
               </div>
 
-              {/* Stage button */}
               {!isLocked && (
-                <button
-                  onClick={handleStage}
-                  disabled={selected.size === 0 || staging}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded border border-amber-400/40 bg-amber-400/10 text-amber-400 text-xs font-display tracking-widest uppercase hover:brightness-110 transition-all disabled:opacity-40"
-                >
-                  {staging ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Package className="w-3.5 h-3.5" />}
-                  Stage {selected.size} Activation{selected.size !== 1 ? 's' : ''}
-                </button>
+                <p className="text-[10px] text-muted-foreground text-center italic">
+                  Selections are saved automatically. Resources generate when Planning Phase is locked.
+                </p>
               )}
-              <p className="text-[10px] text-muted-foreground text-center">
-                Resources generate into territory storage when Planning Phase is locked.
-              </p>
             </div>
           ) : (
             <p className="text-xs text-muted-foreground">You own no territories.</p>
