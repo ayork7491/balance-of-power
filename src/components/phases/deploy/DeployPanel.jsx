@@ -47,8 +47,8 @@ export default function DeployPanel({
 
   const {
     placements, decision, income, troopsRemaining,
-    loading, submitting, saved, error,
-    handleChange, handleSave, handleLock,
+    loading, submitting, error,
+    handleChange, handleLock,
   } = useDeployPhase({ campaign, myPlayer, myTerritories });
   
   const { lockStatus, reload: reloadLocks } = useDeployPhaseLockStatus({
@@ -178,19 +178,7 @@ export default function DeployPanel({
 
       {error && <p className="text-xs text-destructive">{error}</p>}
 
-      {/* Save staged deployment — lock happens via Planning Phase lock bar */}
-      {deployStarted && !isLocked && (
-        <div className="flex gap-2">
-          <button
-            onClick={async () => { await handleSave(); onStagingChanged?.(); }}
-            disabled={submitting || troopsRemaining < 0}
-            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded border border-primary/40 text-primary text-xs font-display tracking-wider uppercase hover:bg-primary/10 transition-colors disabled:opacity-40"
-          >
-            {submitting && !saved ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-            {saved ? '✓ Saved' : 'Stage Deployment'}
-          </button>
-        </div>
-      )}
+
 
       {deployStarted && !isLocked && troopsRemaining !== 0 && (
         <p className="text-xs text-muted-foreground">

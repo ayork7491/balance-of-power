@@ -23,9 +23,9 @@ export function useDeployPhase({ campaign, myPlayer, myTerritories }) {
   const [loading, setLoading]       = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError]           = useState(null);
-  const [saved, setSaved]           = useState(false);
 
   const round = campaign?.current_round ?? 1;
+  const storageKey = `deploy_staging_${campaign?.id}_${actingPlayer?.id}`;
 
   const totalPlaced = useMemo(
     () => Object.values(placements).reduce((s, n) => s + (parseInt(n) || 0), 0),
@@ -57,12 +57,13 @@ export function useDeployPhase({ campaign, myPlayer, myTerritories }) {
       setDecision(d);
       setIncome(inc);
 
-      if (d?.data?.placements && Object.keys(d.data.placements).length > 0) {
-        // Restore saved placements keyed by territory_id — exact mapping preserved.
+      // Local-first: prefer localStorage staged changes over server state
+      const local = localStorage.getItem(storageKey);
+      if (local) {
+        setPlacements(JSON.parse(local));
+      } else if (d?.data?.placements && Object.keys(d.data.placements).length > 0) {
         setPlacements({ ...d.data.placements });
       } else {
-        // No saved placements yet: initialise zero-map from acting player's territories
-        // so the UI shows their territories (not the real user's when acting as someone else).
         const init = {};
         for (const t of (myTerritories ?? [])) init[t.territory_id] = 0;
         setPlacements(init);
@@ -70,7 +71,7 @@ export function useDeployPhase({ campaign, myPlayer, myTerritories }) {
     } finally {
       setLoading(false);
     }
-  }, [campaign?.id, myPlayer?.id, actingPlayer?.id, round, myTerritories]);
+  }, [campaign?.id, myPlayer?.id, actingPlayer?.id, round, myTerritories, storageKey]);
 
   useEffect(() => { reload(); }, [reload]);
 
@@ -79,33 +80,12 @@ export function useDeployPhase({ campaign, myPlayer, myTerritories }) {
 
   const handleChange = useCallback((tid, value) => {
     const n = Math.max(0, parseInt(value) || 0);
-    setPlacements(prev => ({ ...prev, [tid]: n }));
-    setSaved(false);
-  }, []);
-
-  const handleSave = useCallback(async () => {
-    if (decision?.is_locked) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      const clean = {};
-      for (const [tid, v] of Object.entries(placements)) {
-        clean[tid] = parseInt(v) || 0;
-      }
-      await base44.functions.invoke('deployPhase', {
-        action:      'stageTroops',
-        campaign_id: campaign.id,
-        placements:  clean,
-        ...getPayload(),
-      });
-      setSaved(true);
-      await reload();
-    } catch (err) {
-      setError(err?.response?.data?.error || 'Failed to save placements.');
-    } finally {
-      setSubmitting(false);
-    }
-  }, [decision?.is_locked, placements, campaign?.id, reload, getPayload]);
+    setPlacements(prev => {
+      const next = { ...prev, [tid]: n };
+      localStorage.setItem(storageKey, JSON.stringify(next));
+      return next;
+    });
+  }, [storageKey]);
 
   const handleLock = useCallback(async (onPhaseChanged, actingAsPlayerId = null) => {
     setSubmitting(true);
@@ -128,6 +108,7 @@ export function useDeployPhase({ campaign, myPlayer, myTerritories }) {
         placements:  clean,
         ...(actingAsPlayerId ? { acting_as_player_id: actingAsPlayerId } : getPayload()),
       });
+      localStorage.removeItem(storageKey);
       await reload();
       onPhaseChanged?.();
     } catch (err) {
@@ -139,7 +120,7 @@ export function useDeployPhase({ campaign, myPlayer, myTerritories }) {
 
   return {
     placements, decision, income, troopsRemaining,
-    loading, submitting, saved, error,
-    handleChange, handleSave, handleLock, reload,
+    loading, submitting, error,
+    handleChange, handleLock, reload,
   };
 }
