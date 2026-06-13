@@ -288,15 +288,53 @@ Deno.serve(async (req) => {
   // ── ACTION: addInfluence ───────────────────────────────────────────────────
   // Direct influence: creates BOTH Permanent (territory) and Spendable (region).
   if (action === 'addInfluence') {
-    const { territory_id, amount } = body;
+    const { territory_id, amount, submission_id: influenceSubmissionId } = body;
     if (!territory_id) return Response.json({ error: 'territory_id is required' }, { status: 400 });
     if (!amount || typeof amount !== 'number' || amount <= 0) {
       return Response.json({ error: 'amount must be a positive number' }, { status: 400 });
     }
 
+    // ── Idempotency: submission_id dedup via SetupLog ────────────────────────
+    if (influenceSubmissionId) {
+      const existingLogs = await base44.asServiceRole.entities.SetupLog.filter({
+        campaign_id, phase: 'influence', round, player_id: actingPlayer.id,
+        event_type: 'influence_added',
+      });
+      const dup = existingLogs.find(l => l.payload?.submission_id === influenceSubmissionId);
+      if (dup) {
+        return Response.json({
+          success: true,
+          player_id: actingPlayer.id,
+          territory_id: dup.payload?.territory_id ?? territory_id,
+          amount_added: dup.payload?.amount ?? amount,
+          permanent_new_total: dup.payload?.permanent_new_total ?? null,
+          spendable_new_total: dup.payload?.spendable_new_total ?? null,
+          region_id: dup.payload?.region_id ?? null,
+          idempotent: true,
+          duplicate_detected: true,
+          duplicate_of: dup.id,
+          processed_once: true,
+        });
+      }
+    }
+
     const result = await addDirectInfluence(
       base44, campaign_id, actingPlayer.id, territory_id, amount, round, 'direct'
     );
+
+    // Log for idempotency tracking
+    await base44.asServiceRole.entities.SetupLog.create({
+      campaign_id, phase: 'influence', round,
+      event_type: 'influence_added',
+      player_id: actingPlayer.id,
+      payload: {
+        territory_id, amount, submission_id: influenceSubmissionId ?? null,
+        permanent_new_total: result.permanent,
+        spendable_new_total: result.spendable,
+        region_id: result.region_id,
+      },
+      is_public: false,
+    });
 
     return Response.json({
       success: true,
@@ -313,6 +351,21 @@ Deno.serve(async (req) => {
   // Finds all active Monument buildings, generates +1 Permanent + +1 Spendable per monument.
   if (action === 'runMonumentGeneration') {
     if (!isAdmin) return Response.json({ error: 'Admin only action' }, { status: 403 });
+
+    // ── Idempotency: once per round ──────────────────────────────────────────
+    const existingMonumentLogs = await base44.asServiceRole.entities.SetupLog.filter({
+      campaign_id, phase: 'influence', round, event_type: 'monument_generation_complete',
+    });
+    if (existingMonumentLogs.length > 0 && !body.force) {
+      return Response.json({
+        success: true,
+        monuments_processed: existingMonumentLogs[0]?.payload?.monuments_processed ?? 0,
+        idempotent: true,
+        duplicate_detected: true,
+        processed_once: true,
+        message: 'Monument generation already ran this round.',
+      });
+    }
 
     const monuments = await base44.asServiceRole.entities.TerritoryBuilding.filter({
       campaign_id,
@@ -333,6 +386,14 @@ Deno.serve(async (req) => {
         spendable_new_total: result.spendable,
       });
     }
+
+    await base44.asServiceRole.entities.SetupLog.create({
+      campaign_id, phase: 'influence', round,
+      event_type: 'monument_generation_complete',
+      player_id: null,
+      payload: { monuments_processed: results.length },
+      is_public: false,
+    });
 
     return Response.json({
       success: true,
@@ -389,6 +450,21 @@ Deno.serve(async (req) => {
   if (action === 'runRoundInfluence') {
     if (!isAdmin) return Response.json({ error: 'Admin only action' }, { status: 403 });
 
+    // ── Idempotency: once per round ──────────────────────────────────────────
+    const existingRoundLogs = await base44.asServiceRole.entities.SetupLog.filter({
+      campaign_id, phase: 'influence', round, event_type: 'round_influence_complete',
+    });
+    if (existingRoundLogs.length > 0 && !body.force) {
+      return Response.json({
+        success: true,
+        round,
+        idempotent: true,
+        duplicate_detected: true,
+        processed_once: true,
+        message: 'Round influence already ran this round.',
+      });
+    }
+
     // 1. Monument generation (direct: Permanent + Spendable)
     const monuments = await base44.asServiceRole.entities.TerritoryBuilding.filter({
       campaign_id,
@@ -426,6 +502,14 @@ Deno.serve(async (req) => {
       );
       spreadResults.push({ player_id: playerId, territory_id: territoryId, delta, new_total: newAmount });
     }
+
+    await base44.asServiceRole.entities.SetupLog.create({
+      campaign_id, phase: 'influence', round,
+      event_type: 'round_influence_complete',
+      player_id: null,
+      payload: { monuments_processed: monumentResults.length, spread_territories_affected: spreadResults.length },
+      is_public: false,
+    });
 
     return Response.json({
       success: true,

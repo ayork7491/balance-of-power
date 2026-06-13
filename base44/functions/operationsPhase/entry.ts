@@ -241,6 +241,8 @@ Deno.serve(async (req) => {
       gold_transfer_amount,
       // manufactured crisis
       territory_b_id,
+      // idempotency
+      submission_id,
     } = body;
 
     if (!operation_type) {
@@ -271,6 +273,32 @@ Deno.serve(async (req) => {
     const territoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
     const targetState = territoryStates.find(s => s.territory_id === target_territory_id);
     const avgSize = campaign.settings?.average_battle_size ?? DEFAULT_AVG_BATTLE_SIZE;
+
+    // ── Idempotency: submission_id dedup (before spending any resources) ──────
+    if (submission_id) {
+      const existingCards = await base44.asServiceRole.entities.BattleCard.filter({
+        campaign_id, round, source_player_id: actingPlayer.id,
+      });
+      const dup = existingCards.find(c =>
+        c.source_operation_metadata?.submission_id === submission_id &&
+        c.battle_card_source !== 'military_attack'
+      );
+      if (dup) {
+        return Response.json({
+          success: true,
+          battle_card_id: dup.id,
+          operation_type: dup.battle_card_source,
+          battle_type: dup.battle_type,
+          target_territory_id: dup.target_territory_id,
+          tabletop_size: dup.tabletop_size,
+          idempotent: true,
+          duplicate_detected: true,
+          duplicate_of: dup.id,
+          processed_once: true,
+          message: 'Operation already submitted this round.',
+        });
+      }
+    }
 
     // ── DIPLOMATIC OPERATIONS ─────────────────────────────────────────────────
     if (DIPLOMATIC_OPS.has(operation_type)) {
@@ -313,6 +341,7 @@ Deno.serve(async (req) => {
         garrison_before_battle: garrisonTroops,
         influence_reward_target: region_id,
         objective_hook: operation_type,
+        submission_id: submission_id ?? null,
       };
 
       // Operation-specific metadata
@@ -414,6 +443,7 @@ Deno.serve(async (req) => {
         invested_gold: cost,
         resource_type: resource,
         objective_hook: operation_type,
+        submission_id: submission_id ?? null,
       };
 
       if (operation_type === 'supply_route_establishment') {

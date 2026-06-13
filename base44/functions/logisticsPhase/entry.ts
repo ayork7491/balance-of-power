@@ -275,7 +275,7 @@ Deno.serve(async (req) => {
 
   // ── ACTION: createRoute ────────────────────────────────────────────────────
   if (action === 'createRoute') {
-    const { hub_territory_id, destination_territory_id } = body;
+    const { hub_territory_id, destination_territory_id, submission_id: routeSubmissionId } = body;
     if (!hub_territory_id || !destination_territory_id) {
       return Response.json({ error: 'hub_territory_id and destination_territory_id are required' }, { status: 400 });
     }
@@ -310,7 +310,27 @@ Deno.serve(async (req) => {
       return Response.json({ error: `Resource Hub has no remaining route capacity. (${activeCount}/${BASE_ROUTE_CAPACITY} used)` }, { status: 400 });
     }
 
-    // Check duplicate route
+    // ── Idempotency: submission_id dedup ────────────────────────────────────
+    if (routeSubmissionId) {
+      const subDup = existingRoutes.find(r => r.metadata_json?.submission_id === routeSubmissionId);
+      if (subDup) {
+        return Response.json({
+          success: true,
+          route_id: subDup.id,
+          hub_territory_id,
+          destination_territory_id: subDup.source_territory_id,
+          path: subDup.metadata_json?.path ?? [],
+          distance: subDup.range_distance,
+          resource_type: subDup.resource_type,
+          idempotent: true,
+          duplicate_detected: true,
+          duplicate_of: subDup.id,
+          processed_once: true,
+        });
+      }
+    }
+
+    // Check duplicate route (same hub + destination regardless of submission_id)
     const duplicate = existingRoutes.find(r => r.source_territory_id === destination_territory_id && r.route_status === 'active');
     if (duplicate) {
       return Response.json({ error: 'A route to that destination already exists from this hub.' }, { status: 400 });
@@ -343,6 +363,7 @@ Deno.serve(async (req) => {
         path: pathResult.path,
         path_length: pathResult.distance,
         created_at: new Date().toISOString(),
+        submission_id: routeSubmissionId ?? null,
       },
     });
 
@@ -414,6 +435,30 @@ Deno.serve(async (req) => {
   // Extracts resources from destination territories via active routes into the owner's ledger.
   // Resources in warehoused territories are collected but flagged as protected (no effect yet).
   if (action === 'collectRouteResources') {
+    // ── Idempotency: prevent double-collection in the same round ─────────────
+    const { submission_id: collectSubmissionId } = body;
+    const existingCollectionLogs = await base44.asServiceRole.entities.SetupLog.filter({
+      campaign_id, phase: 'logistics', round, player_id: actingPlayer.id,
+      event_type: 'route_resources_collected',
+    });
+    if (existingCollectionLogs.length > 0) {
+      // Also check submission_id match if provided
+      if (!collectSubmissionId || existingCollectionLogs.some(l => l.payload?.submission_id === collectSubmissionId)) {
+        const last = existingCollectionLogs[existingCollectionLogs.length - 1];
+        return Response.json({
+          success: true,
+          collected: last.payload?.collected ?? {},
+          total_collected: last.payload?.total_collected ?? 0,
+          route_results: last.payload?.route_results ?? [],
+          routes_processed: last.payload?.active_routes ?? 0,
+          idempotent: true,
+          duplicate_detected: true,
+          processed_once: true,
+          message: 'Resources already collected this round.',
+        });
+      }
+    }
+
     const allRoutes = await base44.asServiceRole.entities.SupplyRoute.filter({
       campaign_id, owner_player_id: actingPlayer.id,
     });
@@ -498,6 +543,7 @@ Deno.serve(async (req) => {
       collected,
       total_collected: totalCollected,
       route_results: routeResults,
+      submission_id: collectSubmissionId ?? null,
     });
 
     return Response.json({
