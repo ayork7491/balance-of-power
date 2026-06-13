@@ -19,7 +19,7 @@
  *   autoDealt          — true if autoDealObjectives has already been called
  */
 import { useState, useEffect } from 'react';
-import { Check, ChevronRight, AlertCircle, Loader2, Clock } from 'lucide-react';
+import { Check, AlertCircle, Loader2, Clock } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import ObjectiveCardDisplay from './ObjectiveCardDisplay';
 import { OBJECTIVE_CATEGORY_CONFIG } from '@/config/objectiveDefinitions';
@@ -91,33 +91,31 @@ export default function ObjectiveOpportunity({
     deal();
   }, [campaignId, actingPlayer?.id, autoDealt, hasPending, diplomaticLocked]);
 
-  const handleStage = async () => {
-    if (!selectedCard) return;
-    if (atCap && !replaceCard) {
-      setError('You have 3 active objectives. Select one to replace.');
-      return;
-    }
+  // Auto-stage to localStorage whenever selectedCard changes — mirrors economic pillar behaviour
+  const handleSelectCard = (cid) => {
+    const next = selectedCard === cid ? null : cid;
+    setSelectedCard(next);
     setError(null);
+    if (next) {
+      const staging = { kept_card_id: next, replace_card_id: replaceCard ?? null };
+      stagingStore.setDiplomaticStaging(staging);
+      window.dispatchEvent(new Event('storage'));
+      setStagingDone(true);
+    } else {
+      // Deselected — clear staging
+      stagingStore.setDiplomaticStaging(null);
+      window.dispatchEvent(new Event('storage'));
+      setStagingDone(false);
+    }
+  };
 
-    // Persist locally immediately — lock bar updates without server round-trip
-    const staging = { kept_card_id: selectedCard, replace_card_id: replaceCard ?? null };
-    stagingStore.setDiplomaticStaging(staging);
-    window.dispatchEvent(new Event('storage'));
-    setStagingDone(true);
-
-    // Also call server to persist (non-blocking)
-    try {
-      await base44.functions.invoke('planningPhase', {
-        action: 'stageObjectiveKeep',
-        campaign_id: campaignId,
-        acting_as_player_id: actingPlayer?.id,
-        kept_card_id: selectedCard,
-        replace_card_id: replaceCard ?? undefined,
-      });
-      onResolved?.();
-    } catch (err) {
-      // Non-fatal — local state is the source of truth; server will receive it at lock time
-      console.warn('[stageObjectiveKeep server]', err?.response?.data?.error ?? err?.message);
+  const handleSelectReplace = (cid) => {
+    const next = replaceCard === cid ? null : cid;
+    setReplaceCard(next);
+    if (selectedCard) {
+      const staging = { kept_card_id: selectedCard, replace_card_id: next ?? null };
+      stagingStore.setDiplomaticStaging(staging);
+      window.dispatchEvent(new Event('storage'));
     }
   };
 
@@ -187,7 +185,7 @@ export default function ObjectiveOpportunity({
               cardDef={def}
               variant="choice"
               selected={selectedCard === cid}
-              onSelect={() => setSelectedCard(selectedCard === cid ? null : cid)}
+              onSelect={() => handleSelectCard(cid)}
             />
           ) : (
             <div key={cid} className="text-xs text-muted-foreground px-2 py-1.5 rounded border border-border">{cid}</div>
@@ -207,7 +205,7 @@ export default function ObjectiveOpportunity({
               return (
                 <button
                   key={cid}
-                  onClick={() => setReplaceCard(replaceCard === cid ? null : cid)}
+                  onClick={() => handleSelectReplace(cid)}
                   className={[
                     'w-full text-left px-2.5 py-1.5 rounded border text-xs flex items-center justify-between transition-all',
                     replaceCard === cid
@@ -230,14 +228,9 @@ export default function ObjectiveOpportunity({
         </div>
       )}
 
-      <button
-        onClick={handleStage}
-        disabled={!selectedCard || loading || (atCap && !replaceCard)}
-        className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-purple-500/40 bg-purple-500/10 text-purple-400 text-xs font-display tracking-wider uppercase disabled:opacity-40 hover:brightness-110 transition-all"
-      >
-        {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ChevronRight className="w-3.5 h-3.5" />}
-        Stage Selection
-      </button>
+      {atCap && !replaceCard && selectedCard && (
+        <p className="text-[10px] text-amber-400">Select an objective above to replace.</p>
+      )}
       <p className="text-[10px] text-muted-foreground text-center">
         Selection will commit when you lock in Planning Phase.
       </p>

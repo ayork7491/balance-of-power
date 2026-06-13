@@ -83,6 +83,7 @@ export function useDeployPhase({ campaign, myPlayer, myTerritories }) {
     setPlacements(prev => {
       const next = { ...prev, [tid]: n };
       localStorage.setItem(storageKey, JSON.stringify(next));
+      window.dispatchEvent(new Event('storage'));
       return next;
     });
   }, [storageKey]);
