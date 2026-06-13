@@ -184,27 +184,88 @@ async function ensureBattlePhaseStartSnapshot(base44, campaign_id, round, player
   });
   if (existing.length > 0) return existing[0];
 
-  console.log(`[ensureBattlePhaseStartSnapshot] No battle phase_start snapshot found for round ${round} — creating from live state.`);
-  const liveStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+  console.log(`[ensureBattlePhaseStartSnapshot] No battle phase_start snapshot found for round ${round} — creating full v2 snapshot from live state.`);
+
+  // Fetch all enriched collections in parallel to produce a complete v2 snapshot.
+  // Without these, delta generation in exportPhaseAudit produces false-positive
+  // resource/influence/building deltas because before-snapshot fields default to []/{}
+  // while the after-snapshot (written by processPhaseEnd) is fully populated.
+  const [liveStates, liveInfluence, livePools, liveBuildings, liveRoutes, liveObjectives, liveVictory] = await Promise.all([
+    base44.asServiceRole.entities.TerritoryState.filter({ campaign_id }),
+    base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id }),
+    base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id }),
+    base44.asServiceRole.entities.TerritoryBuilding.filter({ campaign_id }),
+    base44.asServiceRole.entities.SupplyRoute.filter({ campaign_id }),
+    base44.asServiceRole.entities.PlayerInfluenceLedger.filter({ campaign_id }),
+    base44.asServiceRole.entities.VictoryTracker.filter({ campaign_id }),
+  ]);
+
   const activePlayers = (players ?? []).filter(p => !p.is_eliminated);
   const snap = await base44.asServiceRole.entities.PhaseSnapshot.create({
     campaign_id, round, phase: 'battle', snapshot_type: 'phase_start',
+    _schema_version: 2,
     territory_states: liveStates.map(ts => ({
-      territory_id: ts.territory_id,
-      owner_player_id: ts.owner_player_id ?? null,
-      troop_count: ts.troop_count ?? 0,
+      territory_id:     ts.territory_id,
+      owner_player_id:  ts.owner_player_id ?? null,
+      troop_count:      ts.troop_count ?? 0,
+      resource_storage: ts.resource_storage ?? {},
+      has_resource_hub: ts.has_resource_hub ?? false,
+      structures:       ts.structures ?? [],
+      resource_type:    ts.resource_type ?? null,
     })),
     player_standings: activePlayers.map(p => {
       const owned = liveStates.filter(ts => ts.owner_player_id === p.id);
       return {
-        player_id: p.id, display_name: p.display_name,
+        player_id:       p.id,
+        display_name:    p.display_name,
         territory_count: owned.length,
-        troop_total: owned.reduce((s, ts) => s + (ts.troop_count || 0), 0),
-        is_eliminated: p.is_eliminated ?? false,
+        troop_total:     owned.reduce((s, ts) => s + (ts.troop_count || 0), 0),
+        is_eliminated:   p.is_eliminated ?? false,
       };
     }),
+    permanent_influence: liveInfluence.map(i => ({
+      territory_id:     i.territory_id,
+      player_id:        i.player_id,
+      influence_amount: i.influence_amount ?? 0,
+    })),
+    spendable_influence: livePools.map(p => ({
+      region_id:           p.region_id,
+      player_id:           p.player_id,
+      spendable_influence: p.spendable_influence ?? 0,
+    })),
+    buildings: liveBuildings.map(b => ({
+      territory_id:    b.territory_id,
+      player_id:       b.player_id,
+      building_type:   b.building_type,
+      pillar_type:     b.pillar_type,
+      status:          b.status,
+      started_round:   b.started_round,
+      completed_round: b.completed_round,
+    })),
+    supply_routes: liveRoutes.map(r => ({
+      id:                  r.id,
+      owner_player_id:     r.owner_player_id,
+      hub_territory_id:    r.hub_territory_id,
+      source_territory_id: r.source_territory_id,
+      route_status:        r.route_status,
+      resource_type:       r.resource_type,
+      created_round:       r.created_round,
+    })),
+    objectives: liveObjectives.map(o => ({
+      player_id:        o.player_id,
+      global_influence: o.global_influence ?? 0,
+      objective_cards:  o.objective_cards_json ?? {},
+    })),
+    victory_scores: liveVictory.map(v => ({
+      player_id:         v.player_id,
+      occupancy_score:   v.occupancy_score ?? 0,
+      wealth_score:      v.wealth_score ?? 0,
+      influence_score:   v.influence_score ?? 0,
+      has_won:           v.has_won ?? false,
+      winning_condition: v.winning_condition ?? null,
+    })),
   });
-  console.log(`[ensureBattlePhaseStartSnapshot] Created snapshot with ${liveStates.length} territories.`);
+  console.log(`[ensureBattlePhaseStartSnapshot] Created full v2 snapshot: ${liveStates.length} territories, ${liveInfluence.length} influence records, ${liveBuildings.length} buildings.`);
   return snap;
 }
 
