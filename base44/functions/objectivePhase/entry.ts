@@ -393,14 +393,29 @@ Deno.serve(async (req) => {
   // Enforces MAX_HAND_SIZE. If at cap, kept card replaces nothing by default —
   // but if player is at 3 and keeps a 4th, we return an error requiring replace_card_id.
   if (action === 'resolveOpportunity') {
-    const { kept_card_id, replace_card_id } = body;
+    const { kept_card_id, replace_card_id, submission_id: oppSubmissionId } = body;
     if (!kept_card_id) return Response.json({ error: 'kept_card_id is required' }, { status: 400 });
 
     const ledger = await getLedger(base44, campaign_id, actingPlayer.id);
     const cards = ledger?.objective_cards_json ?? emptyCards();
 
+    // ── Idempotency: if card already in held and pending_draw is gone, it was already resolved ──
     if (!cards.pending_draw || cards.pending_draw.length === 0) {
+      // Check if the kept card is already held — means this was already processed
+      if ((cards.held ?? []).includes(kept_card_id)) {
+        return Response.json({ success: true, held: cards.held, kept: kept_card_id, idempotent: true, message: 'Opportunity already resolved.' });
+      }
       return Response.json({ error: 'No pending draw to resolve.' }, { status: 400 });
+    }
+
+    // submission_id dedup via opportunity_log
+    if (oppSubmissionId) {
+      const deck = await getDeck(base44, campaign_id);
+      const log = deck?.opportunity_log ?? [];
+      const dup = log.find(e => e.submission_id === oppSubmissionId);
+      if (dup) {
+        return Response.json({ success: true, held: cards.held, kept: dup.kept, idempotent: true, message: 'Opportunity already resolved.' });
+      }
     }
 
     if (!cards.pending_draw.includes(kept_card_id)) {
@@ -437,13 +452,14 @@ Deno.serve(async (req) => {
     // Move discarded cards into deck's discard pile
     await addToDiscard(base44, campaign_id, discardCardIds);
 
-    // Append opportunity log
+    // Append opportunity log — include submission_id for idempotency checking
     await appendOpportunityLog(base44, campaign_id, {
       round,
       player_id: actingPlayer.id,
       drawn: [...cards.pending_draw],
       kept: kept_card_id,
       discarded: discardCardIds,
+      submission_id: oppSubmissionId ?? null,
       timestamp: new Date().toISOString(),
     });
 

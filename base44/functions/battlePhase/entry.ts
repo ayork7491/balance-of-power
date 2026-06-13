@@ -1446,7 +1446,7 @@ Deno.serve(async (req) => {
   if (action === 'submitResult') {
     if (!isAdmin) return Response.json({ error: 'Only the campaign admin can submit battle results' }, { status: 403 });
 
-    const { battle_card_id, winner_player_id, surviving_tabletop_troops, notes, loser_tabletop_survivors, double_siege_result } = body;
+    const { battle_card_id, winner_player_id, surviving_tabletop_troops, notes, loser_tabletop_survivors, double_siege_result, submission_id: resultSubmissionId } = body;
     if (!battle_card_id) return Response.json({ error: 'battle_card_id required' }, { status: 400 });
 
     const cards = await base44.asServiceRole.entities.BattleCard.filter({ id: battle_card_id });
@@ -1457,6 +1457,11 @@ Deno.serve(async (req) => {
     const allowedStatuses = ['pending', 'awaiting_result', 'delayed', 'active_carryover', 'result_submitted', 'awaiting_approval', 'pending_approval'];
     if (!allowedStatuses.includes(card.status)) {
       return Response.json({ error: `Cannot submit result for card in status: ${card.status}` }, { status: 400 });
+    }
+
+    // ── Idempotency: submission_id dedup ──────────────────────────────────────
+    if (resultSubmissionId && card.result?.submission_id === resultSubmissionId) {
+      return Response.json({ success: true, status: card.status, idempotent: true });
     }
 
     // Carryover cards get pending_approval status instead of result_submitted
@@ -1477,6 +1482,7 @@ Deno.serve(async (req) => {
           winner_player_id: defender_held ? (card.defender_player_id ?? null) : null,
           surviving_tabletop_troops: defender_held ? Math.max(0, Math.round(defender_surviving_tabletop ?? 0)) : 0,
           notes: notes ?? '', submitted_by: myPlayer.id, submitted_at: now, result_source: 'manual', applied_at: null,
+          submission_id: resultSubmissionId ?? null,
         },
       });
       await log(base44, campaign_id, card.round, 'battle_result_submitted', myPlayer.id, { battle_card_id, battle_type: 'double_siege', defender_held: !!defender_held }, true);
@@ -1520,6 +1526,7 @@ Deno.serve(async (req) => {
         winner_bop_survivors: winnerBopSurvivors,
         loser_tabletop_survivors: clampedLoserSurvivors ?? null,
         notes: notes ?? '', submitted_by: myPlayer.id, submitted_at: now, result_source: 'manual', applied_at: null,
+        submission_id: resultSubmissionId ?? null,
       },
     });
     await log(base44, campaign_id, card.round, 'battle_result_submitted', myPlayer.id, { battle_card_id, winner_player_id, surviving_tabletop_troops: clampedSurvivors, winner_bop_survivors: winnerBopSurvivors }, true);
@@ -2043,6 +2050,15 @@ Deno.serve(async (req) => {
   if (action === 'processPhaseEnd') {
     if (!isAdmin) return Response.json({ error: 'Admin only' }, { status: 403 });
     if (campaign.current_phase !== 'battle') return Response.json({ error: 'Not in battle phase' }, { status: 400 });
+
+    // ── DUPLICATE PHASE-END PROTECTION ───────────────────────────────────────
+    // If a battle phase_end snapshot already exists for this round, this call is a duplicate.
+    const existingBattleEndSnap = await base44.asServiceRole.entities.PhaseSnapshot.filter({
+      campaign_id, round, phase: 'battle', snapshot_type: 'phase_end',
+    });
+    if (existingBattleEndSnap.length > 0 && !body.force) {
+      return Response.json({ error: 'Battle phase already processed for this round', already_processed: true }, { status: 400 });
+    }
 
     // ── Guarantee battle phase_start snapshot exists before any auto-resolve ──
     await ensureBattlePhaseStartSnapshot(base44, campaign_id, round, players);

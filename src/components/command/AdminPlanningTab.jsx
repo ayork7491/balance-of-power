@@ -18,6 +18,15 @@ export default function AdminPlanningTab({ campaign, players, advancing, onProce
   const [startErr, setStartErr] = useState(null);
   const advanceInFlightRef = useRef(false);
 
+  const handleAdvance = () => {
+    if (advanceInFlightRef.current || advancing) return;
+    advanceInFlightRef.current = true;
+    Promise.resolve(onProcessEnd?.()).finally(() => {
+      // Reset after a short delay to allow the parent's in-flight ref to also reset
+      setTimeout(() => { advanceInFlightRef.current = false; }, 2000);
+    });
+  };
+
   const activePlayers = players?.filter(p => !p.is_eliminated) ?? [];
 
   const load = useCallback(async () => {
@@ -136,8 +145,8 @@ export default function AdminPlanningTab({ campaign, players, advancing, onProce
       <div className="space-y-2 pt-1 border-t border-border">
         {allLocked ? (
           <button
-            onClick={onProcessEnd}
-            disabled={advancing}
+            onClick={handleAdvance}
+            disabled={advancing || advanceInFlightRef.current}
             className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded bg-primary text-primary-foreground text-xs font-display tracking-widest uppercase hover:brightness-110 glow-primary disabled:opacity-40"
           >
             {advancing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
@@ -146,8 +155,8 @@ export default function AdminPlanningTab({ campaign, players, advancing, onProce
         ) : (
           <>
             <button
-              onClick={onProcessEnd}
-              disabled={advancing}
+              onClick={handleAdvance}
+              disabled={advancing || advanceInFlightRef.current}
               className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded border border-border text-xs text-muted-foreground font-display tracking-wider uppercase hover:text-foreground transition-colors disabled:opacity-40"
             >
               {advancing && <Loader2 className="w-3.5 h-3.5 animate-spin" />}

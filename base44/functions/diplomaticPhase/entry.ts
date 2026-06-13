@@ -262,6 +262,7 @@ Deno.serve(async (req) => {
       target_player_id,
       target_player_b_id,
       target_supply_route_id,
+      submission_id: actionSubmissionId,
     } = body;
 
     if (!action_type) return Response.json({ error: 'action_type is required' }, { status: 400 });
@@ -333,6 +334,17 @@ Deno.serve(async (req) => {
       }
       if (target_player_b_id === target_player_id) {
         return Response.json({ error: 'target_player_b_id must be different from target_player_id' }, { status: 400 });
+      }
+    }
+
+    // ── Idempotency: submission_id dedup — check before spending influence ────
+    if (actionSubmissionId) {
+      const existingActions = await base44.asServiceRole.entities.DiplomaticAction.filter({
+        campaign_id, round, player_id: actingPlayer.id, action_type,
+      });
+      const dup = existingActions.find(a => a.effect_metadata?.submission_id === actionSubmissionId);
+      if (dup) {
+        return Response.json({ success: true, action_id: dup.id, idempotent: true, message: `${action_type} already submitted.` });
       }
     }
 
@@ -408,7 +420,7 @@ Deno.serve(async (req) => {
       };
     }
 
-    // Create the DiplomaticAction record
+    // Create the DiplomaticAction record — include submission_id for audit traceability
     const record = await base44.asServiceRole.entities.DiplomaticAction.create({
       campaign_id,
       round,
@@ -422,7 +434,7 @@ Deno.serve(async (req) => {
       target_player_b_id: target_player_b_id ?? null,
       target_territory_id: target_territory_id ?? null,
       target_supply_route_id: target_supply_route_id ?? null,
-      effect_metadata: effectMetadata,
+      effect_metadata: { ...effectMetadata, submission_id: actionSubmissionId ?? null },
     });
 
     return Response.json({
@@ -463,7 +475,7 @@ Deno.serve(async (req) => {
   // ── ACTION: proposeTradeConsolidation ─────────────────────────────────────
   // Creates a trade_proposal DiplomaticAction record with full asset metadata.
   if (action === 'proposeTradeConsolidation') {
-    const { target_player_id, offer, request: requestAssets } = body;
+    const { target_player_id, offer, request: requestAssets, submission_id: tradeSubmissionId } = body;
     if (!target_player_id) return Response.json({ error: 'target_player_id is required' }, { status: 400 });
     if (target_player_id === actingPlayer.id) return Response.json({ error: 'Cannot trade with yourself' }, { status: 400 });
     const targetPlayer = players.find(p => p.id === target_player_id);
@@ -510,6 +522,17 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── Idempotency: submission_id dedup ──────────────────────────────────────
+    if (tradeSubmissionId) {
+      const existingProposals = await base44.asServiceRole.entities.DiplomaticAction.filter({
+        campaign_id, round, player_id: actingPlayer.id, action_type: 'trade_proposal',
+      });
+      const dup = existingProposals.find(p => p.effect_metadata?.submission_id === tradeSubmissionId);
+      if (dup) {
+        return Response.json({ success: true, proposal_id: dup.id, idempotent: true, message: 'Trade proposal already submitted.' });
+      }
+    }
+
     const record = await base44.asServiceRole.entities.DiplomaticAction.create({
       campaign_id,
       round,
@@ -519,7 +542,7 @@ Deno.serve(async (req) => {
       influence_spent: 0,
       status: 'pending',
       target_player_id,
-      effect_metadata: { offer, request: requestAssets ?? {} },
+      effect_metadata: { offer, request: requestAssets ?? {}, submission_id: tradeSubmissionId ?? null },
     });
 
     return Response.json({ success: true, proposal_id: record.id, message: 'Trade proposal sent.' });
@@ -529,7 +552,7 @@ Deno.serve(async (req) => {
   // Accepts or declines a trade_proposal. On accept: transfers territory-stored resources.
   // receiver_payment is required on accept — receiver chooses source territories/regions privately.
   if (action === 'resolveTradeConsolidation') {
-    const { proposal_id, resolution, receiver_payment } = body;
+    const { proposal_id, resolution, receiver_payment, submission_id: resolveSubmissionId } = body;
     if (!proposal_id) return Response.json({ error: 'proposal_id is required' }, { status: 400 });
     if (!['accept', 'decline'].includes(resolution)) return Response.json({ error: 'resolution must be accept or decline' }, { status: 400 });
 
@@ -537,7 +560,13 @@ Deno.serve(async (req) => {
     const proposal = proposals[0];
     if (!proposal) return Response.json({ error: 'Proposal not found' }, { status: 404 });
     if (proposal.action_type !== 'trade_proposal') return Response.json({ error: 'Not a trade proposal' }, { status: 400 });
-    if (proposal.status !== 'pending') return Response.json({ error: `Proposal is already ${proposal.status}` }, { status: 400 });
+    // Idempotency: already resolved — return the same result quietly
+    if (proposal.status !== 'pending') {
+      if (resolveSubmissionId && proposal.effect_metadata?.resolve_submission_id === resolveSubmissionId) {
+        return Response.json({ success: true, idempotent: true, message: `Trade already ${proposal.status}.` });
+      }
+      return Response.json({ error: `Proposal is already ${proposal.status}` }, { status: 400 });
+    }
 
     // Only target player (or admin) can accept/decline
     if (proposal.target_player_id !== actingPlayer.id && !isAdmin) {
@@ -545,7 +574,10 @@ Deno.serve(async (req) => {
     }
 
     if (resolution === 'decline') {
-      await base44.asServiceRole.entities.DiplomaticAction.update(proposal.id, { status: 'cancelled' });
+      await base44.asServiceRole.entities.DiplomaticAction.update(proposal.id, {
+        status: 'cancelled',
+        effect_metadata: { ...(proposal.effect_metadata ?? {}), resolve_submission_id: resolveSubmissionId ?? null },
+      });
       return Response.json({ success: true, message: 'Trade proposal declined.' });
     }
 
@@ -782,10 +814,11 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Mark proposal as accepted
+    // Mark proposal as accepted, storing resolve submission_id for idempotency
     await base44.asServiceRole.entities.DiplomaticAction.update(proposal.id, {
       status: 'active',
       expires_round: round,
+      effect_metadata: { ...(proposal.effect_metadata ?? {}), resolve_submission_id: resolveSubmissionId ?? null },
     });
 
     return Response.json({ success: true, message: 'Trade accepted and assets transferred.' });

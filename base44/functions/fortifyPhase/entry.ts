@@ -420,7 +420,7 @@ Deno.serve(async (req) => {
     if (campaign.current_phase !== 'fortify') {
       return Response.json({ error: 'Not in fortify phase' }, { status: 400 });
     }
-    const { origin_territory_id, destination_territory_id, committed_troops } = body;
+    const { origin_territory_id, destination_territory_id, committed_troops, submission_id } = body;
     if (!origin_territory_id || !destination_territory_id || committed_troops == null) {
       return Response.json({ error: 'origin_territory_id, destination_territory_id, and committed_troops are required' }, { status: 400 });
     }
@@ -483,6 +483,15 @@ Deno.serve(async (req) => {
     if (decision.is_locked) return Response.json({ error: 'You have already locked your fortifications' }, { status: 400 });
 
     const currentMovements = decision.data?.movements ?? [];
+
+    // ── Idempotency: submission_id dedup ──────────────────────────────────────
+    if (submission_id) {
+      const dup = currentMovements.find(m => m.submission_id === submission_id);
+      if (dup) {
+        return Response.json({ success: true, movement_id: dup.id, movements: currentMovements, idempotent: true });
+      }
+    }
+
     if (currentMovements.length >= maxFortifications) {
       return Response.json({ error: `Max ${maxFortifications} movements per phase` }, { status: 400 });
     }
@@ -505,6 +514,7 @@ Deno.serve(async (req) => {
     );
     const newMovement = {
       id: existingIdx >= 0 ? currentMovements[existingIdx].id : `mov_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      submission_id: submission_id ?? null,
       origin_territory_id,
       destination_territory_id,
       committed_troops,
@@ -558,7 +568,7 @@ Deno.serve(async (req) => {
     if (campaign.current_phase !== 'fortify') {
       return Response.json({ error: 'Not in fortify phase' }, { status: 400 });
     }
-    const { territory_id, structure_type } = body;
+    const { territory_id, structure_type, submission_id: constructionSubmissionId } = body;
     if (!territory_id || !structure_type) {
       return Response.json({ error: 'territory_id and structure_type are required' }, { status: 400 });
     }
@@ -634,6 +644,19 @@ Deno.serve(async (req) => {
       }, { status: 400 });
     }
 
+    // ── Idempotency: if already staged the exact same construction, return early ─
+    const existingConstruction = decision.data?.construction;
+    if (
+      existingConstruction &&
+      existingConstruction.territory_id === territory_id &&
+      existingConstruction.structure_type === structure_type
+    ) {
+      return Response.json({ success: true, construction_staged: true, pillar: buildingConfig.pillar, idempotent: true });
+    }
+    if (constructionSubmissionId && existingConstruction?.submission_id === constructionSubmissionId) {
+      return Response.json({ success: true, construction_staged: true, pillar: buildingConfig.pillar, idempotent: true });
+    }
+
     // Store construction choice privately in PhaseDecision (revealed at processPhaseEnd)
     await base44.asServiceRole.entities.PhaseDecision.update(decision.id, {
       data: {
@@ -642,6 +665,7 @@ Deno.serve(async (req) => {
           territory_id,
           structure_type,
           pillar: buildingConfig.pillar,
+          submission_id: constructionSubmissionId ?? null,
           staged_at: new Date().toISOString(),
         },
       },
@@ -1038,7 +1062,7 @@ Deno.serve(async (req) => {
     if (campaign.current_phase !== 'fortify') {
       return Response.json({ error: 'Not in fortify phase' }, { status: 400 });
     }
-    const { origin_territory_id, destination_territory_id, shipment_contents } = body;
+    const { origin_territory_id, destination_territory_id, shipment_contents, submission_id: caravanSubmissionId } = body;
     if (!origin_territory_id || !destination_territory_id) {
       return Response.json({ error: 'origin_territory_id and destination_territory_id are required' }, { status: 400 });
     }
@@ -1077,6 +1101,15 @@ Deno.serve(async (req) => {
     }
     if (decision.is_locked) return Response.json({ error: 'You have already locked your decisions' }, { status: 400 });
 
+    // ── Idempotency: submission_id dedup ──────────────────────────────────────
+    if (caravanSubmissionId) {
+      const existingCaravansForDedup = decision.data?.caravans ?? [];
+      const dup = existingCaravansForDedup.find(c => c.submission_id === caravanSubmissionId);
+      if (dup) {
+        return Response.json({ success: true, caravan: dup, caravans: existingCaravansForDedup, idempotent: true });
+      }
+    }
+
     // Route safety analysis using inline BFS
     const adj = buildAdjacency(campaign.map_id ?? 'shattered_crown_v1');
     function findAnyPath(startId, endId) {
@@ -1107,6 +1140,7 @@ Deno.serve(async (req) => {
 
     const caravan = {
       id: `caravan_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      submission_id: caravanSubmissionId ?? null,
       origin: origin_territory_id,
       destination: destination_territory_id,
       contents: shipment_contents,
