@@ -386,15 +386,57 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Campaign is not in fortify phase' }, { status: 400 });
     }
 
-    // Idempotency guard — return success if already started
-    const existingDecisions = await base44.asServiceRole.entities.PhaseDecision.filter({
-      campaign_id, phase: 'fortify', round,
-    });
-    if (existingDecisions.length > 0) {
-      return Response.json({ success: true, idempotent: true, active_players: players.filter(p => !p.is_eliminated).length });
+    const activePlayers = players.filter(p => !p.is_eliminated);
+
+    // Idempotency: check decisions AND snapshot — both must exist for a clean start.
+    const [existingDecisions, existingStartSnap] = await Promise.all([
+      base44.asServiceRole.entities.PhaseDecision.filter({ campaign_id, phase: 'fortify', round }),
+      base44.asServiceRole.entities.PhaseSnapshot.filter({ campaign_id, phase: 'fortify', round, snapshot_type: 'phase_start' }),
+    ]);
+
+    const decisionsExist = existingDecisions.length > 0;
+    const snapshotExists = existingStartSnap.length > 0;
+
+    // ── Write phase_start snapshot (idempotent — only if missing) ─────────────
+    // This is the authoritative before-snapshot for the consolidation phase.
+    // Must be written at phase START so audits have a baseline before any player action.
+    if (!snapshotExists) {
+      console.log(`[startFortify] Writing fortify phase_start snapshot for round ${round}.`);
+      const [snapStates, snapInfluence, snapPools, snapBuildings, snapRoutes, snapObjectives, snapVictory] = await Promise.all([
+        base44.asServiceRole.entities.TerritoryState.filter({ campaign_id }),
+        base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id }),
+        base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id }),
+        base44.asServiceRole.entities.TerritoryBuilding.filter({ campaign_id }),
+        base44.asServiceRole.entities.SupplyRoute.filter({ campaign_id }),
+        base44.asServiceRole.entities.PlayerInfluenceLedger.filter({ campaign_id }),
+        base44.asServiceRole.entities.VictoryTracker.filter({ campaign_id }),
+      ]);
+      await base44.asServiceRole.entities.PhaseSnapshot.create({
+        campaign_id, round, phase: 'fortify', snapshot_type: 'phase_start',
+        _schema_version: 2,
+        territory_states: snapStates.map(ts => ({
+          territory_id: ts.territory_id, owner_player_id: ts.owner_player_id ?? null,
+          troop_count: ts.troop_count ?? 0, resource_storage: ts.resource_storage ?? {},
+          has_resource_hub: ts.has_resource_hub ?? false, structures: ts.structures ?? [],
+          resource_type: ts.resource_type ?? null,
+        })),
+        player_standings: activePlayers.map(p => {
+          const owned = snapStates.filter(ts => ts.owner_player_id === p.id);
+          return { player_id: p.id, display_name: p.display_name, territory_count: owned.length, troop_total: owned.reduce((s, ts) => s + (ts.troop_count || 0), 0), is_eliminated: p.is_eliminated ?? false };
+        }),
+        permanent_influence: snapInfluence.map(i => ({ territory_id: i.territory_id, player_id: i.player_id, influence_amount: i.influence_amount ?? 0 })),
+        spendable_influence: snapPools.map(p => ({ region_id: p.region_id, player_id: p.player_id, spendable_influence: p.spendable_influence ?? 0 })),
+        buildings: snapBuildings.map(b => ({ territory_id: b.territory_id, player_id: b.player_id, building_type: b.building_type, pillar_type: b.pillar_type, status: b.status, started_round: b.started_round, completed_round: b.completed_round, construction_progress: b.construction_progress ?? 0 })),
+        supply_routes: snapRoutes.map(r => ({ id: r.id, owner_player_id: r.owner_player_id, hub_territory_id: r.hub_territory_id, source_territory_id: r.source_territory_id, route_status: r.route_status, resource_type: r.resource_type, created_round: r.created_round })),
+        objectives: snapObjectives.map(o => ({ player_id: o.player_id, global_influence: o.global_influence ?? 0, objective_cards: o.objective_cards_json ?? {} })),
+        victory_scores: snapVictory.map(v => ({ player_id: v.player_id, occupancy_score: v.occupancy_score ?? 0, wealth_score: v.wealth_score ?? 0, influence_score: v.influence_score ?? 0, has_won: v.has_won ?? false, winning_condition: v.winning_condition ?? null })),
+      });
+      console.log(`[startFortify] phase_start snapshot written for round ${round}.`);
     }
 
-    const activePlayers = players.filter(p => !p.is_eliminated);
+    if (decisionsExist) {
+      return Response.json({ success: true, idempotent: true, snapshot_repaired: !snapshotExists, active_players: activePlayers.length });
+    }
 
     // Create PhaseDecision stubs for all active players
     for (const p of activePlayers) {
@@ -741,40 +783,31 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Not in fortify phase' }, { status: 400 });
     }
 
-    // ── Write authoritative before-snapshot for the fortify/consolidation phase ─
+    // ── Verify before-snapshot exists (hard guard) ────────────────────────────
+    // The fortify phase_start snapshot MUST have been written by startFortify.
+    // If it is missing here, startFortify was never called — we repair it now
+    // rather than silently proceeding, so audits always have a valid baseline.
     const existingBeforeSnapsF = await base44.asServiceRole.entities.PhaseSnapshot.filter({
       campaign_id, round, phase: 'fortify', snapshot_type: 'phase_start',
     });
     if (existingBeforeSnapsF.length === 0) {
-      const [beforeStatesF, fortInfluence, fortRegionalPools, fortBuildings, fortSupplyRoutes, fortObjectives, fortVictory] = await Promise.all([
-        base44.asServiceRole.entities.TerritoryState.filter({ campaign_id }),
-        base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id }),
-        base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id }),
-        base44.asServiceRole.entities.TerritoryBuilding.filter({ campaign_id }),
-        base44.asServiceRole.entities.SupplyRoute.filter({ campaign_id }),
-        base44.asServiceRole.entities.PlayerInfluenceLedger.filter({ campaign_id }),
-        base44.asServiceRole.entities.VictoryTracker.filter({ campaign_id }),
-      ]);
-      const activePBeforeF = players.filter(p => !p.is_eliminated);
-      await base44.asServiceRole.entities.PhaseSnapshot.create({
-        campaign_id, round, phase: 'fortify', snapshot_type: 'phase_start',
-        _schema_version: 2,
-        territory_states: beforeStatesF.map(ts => ({
-          territory_id: ts.territory_id, owner_player_id: ts.owner_player_id ?? null, troop_count: ts.troop_count ?? 0,
-          resource_storage: ts.resource_storage ?? {}, has_resource_hub: ts.has_resource_hub ?? false,
-          structures: ts.structures ?? [], resource_type: ts.resource_type ?? null,
-        })),
-        player_standings: activePBeforeF.map(p => {
-          const owned = beforeStatesF.filter(ts => ts.owner_player_id === p.id);
-          return { player_id: p.id, display_name: p.display_name, territory_count: owned.length, troop_total: owned.reduce((s, ts) => s + (ts.troop_count || 0), 0), is_eliminated: p.is_eliminated ?? false };
-        }),
-        permanent_influence: fortInfluence.map(i => ({ territory_id: i.territory_id, player_id: i.player_id, influence_amount: i.influence_amount ?? 0 })),
-        spendable_influence: fortRegionalPools.map(p => ({ region_id: p.region_id, player_id: p.player_id, spendable_influence: p.spendable_influence ?? 0 })),
-        buildings: fortBuildings.map(b => ({ territory_id: b.territory_id, player_id: b.player_id, building_type: b.building_type, pillar_type: b.pillar_type, status: b.status, started_round: b.started_round, completed_round: b.completed_round, construction_progress: b.construction_progress ?? 0 })),
-        supply_routes: fortSupplyRoutes.map(r => ({ id: r.id, owner_player_id: r.owner_player_id, hub_territory_id: r.hub_territory_id, source_territory_id: r.source_territory_id, route_status: r.route_status, resource_type: r.resource_type, created_round: r.created_round })),
-        objectives: fortObjectives.map(o => ({ player_id: o.player_id, global_influence: o.global_influence ?? 0, objective_cards: o.objective_cards_json ?? {} })),
-        victory_scores: fortVictory.map(v => ({ player_id: v.player_id, occupancy_score: v.occupancy_score ?? 0, wealth_score: v.wealth_score ?? 0, influence_score: v.influence_score ?? 0, has_won: v.has_won ?? false, winning_condition: v.winning_condition ?? null })),
-      });
+      console.warn(`[fortifyPhase.processPhaseEnd] WARNING: fortify phase_start snapshot missing for round ${round} — calling startFortify to repair.`);
+      try {
+        await base44.asServiceRole.functions.invoke('fortifyPhase', {
+          action: 'startFortify', campaign_id, _internal: true,
+        });
+        console.log(`[fortifyPhase.processPhaseEnd] Repair: phase_start snapshot written.`);
+      } catch (repairErr) {
+        // Log the failure but do NOT block phase completion.
+        // The snapshot will be missing from the audit but the game must continue.
+        console.error(`[fortifyPhase.processPhaseEnd] REPAIR FAILED: ${repairErr?.message}. Phase proceeding without before-snapshot.`);
+        await log(base44, campaign_id, round, phase, 'phase_start_snapshot_missing_at_phase_end', null, {
+          round, phase: 'fortify',
+          error: repairErr?.message ?? 'unknown',
+          severity: 'critical',
+          message: 'fortify phase_start snapshot was missing when processPhaseEnd ran. Repair attempted but failed. Audit exports will show missing before-snapshot.',
+        }, false);
+      }
     }
 
     // Expire stale trade proposals from previous round at start of Consolidation

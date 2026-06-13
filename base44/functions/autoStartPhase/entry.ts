@@ -68,13 +68,25 @@ Deno.serve(async (req) => {
     }
 
     if (phase === 'fortify') {
-      // Check if already started (idempotency)
-      const existingDecisions = await base44.asServiceRole.entities.PhaseDecision.filter({
-        campaign_id, phase: 'fortify', round,
-      });
-      if (existingDecisions.length > 0) {
-        console.log('[autoStartPhase] Fortify phase already started — skipping.');
+      // Check both decisions AND snapshot — startFortify now writes the snapshot.
+      // If decisions exist but snapshot is missing, call startFortify for repair.
+      const [existingDecisions, existingSnapshots] = await Promise.all([
+        base44.asServiceRole.entities.PhaseDecision.filter({ campaign_id, phase: 'fortify', round }),
+        base44.asServiceRole.entities.PhaseSnapshot.filter({ campaign_id, phase: 'fortify', round, snapshot_type: 'phase_start' }),
+      ]);
+
+      const decisionsExist = existingDecisions.length > 0;
+      const snapshotExists = existingSnapshots.length > 0;
+
+      if (decisionsExist && snapshotExists) {
+        console.log('[autoStartPhase] Fortify phase already started and phase_start snapshot exists — skipping.');
         return Response.json({ skipped: true, reason: 'Already started' });
+      }
+
+      if (decisionsExist && !snapshotExists) {
+        console.log('[autoStartPhase] Fortify decisions exist but phase_start snapshot missing — calling startFortify for snapshot repair.');
+      } else {
+        console.log('[autoStartPhase] Starting fortify phase for the first time.');
       }
 
       const result = await base44.asServiceRole.functions.invoke('fortifyPhase', {
@@ -82,8 +94,8 @@ Deno.serve(async (req) => {
         campaign_id,
         _internal: true,
       });
-      console.log('[autoStartPhase] Fortify auto-start result:', result?.success);
-      return Response.json({ success: true, phase, round });
+      console.log('[autoStartPhase] Fortify auto-start result:', result?.success, 'snapshot_repaired:', result?.snapshot_repaired);
+      return Response.json({ success: true, phase, round, snapshot_repaired: decisionsExist && !snapshotExists });
     }
   } catch (err) {
     console.error('[autoStartPhase] Error auto-starting phase:', err?.message ?? err);

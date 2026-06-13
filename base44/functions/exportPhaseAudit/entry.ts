@@ -1926,6 +1926,86 @@ Deno.serve(async (req) => {
       return Response.json({ success: true, bundle });
     }
 
+    // ── ACTION: getSnapshotHealth ────────────────────────────────────────────────
+    // Part 6: Diagnostic utility — reports snapshot health for all rounds/phases.
+    // Returns a structured health report that immediately identifies missing snapshots.
+    if (action === 'getSnapshotHealth') {
+      const targetRound = body.round ?? campaign.current_round ?? 1;
+      const phases = ['deploy', 'attack', 'battle', 'fortify'];
+
+      // Bulk-fetch all snapshots for this campaign up to targetRound
+      const [allSnapshots, allLogs] = await Promise.all([
+        base44.asServiceRole.entities.PhaseSnapshot.filter({ campaign_id }),
+        base44.asServiceRole.entities.SetupLog.filter({ campaign_id }),
+      ]);
+
+      const report = [];
+      for (let r = 1; r <= targetRound; r++) {
+        for (const ph of phases) {
+          const beforeSnap = allSnapshots.find(s => s.round === r && s.phase === ph && s.snapshot_type === 'phase_start');
+          const afterSnap = allSnapshots.filter(s => s.round === r && s.phase === ph && s.snapshot_type === 'phase_end')
+            .sort((a, b) => new Date(b.created_date ?? 0) - new Date(a.created_date ?? 0))[0] ?? null;
+
+          const startLog = allLogs.find(l => l.round === r && l.phase === ph && ['phase_started', 'deploy_started', 'attack_started', 'fortify_started'].includes(l.event_type));
+          const endLog = allLogs.find(l => l.round === r && l.phase === ph && ['phase_advanced', 'phase_ended', 'phase_complete'].includes(l.event_type));
+
+          const beforeTerritoryCount = (beforeSnap?.territory_states ?? []).length;
+          const afterTerritoryCount = (afterSnap?.territory_states ?? []).length;
+          const beforeHasInfluence = Array.isArray(beforeSnap?.permanent_influence) && beforeSnap.permanent_influence.length > 0;
+          const afterHasInfluence = Array.isArray(afterSnap?.permanent_influence) && afterSnap.permanent_influence.length > 0;
+          const beforeSchemaVersion = beforeSnap?._schema_version ?? null;
+          const afterSchemaVersion = afterSnap?._schema_version ?? null;
+
+          let validationStatus = 'ok';
+          const issues = [];
+          if (!beforeSnap) { validationStatus = 'missing_before'; issues.push('before_snapshot_missing'); }
+          else if (beforeTerritoryCount === 0) { validationStatus = 'empty_before'; issues.push('before_snapshot_has_no_territories'); }
+          else if (beforeSchemaVersion !== 2) { issues.push('before_snapshot_schema_v1_legacy'); }
+          if (!afterSnap && endLog) { validationStatus = validationStatus === 'ok' ? 'missing_after' : validationStatus; issues.push('after_snapshot_missing_despite_phase_end_log'); }
+          if (validationStatus === 'ok' && issues.length === 0) validationStatus = 'healthy';
+
+          report.push({
+            round: r,
+            phase: ph,
+            before_snapshot_exists: !!beforeSnap,
+            after_snapshot_exists: !!afterSnap,
+            before_territory_count: beforeTerritoryCount,
+            after_territory_count: afterTerritoryCount,
+            before_has_influence: beforeHasInfluence,
+            after_has_influence: afterHasInfluence,
+            before_schema_version: beforeSchemaVersion,
+            after_schema_version: afterSchemaVersion,
+            before_captured_at: beforeSnap?.created_date ?? null,
+            after_captured_at: afterSnap?.created_date ?? null,
+            phase_started_at: startLog?.created_date ?? null,
+            phase_completed_at: endLog?.created_date ?? null,
+            validation_status: validationStatus,
+            issues,
+          });
+        }
+      }
+
+      const totalPhases = report.length;
+      const healthyCount = report.filter(r => r.validation_status === 'healthy').length;
+      const missingBeforeCount = report.filter(r => r.issues.includes('before_snapshot_missing')).length;
+      const missingAfterCount = report.filter(r => r.issues.includes('after_snapshot_missing_despite_phase_end_log')).length;
+
+      return Response.json({
+        success: true,
+        campaign_id,
+        campaign_name: campaign.name,
+        checked_up_to_round: targetRound,
+        summary: {
+          total_phases_checked: totalPhases,
+          healthy: healthyCount,
+          missing_before_snapshot: missingBeforeCount,
+          missing_after_snapshot: missingAfterCount,
+          overall_health: missingBeforeCount === 0 && missingAfterCount === 0 ? 'healthy' : 'issues_found',
+        },
+        phases: report,
+      });
+    }
+
     return Response.json({ error: `Unknown action: ${action}` }, { status: 400 });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });

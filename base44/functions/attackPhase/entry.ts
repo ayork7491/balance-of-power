@@ -553,11 +553,14 @@ Deno.serve(async (req) => {
     }
 
     // ── Write authoritative before-snapshot for the attack phase ─────────────
+    // Written here (at processPhaseEnd start, before any troop mutations) so audits
+    // always have a before-snapshot that precedes attack commitments.
     // Idempotent: only write if no before-snapshot exists for this round/phase.
     const existingBeforeSnapshots = await base44.asServiceRole.entities.PhaseSnapshot.filter({
       campaign_id, round, phase: 'attack', snapshot_type: 'phase_start',
     });
     if (existingBeforeSnapshots.length === 0) {
+      console.log(`[attackPhase.processPhaseEnd] Writing attack phase_start snapshot for round ${round}.`);
       const [beforeStates, atkInfluence, atkRegionalPools, atkBuildings, atkSupplyRoutes, atkObjectives, atkVictory] = await Promise.all([
         base44.asServiceRole.entities.TerritoryState.filter({ campaign_id }),
         base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id }),
