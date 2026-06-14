@@ -26,11 +26,32 @@ function resolveSlotStates(allSlots, existingBuildingPillars) {
   return pool;
 }
 
-export default function TerritorySlotDisplay({ territoryId, existingBuildingPillars = [] }) {
+/**
+ * devLevel controls how many map-defined slots are visible:
+ *   - All territories with devLevel >= 1 (owned) always show the base Omni slot.
+ *   - Map-defined slots unlock at dev level 3 (first), 5 (second), 7 (third+).
+ *   - devLevel 0 (unowned) shows no slots.
+ */
+export default function TerritorySlotDisplay({ territoryId, existingBuildingPillars = [], devLevel = 0 }) {
   const config = SC_TERRITORY_BY_ID[territoryId];
-  if (!config || !config.structure_slots?.length) return null;
 
-  const slots = resolveSlotStates(config.structure_slots, existingBuildingPillars);
+  if (devLevel < 1) return null;
+
+  // Base omni slot — every owned territory has this from level 1
+  const baseSlots = ['omni'];
+
+  // Map-defined slots unlock at levels 3, 5, 7+
+  const mapSlots = config?.structure_slots ?? [];
+  const unlockedMapSlots = [];
+  if (devLevel >= 3 && mapSlots.length >= 1) unlockedMapSlots.push(mapSlots[0]);
+  if (devLevel >= 5 && mapSlots.length >= 2) unlockedMapSlots.push(mapSlots[1]);
+  if (devLevel >= 7 && mapSlots.length >= 3) unlockedMapSlots.push(mapSlots[2]);
+
+  // Locked (not-yet-unlocked) map slots shown as locked badges
+  const lockedMapSlots = mapSlots.slice(unlockedMapSlots.length);
+
+  const allActiveSlots = [...baseSlots, ...unlockedMapSlots];
+  const slots = resolveSlotStates(allActiveSlots, existingBuildingPillars);
   const freeCount = slots.filter(s => !s.occupied).length;
 
   return (
@@ -53,6 +74,15 @@ export default function TerritorySlotDisplay({ territoryId, existingBuildingPill
             </span>
           );
         })}
+        {lockedMapSlots.map((slotType, i) => (
+          <span
+            key={`locked-${i}`}
+            title={`${SLOT_LABELS[slotType]} — unlocks at higher dev level`}
+            className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded border border-border bg-muted/5 text-muted-foreground/30"
+          >
+            {SLOT_LABELS[slotType]} 🔒
+          </span>
+        ))}
       </div>
       {freeCount === 0 && slots.length > 0 && (
         <p className="text-[10px] text-muted-foreground/60">No slots available</p>

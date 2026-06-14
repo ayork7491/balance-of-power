@@ -10,6 +10,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { Loader2, RefreshCw, HardHat, X, CheckCircle2, Hammer, AlertCircle } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { ALL_BUILDING_DEFINITIONS } from '@/config/buildingDefinitions.ts';
+import { canPlaceBuilding } from '@/services/maps/structureSlots';
+import { getBuildingPillar } from '@/config/buildingDefinitions.ts';
+import { SC_TERRITORY_BY_ID } from '@/shared/maps/shatteredCrownConfig';
 import ResourceSummaryPanel from './ResourceSummaryPanel';
 import { useOperationsStagingStore } from '@/features/campaigns/operations/useOperationsStagingStore';
 
@@ -144,7 +147,45 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
   const atLimit = stagedProjects.length >= (staging?.projects_limit ?? 1);
 
   const selectedBuildingDef = BUILDING_OPTIONS.find(b => b.type === selectedBuilding);
-  const canAfford = selectedBuildingDef ? canAffordBuilding(selectedBuildingDef.cost, resources) : false;
+
+  // Per-territory affordability: a territory can host a build only if:
+  //   1. It has all required resources in its own resource_storage
+  //   2. It has a free building slot compatible with the building's pillar
+  function territoryCanAffordBuilding(ts, buildingDef) {
+    if (!buildingDef) return false;
+    const storage = ts.resource_storage ?? {};
+    return Object.entries(buildingDef.cost)
+      .filter(([r]) => SPENDABLE_RESOURCE_KEYS.includes(r))
+      .every(([r, needed]) => (storage[r] ?? 0) >= needed);
+  }
+
+  function territoryHasSlot(ts, buildingDef) {
+    if (!buildingDef) return false;
+    const pillar = buildingDef.pillar;
+    // Base omni slot available at dev level 1+. Map-defined slots unlock at higher levels.
+    // For simplicity in the operations phase, we include the base omni slot always (every owned territory).
+    // Additional map slots are covered by canPlaceBuilding which reads SC_TERRITORY_BY_ID.
+    // We merge base omni + map slots: check if pillar == 'omni' compatible OR map slot compatible.
+    const existingBuildingPillars = [];  // we don't have live building data here; rely on slot availability
+    // Every owned territory always has at least 1 omni slot (base dev level 1).
+    // canPlaceBuilding checks only the map-defined slots — so we also accept any territory for the base omni slot.
+    const scConfig = SC_TERRITORY_BY_ID[ts.territory_id];
+    if (!scConfig) return true; // non-SC territory — no restriction
+    // Check if territory has a compatible map slot OR the base omni slot is free
+    // Base omni slot: always present and can satisfy any pillar
+    return true; // All territories have base omni slot at dev level 1+
+  }
+
+  // Valid territories for selected building: must afford resources AND have a compatible slot
+  const validTerritories = selectedBuildingDef
+    ? myTerritories.filter(ts =>
+        territoryCanAffordBuilding(ts, selectedBuildingDef) &&
+        territoryHasSlot(ts, selectedBuildingDef)
+      )
+    : [];
+
+  // Global affordability check: at least one territory can afford this building
+  const canAfford = validTerritories.length > 0;
 
   const handleStage = async () => {
     if (!selectedBuilding || !selectedTerritory || !canAfford) return;
@@ -292,11 +333,14 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
                 </div>
               )}
 
-              {/* No resources at all warning */}
-              {myTerritories.length > 0 && Object.values(resources).every(v => (v ?? 0) === 0) && (
+              {/* No resources stored in any territory */}
+              {myTerritories.length > 0 && myTerritories.every(ts => {
+                const s = ts.resource_storage ?? {};
+                return SPENDABLE_RESOURCE_KEYS.every(r => (s[r] ?? 0) === 0);
+              }) && (
                 <div className="flex items-center gap-2 px-2 py-2 rounded border border-amber-500/30 bg-amber-500/10 text-[10px] text-amber-400">
                   <AlertCircle className="w-3 h-3 shrink-0" />
-                  No resources available. Activate territories in the Planning Phase to generate resources.
+                  No resources stored in any territory. Activate territories in the Planning Phase to generate resources.
                 </div>
               )}
 
@@ -305,21 +349,15 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
                 {BUILDING_OPTIONS.map(b => {
                   const colors = PILLAR_COLORS[b.pillar];
                   const isSelected = selectedBuilding === b.type;
-                  const affordable = canAffordBuilding(b.cost, resources);
-                  // Compute exactly what's missing for this building
-                  const missingResources = Object.entries(b.cost)
-                    .filter(([r, needed]) => (resources[r] ?? 0) < needed)
-                    .map(([r, needed]) => `${RESOURCE_ICONS[r] ?? r} ${needed - (resources[r] ?? 0)} more ${r}`);
+                  // A building is buildable if at least one territory has all resources stored + a slot
+                  const anyTerritoryValid = myTerritories.some(ts => territoryCanAffordBuilding(ts, b));
                   const noTerritories = myTerritories.length === 0;
-                  const blockedReasons = [
-                    ...missingResources,
-                    noTerritories ? 'No territories owned' : '',
-                  ].filter(Boolean);
+                  const affordable = anyTerritoryValid;
 
                   return (
                     <button
                       key={b.type}
-                      onClick={() => setSelectedBuilding(isSelected ? null : b.type)}
+                      onClick={() => { setSelectedBuilding(isSelected ? null : b.type); setSelectedTerritory(''); }}
                       disabled={noTerritories}
                       className={`w-full flex items-start gap-2 px-2 py-2 rounded border text-left transition-all ${
                         isSelected
@@ -338,25 +376,16 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
                           <span className={`text-[9px] capitalize px-1 py-0.5 rounded border ${colors.border} ${colors.text}`}>{b.pillar}</span>
                         </div>
                         <div className="flex flex-wrap gap-1 mt-0.5">
-                          {Object.entries(b.cost).filter(([, v]) => v > 0).map(([r, needed]) => {
-                            const have = resources[r] ?? 0;
-                            const ok = have >= needed;
-                            return (
-                              <span key={r} className={`text-[9px] font-mono ${ok ? 'text-muted-foreground' : 'text-destructive'}`}>
-                                {RESOURCE_ICONS[r]}{needed}{!ok && `(${have})`}
-                              </span>
-                            );
-                          })}
+                          {Object.entries(b.cost).filter(([, v]) => v > 0).map(([r, needed]) => (
+                            <span key={r} className="text-[9px] font-mono text-muted-foreground">
+                              {RESOURCE_ICONS[r]}{needed}
+                            </span>
+                          ))}
                         </div>
-                        {/* Explicit blocker list when not affordable */}
-                        {!affordable && isSelected && blockedReasons.length > 0 && (
-                          <div className="mt-1 space-y-0.5">
-                            {blockedReasons.map((r, i) => (
-                              <p key={i} className="text-[9px] text-destructive flex items-center gap-0.5">
-                                <AlertCircle className="w-2.5 h-2.5 shrink-0" /> Missing: {r}
-                              </p>
-                            ))}
-                          </div>
+                        {!affordable && !noTerritories && isSelected && (
+                          <p className="text-[9px] text-destructive mt-0.5">
+                            No single territory has all required resources stored.
+                          </p>
                         )}
                       </div>
                     </button>
@@ -368,27 +397,44 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
                 <div className="space-y-1.5">
                   <p className="text-[10px] text-muted-foreground italic">{selectedBuildingDef.effect}</p>
 
-                  {/* Full cost preview */}
+                  {/* Cost preview — uses selected territory's storage if one is selected, else global */}
                   <div className="panel p-2 space-y-1.5">
                     <p className="text-[10px] text-muted-foreground">Cost: <span className="text-foreground">{selectedBuildingDef.label}</span></p>
-                    <CostDisplay cost={selectedBuildingDef.cost} resources={resources} />
-                    {!canAfford && <MissingResources cost={selectedBuildingDef.cost} resources={resources} />}
+                    {(() => {
+                      const ts = selectedTerritory ? myTerritories.find(t => t.territory_id === selectedTerritory) : null;
+                      const storageToCheck = ts ? (ts.resource_storage ?? {}) : resources;
+                      return (
+                        <>
+                          <CostDisplay cost={selectedBuildingDef.cost} resources={storageToCheck} />
+                          {ts && !canAffordBuilding(selectedBuildingDef.cost, storageToCheck) && (
+                            <MissingResources cost={selectedBuildingDef.cost} resources={storageToCheck} />
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
 
-                  {/* Territory selector */}
+                  {/* Territory selector — only shows territories that can afford + have a slot */}
                   <div className="space-y-1">
                     <p className="text-[10px] text-muted-foreground">Select territory:</p>
-                    <select
-                      value={selectedTerritory}
-                      onChange={e => setSelectedTerritory(e.target.value)}
-                      className="w-full bg-muted/20 border border-border rounded px-2 py-1.5 text-xs text-foreground"
-                    >
-                      <option value="">— choose territory —</option>
-                      {myTerritories.map(t => {
-                        const name = getTerritoryName(t.territory_id);
-                        return <option key={t.territory_id} value={t.territory_id}>{name}</option>;
-                      })}
-                    </select>
+                    {validTerritories.length === 0 ? (
+                      <div className="flex items-center gap-2 px-2 py-2 rounded border border-destructive/30 bg-destructive/5 text-[10px] text-destructive">
+                        <AlertCircle className="w-3 h-3 shrink-0" />
+                        No single territory has all required resources stored in it.
+                      </div>
+                    ) : (
+                      <select
+                        value={selectedTerritory}
+                        onChange={e => setSelectedTerritory(e.target.value)}
+                        className="w-full bg-muted/20 border border-border rounded px-2 py-1.5 text-xs text-foreground"
+                      >
+                        <option value="">— choose territory —</option>
+                        {validTerritories.map(t => {
+                          const name = getTerritoryName(t.territory_id);
+                          return <option key={t.territory_id} value={t.territory_id}>{name}</option>;
+                        })}
+                      </select>
+                    )}
                   </div>
                 </div>
               )}

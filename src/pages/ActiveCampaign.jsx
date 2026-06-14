@@ -79,19 +79,30 @@ function ActiveCampaignContent() {
   // TerritoryBuilding records — fetched once per campaign, re-fetched on phase change.
   // Used to show correct slot occupancy in TerritoryDetailPanel (includes in-progress builds).
   const [territoryBuildingsById, setTerritoryBuildingsById] = useState({});
+  // TerritoryDevelopment records — indexed by territory_id for O(1) lookup in TerritoryDetailPanel
+  const [devRecordsByTerritoryId, setDevRecordsByTerritoryId] = useState({});
+
   const loadTerritoryBuildings = useCallback(async () => {
     if (!id) return;
     try {
-      const buildings = await base44.entities.TerritoryBuilding.filter({ campaign_id: id });
-      // Index by territory_id for O(1) lookup
+      const [buildings, devRecords] = await Promise.all([
+        base44.entities.TerritoryBuilding.filter({ campaign_id: id }),
+        base44.entities.TerritoryDevelopment.filter({ campaign_id: id }),
+      ]);
+      // Index buildings by territory_id
       const byId = {};
       for (const b of buildings) {
         if (!byId[b.territory_id]) byId[b.territory_id] = [];
         byId[b.territory_id].push(b);
       }
       setTerritoryBuildingsById(byId);
+      // Index dev records by territory_id
+      const devById = {};
+      for (const d of devRecords) devById[d.territory_id] = d;
+      setDevRecordsByTerritoryId(devById);
     } catch {
       setTerritoryBuildingsById({});
+      setDevRecordsByTerritoryId({});
     }
   }, [id]);
 
@@ -479,6 +490,7 @@ function ActiveCampaignContent() {
                 continentDef={selectedContinent}
                 adjacentTerritories={adjacentTerritories}
                 territoryBuildings={territoryBuildingsById[selectedTerritoryId] ?? []}
+                devRecord={devRecordsByTerritoryId[selectedTerritoryId] ?? null}
                 hubData={hubsByTerritoryId[selectedTerritoryId] ?? null}
                 mapDef={mapDef}
                 influenceRecords={influenceByTerritory[selectedTerritoryId] ?? []}

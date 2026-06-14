@@ -6,7 +6,7 @@
  * During territory_draft phase, shows a Claim Territory button if the territory
  * is unclaimed and it is the current player's turn.
  */
-import { X, Shield, Swords, MapPin, Check, Loader2, Lock } from 'lucide-react';
+import { X, Shield, Swords, MapPin, Check, Loader2, Lock, TrendingUp } from 'lucide-react';
 import { PLAYER_COLORS } from '@/config/theme';
 import { getResourceConfig } from '@/config/resourceConfig';
 import { SC_TERRITORY_BY_ID } from '@/shared/maps/shatteredCrownConfig';
@@ -35,6 +35,7 @@ export default function TerritoryDetailPanel({
   continentDef,         // MapContinent | null
   adjacentTerritories,  // TerritoryDefinition[]
   territoryBuildings,   // TerritoryBuilding[] — Sprint 3B+ buildings for this territory
+  devRecord,            // TerritoryDevelopment | null — development level for this territory
   hubData,              // Hub summary from usePlayerLogistics (if this territory has a hub) — Sprint 4E
   mapDef,               // MapDefinition — needed for TerritoryHubInfo territory name lookups
   influenceRecords,     // { player_id, influence_amount }[] for this territory — Sprint 4G
@@ -143,6 +144,24 @@ export default function TerritoryDetailPanel({
             )}
           </div>
 
+          {/* Development Level */}
+          {devRecord && (
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground flex items-center gap-1">
+                <TrendingUp className="w-3 h-3" /> Development
+              </span>
+              <div className="flex items-center gap-1.5">
+                <span className="font-mono font-bold text-amber-400">Lv {devRecord.development_level ?? 1}</span>
+                {devRecord.is_capital && (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded border border-amber-400/40 bg-amber-400/10 text-amber-400">Capital</span>
+                )}
+                <span className="text-muted-foreground text-[10px]">
+                  ({devRecord.development_progress ?? 0}/{devRecord.food_to_next_level ?? 3} food)
+                </span>
+              </div>
+            </div>
+          )}
+
           {/* Resources — primary / secondary / tertiary / food bonus / structure slots */}
           {(primaryCfg || scConfig) && (
             <div className="space-y-1.5 text-xs">
@@ -170,22 +189,20 @@ export default function TerritoryDetailPanel({
                   <span className="text-green-400">🌾 +{scConfig.food_bonus}/activation</span>
                 </div>
               )}
-              {scConfig?.structure_slots?.length > 0 && (
-                <div className="space-y-1">
-                  <span className="text-muted-foreground text-xs">Slots</span>
-                  <TerritorySlotDisplay
-                    territoryId={territory.territory_id}
-                    existingBuildingPillars={[
-                      // Completed legacy V1 structures — correct pillar per type
-                      ...(tState?.structures ?? []).map(s => getBuildingPillar(s)),
-                      // Sprint 3B+ buildings (active + in-progress — reserves the slot)
-                      ...(territoryBuildings ?? [])
-                        .filter(b => b.status !== 'destroyed')
-                        .map(b => b.pillar_type ?? getBuildingPillar(b.building_type)),
-                    ]}
-                  />
-                </div>
-              )}
+              {/* Building slots — base omni slot (always) + map-defined slots (unlock at higher dev levels) */}
+              <div className="space-y-1">
+                <span className="text-muted-foreground text-xs">Building Slots</span>
+                <TerritorySlotDisplay
+                  territoryId={territory.territory_id}
+                  existingBuildingPillars={[
+                    ...(tState?.structures ?? []).map(s => getBuildingPillar(s)),
+                    ...(territoryBuildings ?? [])
+                      .filter(b => b.status !== 'destroyed')
+                      .map(b => b.pillar_type ?? getBuildingPillar(b.building_type)),
+                  ]}
+                  devLevel={devRecord?.development_level ?? (tState?.owner_player_id ? 1 : 0)}
+                />
+              </div>
             </div>
           )}
 
