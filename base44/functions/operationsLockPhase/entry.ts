@@ -158,11 +158,11 @@ Deno.serve(async (req) => {
 
   // ── ACTION: getOperationsStatus ────────────────────────────────────────────
   if (action === 'getOperationsStatus') {
-    const [stagingDecision, attackDecision, attackLockRecords, resourceLedgers, regionalPools] = await Promise.all([
+    const [stagingDecision, attackDecision, attackLockRecords, territoryStates, regionalPools] = await Promise.all([
       getStagingDecision(base44, campaign_id, actingPlayer.id, round),
       getAttackDecision(base44, campaign_id, actingPlayer.id, round),
       base44.asServiceRole.entities.PhaseDecision.filter({ campaign_id, phase: 'attack', round }),
-      base44.asServiceRole.entities.PlayerResourceLedger.filter({ campaign_id, player_id: actingPlayer.id }),
+      base44.asServiceRole.entities.TerritoryState.filter({ campaign_id, owner_player_id: actingPlayer.id }),
       base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id, player_id: actingPlayer.id }),
     ]);
 
@@ -185,14 +185,15 @@ Deno.serve(async (req) => {
     const diplomaticStaged = staging.diplomatic_staged ?? [];
     const diplomaticLocked = staging.diplomatic_locked ?? false;
 
-    const ledger = resourceLedgers[0] ?? {};
-    const resources = {
-      gold: ledger.gold ?? 0,
-      iron: ledger.iron ?? 0,
-      timber: ledger.timber ?? 0,
-      stone: ledger.stone ?? 0,
-      food: ledger.food ?? 0,
-    };
+    // Resources: sum territory storages — exclude food (special resource, not spendable for construction)
+    const SPENDABLE_RESOURCES = ['gold', 'iron', 'timber', 'stone'];
+    const resources = { gold: 0, iron: 0, timber: 0, stone: 0 };
+    for (const ts of territoryStates) {
+      const storage = ts.resource_storage ?? {};
+      for (const r of SPENDABLE_RESOURCES) {
+        resources[r] = (resources[r] ?? 0) + (storage[r] ?? 0);
+      }
+    }
 
     const operationsLocked = !!staging.locked_at;
 

@@ -20,6 +20,8 @@ const PILLAR_COLORS = {
 };
 
 const RESOURCE_ICONS = { gold: '🟡', iron: '⚙️', timber: '🪵', stone: '🪨', food: '🌾' };
+// Food is a special resource (territory development only) — never shown as spendable for construction
+const SPENDABLE_RESOURCE_KEYS = ['gold', 'iron', 'timber', 'stone'];
 
 // Building options matching the definitions from buildingDefinitions.ts
 const BUILDING_OPTIONS = ALL_BUILDING_DEFINITIONS.map(b => ({
@@ -59,7 +61,9 @@ function CostDisplay({ cost, resources }) {
 }
 
 function canAffordBuilding(cost, resources) {
-  return Object.entries(cost).every(([r, needed]) => (resources[r] ?? 0) >= needed);
+  return Object.entries(cost)
+    .filter(([r]) => SPENDABLE_RESOURCE_KEYS.includes(r))
+    .every(([r, needed]) => (resources[r] ?? 0) >= needed);
 }
 
 function MissingResources({ cost, resources }) {

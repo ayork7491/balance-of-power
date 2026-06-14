@@ -14,7 +14,8 @@ const RESOURCE_CONFIG = {
   food:   { label: 'Food',   icon: '🌾', color: 'text-lime-400'  },
 };
 
-const RESOURCE_ORDER = ['gold', 'iron', 'timber', 'stone', 'food'];
+// Food is excluded here — it is a special resource for territory development only
+const RESOURCE_ORDER = ['gold', 'iron', 'timber', 'stone'];
 
 function ResourceRow({ resource, amount }) {
   const cfg = RESOURCE_CONFIG[resource] ?? { label: resource, icon: '📦', color: 'text-foreground' };
@@ -54,7 +55,7 @@ export default function ResourceSummaryPanel({ resources = {}, stateById = {}, a
       </p>
 
       {/* Global totals */}
-      <div className="grid grid-cols-5 gap-x-2 gap-y-1">
+      <div className="grid grid-cols-4 gap-x-2 gap-y-1">
         {RESOURCE_ORDER.map(r => {
           const cfg = RESOURCE_CONFIG[r];
           const amt = resources[r] ?? 0;

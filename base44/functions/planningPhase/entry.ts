@@ -705,34 +705,88 @@ Deno.serve(async (req) => {
         const stateMap = {};
         for (const s of myStates) stateMap[s.territory_id] = s;
 
+        // Resolve capital territory for this player (resources funnel there)
+        const devRecords = await base44.asServiceRole.entities.TerritoryDevelopment.filter({
+          campaign_id, owner_player_id: actingPlayer.id,
+        });
+        const capitalDev = devRecords.find(d => d.is_capital) ?? null;
+        const capitalTerritoryId = capitalDev?.territory_id ?? null;
+        // Capital territory state (may be same as activated territory if no capital set)
+        const capitalTs = capitalTerritoryId ? stateMap[capitalTerritoryId] : null;
+
         const activationResults = [];
+        // Track accumulated non-food resources to write to capital once after all activations
+        const capitalAccum = { gold: 0, iron: 0, timber: 0, stone: 0 };
+        let foodAccum = 0;
+
         for (const territory_id of economicStaged) {
           const ts = stateMap[territory_id];
           if (!ts) continue;
           const primary = ts.resource_type ?? SC_RESOURCE_TYPES[territory_id] ?? 'food';
           const generated = { gold: 0, iron: 0, timber: 0, stone: 0, food: 0 };
           generated[primary] = 1;
-          const before = { gold: 0, iron: 0, timber: 0, stone: 0, food: 0, ...(ts.resource_storage ?? {}) };
-          const after = { ...before };
-          for (const r of VALID_RESOURCES) {
-            after[r] = (after[r] || 0) + (generated[r] || 0);
+
+          // Food is a special resource — accumulate separately for ledger/auto-invest
+          if (primary === 'food') {
+            foodAccum += 1;
+          } else {
+            capitalAccum[primary] = (capitalAccum[primary] ?? 0) + 1;
           }
-          await base44.asServiceRole.entities.TerritoryState.update(ts.id, {
-            resource_storage: after,
-            resource_type: primary,
-          });
-          // Store per-territory audit detail with before/after for delta reporting
+
           activationResults.push({
             territory_id,
             player_id: actingPlayer.id,
             resource_type: primary,
             amount_generated: 1,
-            before_amount: before[primary] ?? 0,
-            after_amount: after[primary] ?? 0,
             generated,
-            storage_before: { ...before },
-            storage_after: after,
+            destination: primary === 'food' ? 'ledger_food' : (capitalTerritoryId ?? territory_id),
           });
+        }
+
+        // Write non-food resources to capital territory storage (or split to individual territories if no capital)
+        if (capitalTs && (capitalAccum.gold + capitalAccum.iron + capitalAccum.timber + capitalAccum.stone) > 0) {
+          const capBefore = { gold: 0, iron: 0, timber: 0, stone: 0, food: 0, ...(capitalTs.resource_storage ?? {}) };
+          const capAfter = { ...capBefore };
+          for (const r of ['gold', 'iron', 'timber', 'stone']) {
+            capAfter[r] = (capAfter[r] || 0) + (capitalAccum[r] || 0);
+          }
+          await base44.asServiceRole.entities.TerritoryState.update(capitalTs.id, {
+            resource_storage: capAfter,
+          });
+        } else if (!capitalTs) {
+          // No capital set — fall back to storing each resource in the activated territory
+          for (const territory_id of economicStaged) {
+            const ts = stateMap[territory_id];
+            if (!ts) continue;
+            const primary = ts.resource_type ?? SC_RESOURCE_TYPES[territory_id] ?? 'food';
+            if (primary === 'food') continue;
+            const before = { gold: 0, iron: 0, timber: 0, stone: 0, food: 0, ...(ts.resource_storage ?? {}) };
+            const after = { ...before };
+            after[primary] = (after[primary] || 0) + 1;
+            await base44.asServiceRole.entities.TerritoryState.update(ts.id, {
+              resource_storage: after, resource_type: primary,
+            });
+          }
+        }
+
+        // Food goes directly into the PlayerResourceLedger (auto-invested into capital by autoInvestFoodToCapital)
+        if (foodAccum > 0) {
+          const ledgerRecords = await base44.asServiceRole.entities.PlayerResourceLedger.filter({
+            campaign_id, player_id: actingPlayer.id,
+          });
+          const existingLedger = ledgerRecords[0];
+          if (existingLedger) {
+            await base44.asServiceRole.entities.PlayerResourceLedger.update(existingLedger.id, {
+              food: (existingLedger.food ?? 0) + foodAccum,
+              updated_at_round: round, updated_at_phase: 'deploy',
+            });
+          } else {
+            await base44.asServiceRole.entities.PlayerResourceLedger.create({
+              campaign_id, player_id: actingPlayer.id,
+              gold: 0, iron: 0, timber: 0, stone: 0, food: foodAccum,
+              updated_at_round: round, updated_at_phase: 'deploy',
+            });
+          }
         }
 
         await base44.asServiceRole.entities.SetupLog.create({
