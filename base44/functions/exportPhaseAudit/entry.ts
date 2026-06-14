@@ -917,6 +917,7 @@ Deno.serve(async (req) => {
         phaseLogs,
         attackReveals,
         intelReports,
+        territoryDevelopment,
       ] = await Promise.all([
         base44.asServiceRole.entities.TerritoryState.filter({ campaign_id }),
         base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id }),
@@ -938,6 +939,7 @@ Deno.serve(async (req) => {
         base44.asServiceRole.entities.SetupLog.filter({ campaign_id, phase: targetPhase, round: targetRound }),
         base44.asServiceRole.entities.AttackReveal.filter({ campaign_id, round: targetRound }),
         base44.asServiceRole.entities.IntelligenceReport.filter({ campaign_id, generated_round: targetRound }),
+        base44.asServiceRole.entities.TerritoryDevelopment.filter({ campaign_id }),
       ]);
 
       // Build a cache object for helper functions
@@ -945,7 +947,97 @@ Deno.serve(async (req) => {
         territories, influence, regionalPools, supplyRoutes,
         buildings: allBuildings, allBattleCards, dipActions, objectives,
         victoryTrackers, phaseDecisions, attackReveals, intelReports,
+        territoryDevelopment,
       };
+
+      // ── Build territory development section ──────────────────────────────
+      // TerritoryDevelopment records are not stored in PhaseSnapshot — we always
+      // layer them in from the live DB state, flagged as live_overlay.
+      const SC_MAP_SLOTS = {
+        I8:['military'], I4:['military','economic'], I6:['economic','military'], I7:['military','diplomatic'],
+        I1:['military'], I2:['military','omni'], I3:['diplomatic','diplomatic'], I5:['diplomatic','military'],
+        W1:['military','military'], W2:['diplomatic','economic'], W3:['economic'], W4:['military','diplomatic'],
+        W5:['omni'], W6:['economic','economic'], W7:['economic','omni'], W8:['military','diplomatic'], W9:['military','economic'],
+        B1:['military','diplomatic'], B3:['diplomatic','omni'], B2:['diplomatic','diplomatic','omni'], B4:['military','diplomatic'],
+        B5:['military','military'], B6:['diplomatic','diplomatic','omni'], B7:['military','economic'],
+        B8:['diplomatic','military'], B9:['military','economic'], B10:['omni'],
+        S1:['military','diplomatic'], S4:['economic','economic'], S7:['economic','diplomatic'], S2:['diplomatic','omni'],
+        S5:['omni'], S8:['economic','economic'], S3:['military','economic'], S6:['diplomatic','diplomatic'], S9:['military','omni'],
+        C1:['military','diplomatic'], C2:['military','economic'], C3:['military','omni'], C4:['omni'],
+        C5:['economic','diplomatic'], C6:['omni'], C7:['diplomatic','diplomatic'], C8:['military','diplomatic'],
+      };
+
+      function buildDevSection(devRecords, pMap) {
+        return devRecords.map(d => {
+          const devLevel = d.development_level ?? 1;
+          const mapSlots = SC_MAP_SLOTS[d.territory_id] ?? [];
+          // Slot breakdown: 1 base omni slot always; map slots unlock at levels 3, 5+
+          const baseSlots = [{ type: 'omni', source: 'base', unlocked: true }];
+          const mapSlotEntries = mapSlots.map((slotType, idx) => {
+            const requiredLevel = idx === 0 ? 3 : (idx === 1 ? 5 : 7);
+            return {
+              type: slotType,
+              source: 'map_defined',
+              index: idx,
+              required_level: requiredLevel,
+              unlocked: devLevel >= requiredLevel,
+            };
+          });
+          const allSlots = [...baseSlots, ...mapSlotEntries];
+          return {
+            ...tEnrich(d.territory_id),
+            owner_player_id: d.owner_player_id ?? null,
+            owner_name: d.owner_player_id ? (pMap[d.owner_player_id]?.display_name ?? d.owner_player_id) : null,
+            is_capital: d.is_capital ?? false,
+            capital_set_round: d.capital_set_round ?? null,
+            development_level: devLevel,
+            development_progress: d.development_progress ?? 0,
+            food_to_next_level: d.food_to_next_level ?? 3,
+            total_food_invested: d.total_food_invested ?? 0,
+            unlocked_resources: d.unlocked_resources ?? ['primary'],
+            unlocked_slot_count: d.unlocked_slot_count ?? 1,
+            last_updated_round: d.last_updated_round ?? 0,
+            slots: allSlots,
+            slots_unlocked: allSlots.filter(s => s.unlocked).length,
+            slots_locked: allSlots.filter(s => !s.unlocked).length,
+            data_source: 'live_overlay',
+          };
+        });
+      }
+
+      const developmentSection = buildDevSection(territoryDevelopment, playerMap);
+
+      // Per-player development summary
+      const devByPlayer = {};
+      for (const d of developmentSection) {
+        if (!d.owner_player_id) continue;
+        if (!devByPlayer[d.owner_player_id]) {
+          devByPlayer[d.owner_player_id] = {
+            player_id: d.owner_player_id,
+            player_name: d.owner_name,
+            capital_territory_id: null,
+            total_food_invested: 0,
+            territories: [],
+          };
+        }
+        devByPlayer[d.owner_player_id].total_food_invested += d.total_food_invested;
+        devByPlayer[d.owner_player_id].territories.push(d);
+        if (d.is_capital) devByPlayer[d.owner_player_id].capital_territory_id = d.territory_id;
+      }
+      const devPlayerSummaries = Object.values(devByPlayer);
+
+      // Dev-level deltas: compare last_updated_round to detect changes this round
+      const devDeltas = developmentSection.filter(d => d.last_updated_round === targetRound).map(d => ({
+        ...tEnrich(d.territory_id),
+        owner_player_id: d.owner_player_id,
+        owner_name: d.owner_name,
+        development_level: d.development_level,
+        food_invested_total: d.total_food_invested,
+        is_capital: d.is_capital,
+        unlocked_resources: d.unlocked_resources,
+        unlocked_slot_count: d.unlocked_slot_count,
+        note: `Updated in round ${targetRound}`,
+      }));
 
       // Build live snapshot from cached data
       const liveSnapshot = buildSnapshotFromData(cache, playerMap);
@@ -1828,9 +1920,17 @@ Deno.serve(async (req) => {
           battle_card_changes:         deltaReport.battle_card_changes ?? [],
           trade_results:               deltaReport.trade_state_changes ?? [],
           victory_score_changes:       deltaReport.victory_score_deltas ?? [],
+          territory_development_changes: devDeltas,
         },
 
         after_snapshot: afterSnapshotData,
+
+        territory_development: {
+          note: 'Live overlay — TerritoryDevelopment records fetched at export time. Not stored in phase snapshots.',
+          territories: developmentSection,
+          player_summaries: devPlayerSummaries,
+          updated_this_round: devDeltas,
+        },
 
         delta_report: (() => {
           // Inject battle-derived troop deltas when snapshot-based ones are empty
