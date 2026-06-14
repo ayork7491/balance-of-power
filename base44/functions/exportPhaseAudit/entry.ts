@@ -141,15 +141,29 @@ function buildSnapshotFromData({
 }, playerMap) {
 
   return {
-    territory_states: (territories ?? []).map(t => ({
-      ...tEnrich(t.territory_id),
-      owner_player_id: t.owner_player_id ?? null,
-      owner_name: t.owner_player_id ? (playerMap[t.owner_player_id]?.display_name ?? t.owner_player_id) : null,
-      troop_count: t.troop_count ?? 0,
-      resource_storage: t.resource_storage ?? {},
-      has_resource_hub: t.has_resource_hub ?? false,
-      structures: t.structures ?? [],
-    })),
+    territory_states: (() => {
+      const devMap = {};
+      for (const d of (cache?.territoryDevelopment ?? [])) devMap[d.territory_id] = d;
+      return (territories ?? []).map(t => {
+        const dev = devMap[t.territory_id] ?? null;
+        return {
+          ...tEnrich(t.territory_id),
+          owner_player_id:    t.owner_player_id ?? null,
+          owner_name:         t.owner_player_id ? (playerMap[t.owner_player_id]?.display_name ?? t.owner_player_id) : null,
+          troop_count:        t.troop_count ?? 0,
+          resource_storage:   t.resource_storage ?? {},
+          has_resource_hub:   t.has_resource_hub ?? false,
+          structures:         t.structures ?? [],
+          development_level:    dev?.development_level ?? null,
+          development_progress: dev?.development_progress ?? null,
+          food_to_next_level:   dev?.food_to_next_level ?? null,
+          total_food_invested:  dev?.total_food_invested ?? null,
+          is_capital:           dev?.is_capital ?? null,
+          unlocked_resources:   dev?.unlocked_resources ?? null,
+          unlocked_slot_count:  dev?.unlocked_slot_count ?? null,
+        };
+      });
+    })(),
     permanent_influence: (influence ?? []).map(i => ({
       ...tEnrich(i.territory_id),
       player_id: i.player_id,
@@ -410,6 +424,34 @@ function calcDeltas(before, after, playerMap) {
     }
   }
 
+  // ── Development level deltas ──
+  const devDeltas = [];
+  const beforeDevMap = {};
+  for (const t of (before.territory_states ?? [])) {
+    if (t.development_level != null) beforeDevMap[t.territory_id] = t;
+  }
+  for (const t of (after.territory_states ?? [])) {
+    if (t.development_level == null) continue;
+    const bef = beforeDevMap[t.territory_id];
+    const levelDelta = (t.development_level ?? 1) - (bef?.development_level ?? 1);
+    const foodDelta  = (t.total_food_invested ?? 0) - (bef?.total_food_invested ?? 0);
+    if (levelDelta !== 0 || foodDelta !== 0) {
+      devDeltas.push({
+        ...tEnrich(t.territory_id),
+        owner_player_id:      t.owner_player_id,
+        is_capital:           t.is_capital ?? false,
+        level_before:         bef?.development_level ?? null,
+        level_after:          t.development_level,
+        level_delta:          levelDelta,
+        food_invested_before: bef?.total_food_invested ?? null,
+        food_invested_after:  t.total_food_invested,
+        food_delta:           foodDelta,
+        unlocked_resources:   t.unlocked_resources ?? null,
+        unlocked_slot_count:  t.unlocked_slot_count ?? null,
+      });
+    }
+  }
+
   return {
     troop_deltas: troopDeltas,
     resource_deltas: resourceDeltas,
@@ -420,6 +462,7 @@ function calcDeltas(before, after, playerMap) {
     battle_card_changes: battleCardChanges,
     trade_state_changes: tradeChanges,
     phase_lock_changes: lockChanges,
+    development_deltas: devDeltas,
   };
 }
 
@@ -1064,13 +1107,21 @@ Deno.serve(async (req) => {
         if (Array.isArray(stored.territory_states)) {
           enriched.territory_states = stored.territory_states.map(t => ({
             ...tEnrich(t.territory_id),
-            owner_player_id:  t.owner_player_id ?? null,
-            owner_name:       t.owner_player_id ? (pMap[t.owner_player_id]?.display_name ?? t.owner_player_id) : null,
-            troop_count:      t.troop_count ?? 0,
-            resource_storage: t.resource_storage ?? {},
-            has_resource_hub: t.has_resource_hub ?? false,
-            structures:       t.structures ?? [],
-            resource_type:    t.resource_type ?? null,
+            owner_player_id:    t.owner_player_id ?? null,
+            owner_name:         t.owner_player_id ? (pMap[t.owner_player_id]?.display_name ?? t.owner_player_id) : null,
+            troop_count:        t.troop_count ?? 0,
+            resource_storage:   t.resource_storage ?? {},
+            has_resource_hub:   t.has_resource_hub ?? false,
+            structures:         t.structures ?? [],
+            resource_type:      t.resource_type ?? null,
+            // Development fields — present in snapshots written after this fix
+            development_level:    t.development_level ?? null,
+            development_progress: t.development_progress ?? null,
+            food_to_next_level:   t.food_to_next_level ?? null,
+            total_food_invested:  t.total_food_invested ?? null,
+            is_capital:           t.is_capital ?? null,
+            unlocked_resources:   t.unlocked_resources ?? null,
+            unlocked_slot_count:  t.unlocked_slot_count ?? null,
           }));
         }
 
@@ -1921,6 +1972,7 @@ Deno.serve(async (req) => {
           trade_results:               deltaReport.trade_state_changes ?? [],
           victory_score_changes:       deltaReport.victory_score_deltas ?? [],
           territory_development_changes: devDeltas,
+          development_level_deltas: deltaReport.development_deltas ?? [],
         },
 
         after_snapshot: afterSnapshotData,

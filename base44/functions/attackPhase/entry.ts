@@ -561,7 +561,7 @@ Deno.serve(async (req) => {
     });
     if (existingBeforeSnapshots.length === 0) {
       console.log(`[attackPhase.processPhaseEnd] Writing attack phase_start snapshot for round ${round}.`);
-      const [beforeStates, atkInfluence, atkRegionalPools, atkBuildings, atkSupplyRoutes, atkObjectives, atkVictory] = await Promise.all([
+      const [beforeStates, atkInfluence, atkRegionalPools, atkBuildings, atkSupplyRoutes, atkObjectives, atkVictory, atkDev] = await Promise.all([
         base44.asServiceRole.entities.TerritoryState.filter({ campaign_id }),
         base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id }),
         base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id }),
@@ -569,16 +569,26 @@ Deno.serve(async (req) => {
         base44.asServiceRole.entities.SupplyRoute.filter({ campaign_id }),
         base44.asServiceRole.entities.PlayerInfluenceLedger.filter({ campaign_id }),
         base44.asServiceRole.entities.VictoryTracker.filter({ campaign_id }),
+        base44.asServiceRole.entities.TerritoryDevelopment.filter({ campaign_id }),
       ]);
+      const atkDevMap = {};
+      for (const d of atkDev) atkDevMap[d.territory_id] = d;
       const activePBefore = players.filter(p => !p.is_eliminated);
       await base44.asServiceRole.entities.PhaseSnapshot.create({
         campaign_id, round, phase: 'attack', snapshot_type: 'phase_start',
         _schema_version: 2,
-        territory_states: beforeStates.map(ts => ({
-          territory_id: ts.territory_id, owner_player_id: ts.owner_player_id ?? null, troop_count: ts.troop_count ?? 0,
-          resource_storage: ts.resource_storage ?? {}, has_resource_hub: ts.has_resource_hub ?? false,
-          structures: ts.structures ?? [], resource_type: ts.resource_type ?? null,
-        })),
+        territory_states: beforeStates.map(ts => {
+          const dev = atkDevMap[ts.territory_id] ?? null;
+          return {
+            territory_id: ts.territory_id, owner_player_id: ts.owner_player_id ?? null, troop_count: ts.troop_count ?? 0,
+            resource_storage: ts.resource_storage ?? {}, has_resource_hub: ts.has_resource_hub ?? false,
+            structures: ts.structures ?? [], resource_type: ts.resource_type ?? null,
+            development_level: dev?.development_level ?? null, development_progress: dev?.development_progress ?? null,
+            food_to_next_level: dev?.food_to_next_level ?? null, total_food_invested: dev?.total_food_invested ?? null,
+            is_capital: dev?.is_capital ?? null, unlocked_resources: dev?.unlocked_resources ?? null,
+            unlocked_slot_count: dev?.unlocked_slot_count ?? null,
+          };
+        }),
         player_standings: activePBefore.map(p => {
           const owned = beforeStates.filter(ts => ts.owner_player_id === p.id);
           return { player_id: p.id, display_name: p.display_name, territory_count: owned.length, troop_total: owned.reduce((s, ts) => s + (ts.troop_count || 0), 0), is_eliminated: p.is_eliminated ?? false };
@@ -982,7 +992,7 @@ Deno.serve(async (req) => {
     }
 
     // Phase snapshot — full enriched
-    const [finalStates, atkEndInfluence, atkEndRegionalPools, atkEndBuildings, atkEndSupplyRoutes, atkEndObjectives, atkEndVictory] = await Promise.all([
+    const [finalStates, atkEndInfluence, atkEndRegionalPools, atkEndBuildings, atkEndSupplyRoutes, atkEndObjectives, atkEndVictory, atkEndDev] = await Promise.all([
       base44.asServiceRole.entities.TerritoryState.filter({ campaign_id }),
       base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id }),
       base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id }),
@@ -990,15 +1000,25 @@ Deno.serve(async (req) => {
       base44.asServiceRole.entities.SupplyRoute.filter({ campaign_id }),
       base44.asServiceRole.entities.PlayerInfluenceLedger.filter({ campaign_id }),
       base44.asServiceRole.entities.VictoryTracker.filter({ campaign_id }),
+      base44.asServiceRole.entities.TerritoryDevelopment.filter({ campaign_id }),
     ]);
+    const atkEndDevMap = {};
+    for (const d of atkEndDev) atkEndDevMap[d.territory_id] = d;
     await base44.asServiceRole.entities.PhaseSnapshot.create({
       campaign_id, round, phase: 'attack', snapshot_type: 'phase_end',
       _schema_version: 2,
-      territory_states: finalStates.map(ts => ({
-        territory_id: ts.territory_id, owner_player_id: ts.owner_player_id ?? null, troop_count: ts.troop_count ?? 0,
-        resource_storage: ts.resource_storage ?? {}, has_resource_hub: ts.has_resource_hub ?? false,
-        structures: ts.structures ?? [], resource_type: ts.resource_type ?? null,
-      })),
+      territory_states: finalStates.map(ts => {
+        const dev = atkEndDevMap[ts.territory_id] ?? null;
+        return {
+          territory_id: ts.territory_id, owner_player_id: ts.owner_player_id ?? null, troop_count: ts.troop_count ?? 0,
+          resource_storage: ts.resource_storage ?? {}, has_resource_hub: ts.has_resource_hub ?? false,
+          structures: ts.structures ?? [], resource_type: ts.resource_type ?? null,
+          development_level: dev?.development_level ?? null, development_progress: dev?.development_progress ?? null,
+          food_to_next_level: dev?.food_to_next_level ?? null, total_food_invested: dev?.total_food_invested ?? null,
+          is_capital: dev?.is_capital ?? null, unlocked_resources: dev?.unlocked_resources ?? null,
+          unlocked_slot_count: dev?.unlocked_slot_count ?? null,
+        };
+      }),
       player_standings: activePlayers.map(p => {
         const owned = finalStates.filter(ts => ts.owner_player_id === p.id);
         return { player_id: p.id, display_name: p.display_name, territory_count: owned.length, troop_total: owned.reduce((s, ts) => s + (ts.troop_count || 0), 0), is_eliminated: p.is_eliminated ?? false };

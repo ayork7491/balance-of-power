@@ -19,9 +19,18 @@ Deno.serve(async (req) => {
 
   // This function is called by an entity automation on Campaign update.
   // We only care about current_phase changes.
-  const campaign = data;
+  // If payload_too_large is true, data is null — fetch the campaign directly.
+  let campaign = data;
   if (!campaign?.id) {
-    return Response.json({ skipped: true, reason: 'No campaign data in payload' });
+    if (body.payload_too_large && event?.entity_id) {
+      try {
+        const fetched = await base44.asServiceRole.entities.Campaign.filter({ id: event.entity_id });
+        campaign = fetched[0] ?? null;
+      } catch { /* fall through */ }
+    }
+    if (!campaign?.id) {
+      return Response.json({ skipped: true, reason: 'No campaign data in payload' });
+    }
   }
 
   const phase = campaign.current_phase;

@@ -87,9 +87,9 @@ const BUILDING_DEFS = {
 // Legacy V1 structure config kept for processPhaseEnd backward compat only.
 // New construction always uses BUILDING_DEFS.
 const LEGACY_STRUCTURE_CONFIG = {
-  castle:   { pillar: 'military', cost: { brick: 2, lumber: 1, ore: 1 }, rounds: 2 },
-  barracks: { pillar: 'military', cost: { brick: 1, lumber: 2, wool: 1 }, rounds: 1 },
-  stables:  { pillar: 'military', cost: { lumber: 2, wool: 2, grain: 1 }, rounds: 1 },
+  castle:   { pillar: 'military', cost: { gold: 2, iron: 1, stone: 1 }, rounds: 2 },
+  barracks: { pillar: 'military', cost: { gold: 1, iron: 1, timber: 1 }, rounds: 1 },
+  stables:  { pillar: 'military', cost: { gold: 1, timber: 2, food: 1 }, rounds: 1 },
 };
 
 // Get building config from either registry (new buildings first, then legacy).
@@ -402,7 +402,7 @@ Deno.serve(async (req) => {
     // Must be written at phase START so audits have a baseline before any player action.
     if (!snapshotExists) {
       console.log(`[startFortify] Writing fortify phase_start snapshot for round ${round}.`);
-      const [snapStates, snapInfluence, snapPools, snapBuildings, snapRoutes, snapObjectives, snapVictory] = await Promise.all([
+      const [snapStates, snapInfluence, snapPools, snapBuildings, snapRoutes, snapObjectives, snapVictory, snapDev] = await Promise.all([
         base44.asServiceRole.entities.TerritoryState.filter({ campaign_id }),
         base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id }),
         base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id }),
@@ -410,16 +410,26 @@ Deno.serve(async (req) => {
         base44.asServiceRole.entities.SupplyRoute.filter({ campaign_id }),
         base44.asServiceRole.entities.PlayerInfluenceLedger.filter({ campaign_id }),
         base44.asServiceRole.entities.VictoryTracker.filter({ campaign_id }),
+        base44.asServiceRole.entities.TerritoryDevelopment.filter({ campaign_id }),
       ]);
+      const snapDevMap = {};
+      for (const d of snapDev) snapDevMap[d.territory_id] = d;
       await base44.asServiceRole.entities.PhaseSnapshot.create({
         campaign_id, round, phase: 'fortify', snapshot_type: 'phase_start',
         _schema_version: 2,
-        territory_states: snapStates.map(ts => ({
-          territory_id: ts.territory_id, owner_player_id: ts.owner_player_id ?? null,
-          troop_count: ts.troop_count ?? 0, resource_storage: ts.resource_storage ?? {},
-          has_resource_hub: ts.has_resource_hub ?? false, structures: ts.structures ?? [],
-          resource_type: ts.resource_type ?? null,
-        })),
+        territory_states: snapStates.map(ts => {
+          const dev = snapDevMap[ts.territory_id] ?? null;
+          return {
+            territory_id: ts.territory_id, owner_player_id: ts.owner_player_id ?? null,
+            troop_count: ts.troop_count ?? 0, resource_storage: ts.resource_storage ?? {},
+            has_resource_hub: ts.has_resource_hub ?? false, structures: ts.structures ?? [],
+            resource_type: ts.resource_type ?? null,
+            development_level: dev?.development_level ?? null, development_progress: dev?.development_progress ?? null,
+            food_to_next_level: dev?.food_to_next_level ?? null, total_food_invested: dev?.total_food_invested ?? null,
+            is_capital: dev?.is_capital ?? null, unlocked_resources: dev?.unlocked_resources ?? null,
+            unlocked_slot_count: dev?.unlocked_slot_count ?? null,
+          };
+        }),
         player_standings: activePlayers.map(p => {
           const owned = snapStates.filter(ts => ts.owner_player_id === p.id);
           return { player_id: p.id, display_name: p.display_name, territory_count: owned.length, troop_total: owned.reduce((s, ts) => s + (ts.troop_count || 0), 0), is_eliminated: p.is_eliminated ?? false };
@@ -997,7 +1007,7 @@ Deno.serve(async (req) => {
     }
 
     // Phase snapshot — full v2 schema
-    const [finalStates, fortEndInfluence, fortEndRegionalPools, fortEndBuildings, fortEndSupplyRoutes, fortEndObjectives, fortEndVictory] = await Promise.all([
+    const [finalStates, fortEndInfluence, fortEndRegionalPools, fortEndBuildings, fortEndSupplyRoutes, fortEndObjectives, fortEndVictory, fortEndDev] = await Promise.all([
       base44.asServiceRole.entities.TerritoryState.filter({ campaign_id }),
       base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id }),
       base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id }),
@@ -1005,15 +1015,25 @@ Deno.serve(async (req) => {
       base44.asServiceRole.entities.SupplyRoute.filter({ campaign_id }),
       base44.asServiceRole.entities.PlayerInfluenceLedger.filter({ campaign_id }),
       base44.asServiceRole.entities.VictoryTracker.filter({ campaign_id }),
+      base44.asServiceRole.entities.TerritoryDevelopment.filter({ campaign_id }),
     ]);
+    const fortEndDevMap = {};
+    for (const d of fortEndDev) fortEndDevMap[d.territory_id] = d;
     await base44.asServiceRole.entities.PhaseSnapshot.create({
       campaign_id, round, phase: 'fortify', snapshot_type: 'phase_end',
       _schema_version: 2,
-      territory_states: finalStates.map(ts => ({
-        territory_id: ts.territory_id, owner_player_id: ts.owner_player_id ?? null, troop_count: ts.troop_count ?? 0,
-        resource_storage: ts.resource_storage ?? {}, has_resource_hub: ts.has_resource_hub ?? false,
-        structures: ts.structures ?? [], resource_type: ts.resource_type ?? null,
-      })),
+      territory_states: finalStates.map(ts => {
+        const dev = fortEndDevMap[ts.territory_id] ?? null;
+        return {
+          territory_id: ts.territory_id, owner_player_id: ts.owner_player_id ?? null, troop_count: ts.troop_count ?? 0,
+          resource_storage: ts.resource_storage ?? {}, has_resource_hub: ts.has_resource_hub ?? false,
+          structures: ts.structures ?? [], resource_type: ts.resource_type ?? null,
+          development_level: dev?.development_level ?? null, development_progress: dev?.development_progress ?? null,
+          food_to_next_level: dev?.food_to_next_level ?? null, total_food_invested: dev?.total_food_invested ?? null,
+          is_capital: dev?.is_capital ?? null, unlocked_resources: dev?.unlocked_resources ?? null,
+          unlocked_slot_count: dev?.unlocked_slot_count ?? null,
+        };
+      }),
       player_standings: activePlayers.map(p => {
         const owned = finalStates.filter(ts => ts.owner_player_id === p.id);
         return { player_id: p.id, display_name: p.display_name, territory_count: owned.length, troop_total: owned.reduce((s, ts) => s + (ts.troop_count || 0), 0), is_eliminated: p.is_eliminated ?? false };

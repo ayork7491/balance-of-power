@@ -65,14 +65,14 @@ function seededRandom(seed) {
 }
 
 const RES = {
-  mountains: { brick: 10, lumber: 5,  wool: 5,  grain: 10, ore: 70 },
-  forest:    { brick: 5,  lumber: 60, wool: 15, grain: 10, ore: 10 },
-  swamp:     { brick: 15, lumber: 20, wool: 30, grain: 25, ore: 10 },
-  tundra:    { brick: 20, lumber: 10, wool: 15, grain: 15, ore: 40 },
-  coastal:   { brick: 10, lumber: 10, wool: 35, grain: 30, ore: 15 },
-  desert:    { brick: 30, lumber: 5,  wool: 10, grain: 15, ore: 40 },
-  urban:     { brick: 25, lumber: 15, wool: 15, grain: 15, ore: 30 },
-  plains:    { brick: 10, lumber: 15, wool: 20, grain: 50, ore: 5  },
+  mountains: { iron: 60, stone: 25, gold: 10, timber: 5,  food: 0  },
+  forest:    { timber: 60, food: 15, iron: 5,  stone: 10, gold: 10 },
+  swamp:     { food: 35, timber: 25, stone: 20, gold: 15, iron: 5  },
+  tundra:    { stone: 40, iron: 25, gold: 20, timber: 10, food: 5  },
+  coastal:   { gold: 35, food: 25, timber: 20, stone: 15, iron: 5  },
+  desert:    { stone: 45, gold: 30, iron: 15, timber: 5,  food: 5  },
+  urban:     { gold: 40, iron: 25, stone: 20, timber: 10, food: 5  },
+  plains:    { food: 50, gold: 20, timber: 15, stone: 10, iron: 5  },
 };
 
 const V1_MAP_META = {
@@ -319,7 +319,7 @@ function rollWeightedResource(dist, roll) {
 
 function generateResourcesForPlayer(playerId, round, allStates, mapTerritories, campaignId) {
   const ownedStates = allStates.filter(s => s.owner_player_id === playerId);
-  const totals = { brick: 0, lumber: 0, wool: 0, grain: 0, ore: 0 };
+  const totals = { gold: 0, iron: 0, timber: 0, stone: 0, food: 0 };
   for (const ts of ownedStates) {
     const def = mapTerritories.find(t => t.territory_id === ts.territory_id);
     if (!def?.resource_distribution) continue;
@@ -354,18 +354,33 @@ function mergePlacements(base, additions) {
 }
 
 // buildSnapshot now captures the full game state for audit-quality snapshots.
-// Pass enrichedData = { influence, regionalPools, buildings, supplyRoutes, objectives, victoryTrackers }
+// Pass enrichedData = { influence, regionalPools, buildings, supplyRoutes, objectives, victoryTrackers, territoryDevelopment }
 // for full snapshots. Falls back gracefully when not provided.
 function buildSnapshot({ campaignId, round, phase, snapshotType, territoryStates, activePlayers, deployIncomes, enrichedData }) {
-  const territory_states = territoryStates.map(ts => ({
-    territory_id:     ts.territory_id,
-    owner_player_id:  ts.owner_player_id ?? null,
-    troop_count:      ts.troop_count ?? 0,
-    resource_storage: ts.resource_storage ?? {},
-    has_resource_hub: ts.has_resource_hub ?? false,
-    structures:       ts.structures ?? [],
-    resource_type:    ts.resource_type ?? null,
-  }));
+  // Build dev record lookup map for O(1) access
+  const devMap = {};
+  for (const d of (enrichedData?.territoryDevelopment ?? [])) devMap[d.territory_id] = d;
+
+  const territory_states = territoryStates.map(ts => {
+    const dev = devMap[ts.territory_id] ?? null;
+    return {
+      territory_id:       ts.territory_id,
+      owner_player_id:    ts.owner_player_id ?? null,
+      troop_count:        ts.troop_count ?? 0,
+      resource_storage:   ts.resource_storage ?? {},
+      has_resource_hub:   ts.has_resource_hub ?? false,
+      structures:         ts.structures ?? [],
+      resource_type:      ts.resource_type ?? null,
+      // Territory development fields — included when available
+      development_level:     dev?.development_level ?? null,
+      development_progress:  dev?.development_progress ?? null,
+      food_to_next_level:    dev?.food_to_next_level ?? null,
+      total_food_invested:   dev?.total_food_invested ?? null,
+      is_capital:            dev?.is_capital ?? null,
+      unlocked_resources:    dev?.unlocked_resources ?? null,
+      unlocked_slot_count:   dev?.unlocked_slot_count ?? null,
+    };
+  });
 
   const player_standings = activePlayers.map(p => {
     const owned = territoryStates.filter(ts => ts.owner_player_id === p.id);
@@ -537,7 +552,7 @@ Deno.serve(async (req) => {
       );
       if (!hasPhaseStart) {
         console.log('[startDeploy] Repairing missing phase_start snapshot for round', round);
-        const [repairStates, repairInfluence, repairPools, repairBuildings, repairRoutes, repairObjectives, repairVictory] = await Promise.all([
+        const [repairStates, repairInfluence, repairPools, repairBuildings, repairRoutes, repairObjectives, repairVictory, repairDev] = await Promise.all([
           base44.asServiceRole.entities.TerritoryState.filter({ campaign_id }),
           base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id }),
           base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id }),
@@ -545,6 +560,7 @@ Deno.serve(async (req) => {
           base44.asServiceRole.entities.SupplyRoute.filter({ campaign_id }),
           base44.asServiceRole.entities.PlayerInfluenceLedger.filter({ campaign_id }),
           base44.asServiceRole.entities.VictoryTracker.filter({ campaign_id }),
+          base44.asServiceRole.entities.TerritoryDevelopment.filter({ campaign_id }),
         ]);
         const activePlayers = players.filter(p => !p.is_eliminated);
         const repairSnapshot = buildSnapshot({
@@ -553,6 +569,7 @@ Deno.serve(async (req) => {
           enrichedData: {
             influence: repairInfluence, regionalPools: repairPools, buildings: repairBuildings,
             supplyRoutes: repairRoutes, objectives: repairObjectives, victoryTrackers: repairVictory,
+            territoryDevelopment: repairDev,
           },
         });
         await base44.asServiceRole.entities.PhaseSnapshot.create(repairSnapshot);
@@ -654,18 +671,19 @@ Deno.serve(async (req) => {
     }
 
     // Fetch enriched data for full snapshot
-    const [snapshotInfluence, snapshotRegionalPools, snapshotBuildings, snapshotSupplyRoutes, snapshotObjectives, snapshotVictory] = await Promise.all([
+    const [snapshotInfluence, snapshotRegionalPools, snapshotBuildings, snapshotSupplyRoutes, snapshotObjectives, snapshotVictory, snapshotDev] = await Promise.all([
       base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id }),
       base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id }),
       base44.asServiceRole.entities.TerritoryBuilding.filter({ campaign_id }),
       base44.asServiceRole.entities.SupplyRoute.filter({ campaign_id }),
       base44.asServiceRole.entities.PlayerInfluenceLedger.filter({ campaign_id }),
       base44.asServiceRole.entities.VictoryTracker.filter({ campaign_id }),
+      base44.asServiceRole.entities.TerritoryDevelopment.filter({ campaign_id }),
     ]);
     const snapshot = buildSnapshot({
       campaignId: campaign_id, round, phase, snapshotType: 'phase_start',
       territoryStates: allTerritoryStates, activePlayers, deployIncomes,
-      enrichedData: { influence: snapshotInfluence, regionalPools: snapshotRegionalPools, buildings: snapshotBuildings, supplyRoutes: snapshotSupplyRoutes, objectives: snapshotObjectives, victoryTrackers: snapshotVictory },
+      enrichedData: { influence: snapshotInfluence, regionalPools: snapshotRegionalPools, buildings: snapshotBuildings, supplyRoutes: snapshotSupplyRoutes, objectives: snapshotObjectives, victoryTrackers: snapshotVictory, territoryDevelopment: snapshotDev },
     });
     await base44.asServiceRole.entities.PhaseSnapshot.create(snapshot);
 
@@ -912,7 +930,7 @@ Deno.serve(async (req) => {
     }
     console.log('[deployPhase reveal] Full diagnostics:', JSON.stringify(revealDiagnostics, null, 2));
 
-    const [finalTerritoryStates, incomeRecords, endInfluence, endRegionalPools, endBuildings, endSupplyRoutes, endObjectives, endVictory] = await Promise.all([
+    const [finalTerritoryStates, incomeRecords, endInfluence, endRegionalPools, endBuildings, endSupplyRoutes, endObjectives, endVictory, endDev] = await Promise.all([
       base44.asServiceRole.entities.TerritoryState.filter({ campaign_id }),
       base44.asServiceRole.entities.DeployIncome.filter({ campaign_id, round }),
       base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id }),
@@ -921,6 +939,7 @@ Deno.serve(async (req) => {
       base44.asServiceRole.entities.SupplyRoute.filter({ campaign_id }),
       base44.asServiceRole.entities.PlayerInfluenceLedger.filter({ campaign_id }),
       base44.asServiceRole.entities.VictoryTracker.filter({ campaign_id }),
+      base44.asServiceRole.entities.TerritoryDevelopment.filter({ campaign_id }),
     ]);
     const deployIncomes = {};
     for (const inc of incomeRecords) deployIncomes[inc.player_id] = inc;
@@ -928,7 +947,7 @@ Deno.serve(async (req) => {
     const snapshot = buildSnapshot({
       campaignId: campaign_id, round, phase, snapshotType: 'phase_end',
       territoryStates: finalTerritoryStates, activePlayers, deployIncomes,
-      enrichedData: { influence: endInfluence, regionalPools: endRegionalPools, buildings: endBuildings, supplyRoutes: endSupplyRoutes, objectives: endObjectives, victoryTrackers: endVictory },
+      enrichedData: { influence: endInfluence, regionalPools: endRegionalPools, buildings: endBuildings, supplyRoutes: endSupplyRoutes, objectives: endObjectives, victoryTrackers: endVictory, territoryDevelopment: endDev },
     });
     await base44.asServiceRole.entities.PhaseSnapshot.create(snapshot);
 
