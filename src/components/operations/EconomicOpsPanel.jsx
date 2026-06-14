@@ -147,10 +147,22 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
   const atLimit = stagedProjects.length >= (staging?.projects_limit ?? 1);
 
   const selectedBuildingDef = BUILDING_OPTIONS.find(b => b.type === selectedBuilding);
+  const isSupplyRoute = selectedBuilding === 'supply_route';
 
-  // Per-territory affordability: a territory can host a build only if:
-  //   1. It has all required resources in its own resource_storage
-  //   2. It has a free building slot compatible with the building's pillar
+  // Territories with an active Resource Hub (has_resource_hub flag)
+  const hubTerritories = myTerritories.filter(ts => ts.has_resource_hub);
+
+  // For supply_route: valid "hub" territories are those that have a resource hub
+  // AND have all required resources in their own storage (costs are paid from the hub territory).
+  function hubCanAffordSupplyRoute(ts, buildingDef) {
+    if (!buildingDef) return false;
+    const storage = ts.resource_storage ?? {};
+    return Object.entries(buildingDef.cost)
+      .filter(([r]) => SPENDABLE_RESOURCE_KEYS.includes(r))
+      .every(([r, needed]) => (storage[r] ?? 0) >= needed);
+  }
+
+  // For regular buildings: territory must have all resources in its own storage
   function territoryCanAffordBuilding(ts, buildingDef) {
     if (!buildingDef) return false;
     const storage = ts.resource_storage ?? {};
@@ -159,32 +171,16 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
       .every(([r, needed]) => (storage[r] ?? 0) >= needed);
   }
 
-  function territoryHasSlot(ts, buildingDef) {
-    if (!buildingDef) return false;
-    const pillar = buildingDef.pillar;
-    // Base omni slot available at dev level 1+. Map-defined slots unlock at higher levels.
-    // For simplicity in the operations phase, we include the base omni slot always (every owned territory).
-    // Additional map slots are covered by canPlaceBuilding which reads SC_TERRITORY_BY_ID.
-    // We merge base omni + map slots: check if pillar == 'omni' compatible OR map slot compatible.
-    const existingBuildingPillars = [];  // we don't have live building data here; rely on slot availability
-    // Every owned territory always has at least 1 omni slot (base dev level 1).
-    // canPlaceBuilding checks only the map-defined slots — so we also accept any territory for the base omni slot.
-    const scConfig = SC_TERRITORY_BY_ID[ts.territory_id];
-    if (!scConfig) return true; // non-SC territory — no restriction
-    // Check if territory has a compatible map slot OR the base omni slot is free
-    // Base omni slot: always present and can satisfy any pillar
-    return true; // All territories have base omni slot at dev level 1+
-  }
-
-  // Valid territories for selected building: must afford resources AND have a compatible slot
+  // For supply_route: "territory" selection means picking the hub territory whose resources fund it.
+  // validTerritories for supply_route = hub territories that can afford the cost.
+  // For other buildings: territories the player owns that can afford + have a slot (any owned = has base omni slot).
   const validTerritories = selectedBuildingDef
-    ? myTerritories.filter(ts =>
-        territoryCanAffordBuilding(ts, selectedBuildingDef) &&
-        territoryHasSlot(ts, selectedBuildingDef)
-      )
+    ? isSupplyRoute
+      ? hubTerritories.filter(ts => hubCanAffordSupplyRoute(ts, selectedBuildingDef))
+      : myTerritories.filter(ts => territoryCanAffordBuilding(ts, selectedBuildingDef))
     : [];
 
-  // Global affordability check: at least one territory can afford this building
+  // Affordability: at least one valid territory
   const canAfford = validTerritories.length > 0;
 
   const handleStage = async () => {
@@ -333,36 +329,28 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
                 </div>
               )}
 
-              {/* No resources stored in any territory */}
-              {myTerritories.length > 0 && myTerritories.every(ts => {
-                const s = ts.resource_storage ?? {};
-                return SPENDABLE_RESOURCE_KEYS.every(r => (s[r] ?? 0) === 0);
-              }) && (
-                <div className="flex items-center gap-2 px-2 py-2 rounded border border-amber-500/30 bg-amber-500/10 text-[10px] text-amber-400">
-                  <AlertCircle className="w-3 h-3 shrink-0" />
-                  No resources stored in any territory. Activate territories in the Planning Phase to generate resources.
-                </div>
-              )}
-
               {/* Building type grid with cost preview */}
               <div className="space-y-1.5">
                 {BUILDING_OPTIONS.map(b => {
                   const colors = PILLAR_COLORS[b.pillar];
                   const isSelected = selectedBuilding === b.type;
-                  // A building is buildable if at least one territory has all resources stored + a slot
-                  const anyTerritoryValid = myTerritories.some(ts => territoryCanAffordBuilding(ts, b));
                   const noTerritories = myTerritories.length === 0;
-                  const affordable = anyTerritoryValid;
+                  // Supply route: requires a resource hub territory with sufficient resources
+                  const affordable = b.type === 'supply_route'
+                    ? hubTerritories.some(ts => hubCanAffordSupplyRoute(ts, b))
+                    : myTerritories.some(ts => territoryCanAffordBuilding(ts, b));
+                  // Supply route needs a hub first
+                  const noHub = b.type === 'supply_route' && hubTerritories.length === 0;
 
                   return (
                     <button
                       key={b.type}
                       onClick={() => { setSelectedBuilding(isSelected ? null : b.type); setSelectedTerritory(''); }}
-                      disabled={noTerritories}
+                      disabled={noTerritories || noHub}
                       className={`w-full flex items-start gap-2 px-2 py-2 rounded border text-left transition-all ${
                         isSelected
                           ? `${colors.border} ${colors.bg}`
-                          : affordable && !noTerritories
+                          : affordable && !noTerritories && !noHub
                           ? 'border-border bg-muted/10 hover:border-muted-foreground/30'
                           : 'border-border bg-muted/5 opacity-60'
                       }`}
@@ -382,9 +370,14 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
                             </span>
                           ))}
                         </div>
-                        {!affordable && !noTerritories && isSelected && (
+                        {noHub && isSelected && (
+                          <p className="text-[9px] text-destructive mt-0.5">Requires a Resource Hub in one of your territories.</p>
+                        )}
+                        {!affordable && !noHub && !noTerritories && isSelected && (
                           <p className="text-[9px] text-destructive mt-0.5">
-                            No single territory has all required resources stored.
+                            {b.type === 'supply_route'
+                              ? 'No Resource Hub territory has sufficient resources.'
+                              : 'No single territory has all required resources stored.'}
                           </p>
                         )}
                       </div>
@@ -414,13 +407,22 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
                     })()}
                   </div>
 
-                  {/* Territory selector — only shows territories that can afford + have a slot */}
+                  {/* Territory selector — for supply_route selects the hub territory; otherwise target territory */}
                   <div className="space-y-1">
-                    <p className="text-[10px] text-muted-foreground">Select territory:</p>
-                    {validTerritories.length === 0 ? (
+                    <p className="text-[10px] text-muted-foreground">
+                      {isSupplyRoute ? 'Select Resource Hub territory (funds the route):' : 'Select territory:'}
+                    </p>
+                    {isSupplyRoute && hubTerritories.length === 0 ? (
                       <div className="flex items-center gap-2 px-2 py-2 rounded border border-destructive/30 bg-destructive/5 text-[10px] text-destructive">
                         <AlertCircle className="w-3 h-3 shrink-0" />
-                        No single territory has all required resources stored in it.
+                        You need a Resource Hub building before establishing a supply route.
+                      </div>
+                    ) : validTerritories.length === 0 ? (
+                      <div className="flex items-center gap-2 px-2 py-2 rounded border border-destructive/30 bg-destructive/5 text-[10px] text-destructive">
+                        <AlertCircle className="w-3 h-3 shrink-0" />
+                        {isSupplyRoute
+                          ? 'No Resource Hub territory has sufficient resources.'
+                          : 'No single territory has all required resources stored in it.'}
                       </div>
                     ) : (
                       <select
@@ -434,6 +436,11 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
                           return <option key={t.territory_id} value={t.territory_id}>{name}</option>;
                         })}
                       </select>
+                    )}
+                    {isSupplyRoute && selectedTerritory && (
+                      <p className="text-[9px] text-muted-foreground italic">
+                        The route will extend outward from this hub. Target unoccupied territories are set during battle resolution.
+                      </p>
                     )}
                   </div>
                 </div>

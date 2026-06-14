@@ -171,17 +171,31 @@ export default function TerritoryDetailPanel({
                   <span className={primaryCfg.color}>{primaryCfg.icon} {primaryCfg.label}</span>
                 </div>
               )}
-              {secondaryCfg && (
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Secondary <span className="text-[10px] text-muted-foreground/60">(40%)</span></span>
-                  <span className={secondaryCfg.color}>{secondaryCfg.icon} {secondaryCfg.label}</span>
-                </div>
+              {secondaryResource && (
+                devRecord && (devRecord.development_level ?? 1) >= 2 ? (
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Secondary <span className="text-[10px] text-muted-foreground/60">(40%)</span></span>
+                    <span className={secondaryCfg.color}>{secondaryCfg.icon} {secondaryCfg.label}</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between opacity-40">
+                    <span className="text-muted-foreground flex items-center gap-1">Secondary <Lock className="w-2.5 h-2.5" /> <span className="text-[9px]">Lv 2</span></span>
+                    <span className="text-muted-foreground">{secondaryCfg?.icon} {secondaryCfg?.label}</span>
+                  </div>
+                )
               )}
-              {tertiaryCfg && (
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Tertiary <span className="text-[10px] text-muted-foreground/60">(10%)</span></span>
-                  <span className={tertiaryCfg.color}>{tertiaryCfg.icon} {tertiaryCfg.label}</span>
-                </div>
+              {tertiaryResource && (
+                devRecord && (devRecord.development_level ?? 1) >= 4 ? (
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Tertiary <span className="text-[10px] text-muted-foreground/60">(10%)</span></span>
+                    <span className={tertiaryCfg.color}>{tertiaryCfg.icon} {tertiaryCfg.label}</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between opacity-40">
+                    <span className="text-muted-foreground flex items-center gap-1">Tertiary <Lock className="w-2.5 h-2.5" /> <span className="text-[9px]">Lv 4</span></span>
+                    <span className="text-muted-foreground">{tertiaryCfg?.icon} {tertiaryCfg?.label}</span>
+                  </div>
+                )
               )}
               {scConfig?.food_bonus > 0 && (
                 <div className="flex items-center justify-between">
