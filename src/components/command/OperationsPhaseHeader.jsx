@@ -15,6 +15,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Lock, Loader2, Shield, Coins, Feather, CheckCircle2, RefreshCw, Users } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
+import { useOperationsStagingStore } from '@/features/campaigns/operations/useOperationsStagingStore';
 
 function PillarProgress({ icon: Icon, label, staged, total, isLocked, color, note }) {
   const done = isLocked;
@@ -47,11 +48,17 @@ function PillarProgress({ icon: Icon, label, staged, total, isLocked, color, not
 }
 
 export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlayerId, players, onLocked, onStatusLoaded }) {
+  const actingId = actingAsPlayerId ?? myPlayer?.id;
+  const round = campaign?.current_round ?? 1;
+
+  const stagingStore = useOperationsStagingStore({ campaignId: campaign?.id, playerId: actingId, round });
+
   const [status, setStatus] = useState(null);
   const [adminStatus, setAdminStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [locking, setLocking] = useState(false);
   const [error, setError] = useState(null);
+  const [localTick, setLocalTick] = useState(0);
   const retryRef = useRef(null);
   const lockInFlightRef = useRef(false);
 
@@ -104,6 +111,13 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
     return () => { if (retryRef.current) clearTimeout(retryRef.current); };
   }, [load]);
 
+  // Listen for localStorage changes from DiplomaticOpsPanel / EconomicOpsPanel
+  useEffect(() => {
+    const onStorage = () => setLocalTick(t => t + 1);
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
   const handleLock = async () => {
     if (!campaign?.id || lockInFlightRef.current) return;
     lockInFlightRef.current = true;
@@ -115,6 +129,7 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
         campaign_id: campaign.id,
         acting_as_player_id: actingAsPlayerId ?? undefined,
       });
+      stagingStore.clearAll();
       await load();
       onLocked?.();
     } catch (e) {
@@ -159,9 +174,16 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
   const lockedCount = playerLocks.filter(p => p.operations_locked).length;
   const totalPlayers = playerLocks.length;
 
-  const militaryReady = military?.is_locked || military?.ready;
-  const economicReady = economic?.is_locked || economic?.ready;
-  const diplomaticReady = diplomatic?.is_locked || diplomatic?.ready;
+  // Local-first overrides: use localStorage counts for immediate reactivity
+  const localDiplo = stagingStore.getDiplomaticStaging();
+  const localEcon  = stagingStore.getEconomicStaging();
+
+  const diploCount = localDiplo != null ? localDiplo.length : (diplomatic?.actions_staged ?? 0);
+  const econCount  = localEcon  != null ? localEcon.length  : (economic?.projects_staged ?? 0);
+
+  const militaryReady   = military?.is_locked || military?.ready;
+  const economicReady   = economic?.is_locked || econCount >= 0; // always ready (optional)
+  const diplomaticReady = diplomatic?.is_locked || diploCount >= 0; // always ready (optional)
   const allReady = militaryReady && economicReady && diplomaticReady;
 
   return (
@@ -174,15 +196,15 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
       />
       <PillarProgress
         icon={Coins} label="Economic"
-        staged={economic?.projects_staged ?? 0} total={economic?.projects_limit ?? 1}
+        staged={econCount} total={economic?.projects_limit ?? 1}
         isLocked={economic?.is_locked} color="text-amber-400"
-        note={`${economic?.projects_staged ?? 0} project${(economic?.projects_staged ?? 0) !== 1 ? 's' : ''} staged`}
+        note={`${econCount} project${econCount !== 1 ? 's' : ''} staged`}
       />
       <PillarProgress
         icon={Feather} label="Diplomatic"
-        staged={diplomatic?.actions_staged ?? 0} total={Math.max(diplomatic?.actions_staged ?? 0, 1)}
+        staged={diploCount} total={Math.max(diploCount, 1)}
         isLocked={diplomatic?.is_locked} color="text-purple-400"
-        note={`${diplomatic?.actions_staged ?? 0} action${(diplomatic?.actions_staged ?? 0) !== 1 ? 's' : ''} staged`}
+        note={`${diploCount} action${diploCount !== 1 ? 's' : ''} staged`}
       />
 
       {error && <p className="text-[10px] text-destructive">{error}</p>}

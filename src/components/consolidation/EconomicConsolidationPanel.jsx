@@ -15,6 +15,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Loader2, RefreshCw, Coins, Package, Truck, Plus, X, ArrowRight, Shield, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { getAdjacentTerritories } from '@/services/maps/mapAdjacency';
+import { useConsolidationStagingStore } from '@/features/campaigns/consolidation/useConsolidationStagingStore';
 
 const RESOURCE_ICONS = { gold: '🟡', iron: '⚙️', timber: '🪵', stone: '🪨', food: '🌾' };
 const RESOURCE_TYPES = ['gold', 'iron', 'timber', 'stone', 'food'];
@@ -298,6 +299,10 @@ function NewCaravanForm({ campaign, actingPlayerId, mapDef, stateById, players, 
 // ── Main Panel ────────────────────────────────────────────────────────────────
 export default function EconomicConsolidationPanel({ campaign, myPlayer, actingAsPlayerId, mapDef, players, stateById }) {
   const actingPlayerId = actingAsPlayerId ?? myPlayer?.id;
+  const round = campaign?.current_round ?? 1;
+
+  const stagingStore = useConsolidationStagingStore({ campaignId: campaign?.id, playerId: actingPlayerId, round });
+
   const [caravans, setCaravans] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -350,7 +355,16 @@ export default function EconomicConsolidationPanel({ campaign, myPlayer, actingA
         acting_as_player_id: actingPlayerId,
         caravan_id: caravanId,
       });
-      load();
+      // Re-fetch and mirror to localStorage
+      const res = await base44.functions.invoke('fortifyPhase', {
+        action: 'getCaravans',
+        campaign_id: campaign.id,
+        acting_as_player_id: actingPlayerId,
+      }).catch(() => ({ data: { caravans: [] } }));
+      const updated = res?.data?.caravans ?? [];
+      setCaravans(updated);
+      stagingStore.setEconomicStaging(updated);
+      window.dispatchEvent(new Event('storage'));
     } catch (e) {
       setError(e?.response?.data?.error ?? 'Failed to remove caravan.');
     }
@@ -412,7 +426,18 @@ export default function EconomicConsolidationPanel({ campaign, myPlayer, actingA
               stateById={stateById ?? {}}
               players={players ?? []}
               adjacencyMap={adjacencyMap}
-              onStage={() => { setShowNewForm(false); load(); }}
+              onStage={async () => {
+                setShowNewForm(false);
+                await load();
+                // Mirror to localStorage after load
+                const updatedCaravans = await base44.functions.invoke('fortifyPhase', {
+                  action: 'getCaravans',
+                  campaign_id: campaign.id,
+                  acting_as_player_id: actingPlayerId,
+                }).then(r => r?.data?.caravans ?? []).catch(() => []);
+                stagingStore.setEconomicStaging(updatedCaravans);
+                window.dispatchEvent(new Event('storage'));
+              }}
               onCancel={() => setShowNewForm(false)}
             />
           )}

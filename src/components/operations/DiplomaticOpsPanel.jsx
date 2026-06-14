@@ -26,6 +26,7 @@ import { base44 } from '@/api/base44Client';
 import { INFLUENCE_ACTION_DEFINITIONS } from '@/config/influenceActionFramework';
 import { OPERATION_DEFINITIONS } from '@/config/operationsConfig';
 import OpsObjectiveHand from './OpsObjectiveHand';
+import { useOperationsStagingStore } from '@/features/campaigns/operations/useOperationsStagingStore';
 
 // All influence actions unified: intel + diplomatic + battle-card-gen
 const ALL_INFLUENCE_ACTIONS = [
@@ -265,6 +266,9 @@ function getTerritoryName(mapDef, tid) {
 
 export default function DiplomaticOpsPanel({ campaign, myPlayer, actingAsPlayerId, players, mapDef, stateById, operationsStatus, onStaged }) {
   const actingPlayerId = actingAsPlayerId ?? myPlayer?.id;
+  const round = campaign?.current_round ?? 1;
+
+  const stagingStore = useOperationsStagingStore({ campaignId: campaign?.id, playerId: actingPlayerId, round });
 
   const [staging, setStaging] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -307,7 +311,16 @@ export default function DiplomaticOpsPanel({ campaign, myPlayer, actingAsPlayerI
       acting_as_player_id: actingPlayerId,
       ...params,
     });
-    await load();
+    // Refresh server state and mirror to localStorage for reactive header
+    const res = await base44.functions.invoke('operationsLockPhase', {
+      action: 'getOperationsStatus',
+      campaign_id: campaign.id,
+      acting_as_player_id: actingPlayerId,
+    });
+    const serverStaged = res.data?.diplomatic?.staged ?? [];
+    stagingStore.setDiplomaticStaging(serverStaged);
+    window.dispatchEvent(new Event('storage'));
+    setStaging(res.data?.diplomatic ?? null);
     onStaged?.();
   };
 
@@ -321,7 +334,16 @@ export default function DiplomaticOpsPanel({ campaign, myPlayer, actingAsPlayerI
         pillar: 'diplomatic',
         index,
       });
-      await load();
+      // Mirror updated list to localStorage
+      const res = await base44.functions.invoke('operationsLockPhase', {
+        action: 'getOperationsStatus',
+        campaign_id: campaign.id,
+        acting_as_player_id: actingPlayerId,
+      });
+      const serverStaged = res.data?.diplomatic?.staged ?? [];
+      stagingStore.setDiplomaticStaging(serverStaged);
+      window.dispatchEvent(new Event('storage'));
+      setStaging(res.data?.diplomatic ?? null);
       onStaged?.();
     } catch (e) {
       setRemoveError(e?.response?.data?.error ?? 'Failed to remove action');

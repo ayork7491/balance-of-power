@@ -8,6 +8,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Lock, Loader2, Shield, Coins, Feather, CheckCircle2, RefreshCw, Users } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
+import { useConsolidationStagingStore } from '@/features/campaigns/consolidation/useConsolidationStagingStore';
 
 function PillarProgress({ icon: Icon, label, note, isLocked, color }) {
   return (
@@ -29,14 +30,17 @@ function PillarProgress({ icon: Icon, label, note, isLocked, color }) {
 }
 
 export default function ConsolidationPhaseHeader({ campaign, myPlayer, actingAsPlayerId, players, onLocked, onStatusLoaded }) {
+  const actingId = actingAsPlayerId ?? myPlayer?.id;
+  const round = campaign?.current_round ?? 1;
+
+  const stagingStore = useConsolidationStagingStore({ campaignId: campaign?.id, playerId: actingId, round });
+
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [locking, setLocking] = useState(false);
   const [error, setError] = useState(null);
   const [adminLocks, setAdminLocks] = useState([]);
-
-  const actingId = actingAsPlayerId ?? myPlayer?.id;
-  const round = campaign?.current_round ?? 1;
+  const [localTick, setLocalTick] = useState(0);
 
   const load = useCallback(async () => {
     if (!campaign?.id || !actingId) return;
@@ -74,6 +78,13 @@ export default function ConsolidationPhaseHeader({ campaign, myPlayer, actingAsP
 
   useEffect(() => { load(); }, [load]);
 
+  // Listen for localStorage changes from movement/caravan panels
+  useEffect(() => {
+    const onStorage = () => setLocalTick(t => t + 1);
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
   const handleLock = async () => {
     if (!campaign?.id) return;
     setLocking(true);
@@ -84,6 +95,7 @@ export default function ConsolidationPhaseHeader({ campaign, myPlayer, actingAsP
         campaign_id: campaign.id,
         acting_as_player_id: actingAsPlayerId ?? undefined,
       });
+      stagingStore.clearAll();
       await load();
       onLocked?.();
     } catch (e) {
@@ -102,7 +114,12 @@ export default function ConsolidationPhaseHeader({ campaign, myPlayer, actingAsP
   }
 
   const isLocked = status?.is_locked ?? false;
-  const movementsStaged = status?.movements_staged ?? 0;
+
+  // Local-first counts for immediate reactivity
+  const localMovements = stagingStore.getMilitaryStaging();
+  const localCaravans  = stagingStore.getEconomicStaging();
+  const movementsStaged = localMovements != null ? localMovements.length : (status?.movements_staged ?? 0);
+  const caravansStaged  = localCaravans  != null ? localCaravans.length  : 0;
 
   const lockedPlayers = adminLocks.filter(d => d.is_locked);
   const activePlayers = players?.filter(p => !p.is_eliminated) ?? [];
@@ -118,12 +135,12 @@ export default function ConsolidationPhaseHeader({ campaign, myPlayer, actingAsP
       />
       <PillarProgress
         icon={Coins} label="Economic"
-        note="caravan status"
+        note={`${caravansStaged} caravan${caravansStaged !== 1 ? 's' : ''} staged`}
         isLocked={isLocked} color="text-amber-400"
       />
       <PillarProgress
         icon={Feather} label="Diplomatic"
-        note="trade actions"
+        note="trade proposals"
         isLocked={isLocked} color="text-purple-400"
       />
 

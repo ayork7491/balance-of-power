@@ -11,6 +11,7 @@ import { Loader2, RefreshCw, HardHat, X, CheckCircle2, Hammer, AlertCircle } fro
 import { base44 } from '@/api/base44Client';
 import { ALL_BUILDING_DEFINITIONS } from '@/config/buildingDefinitions.ts';
 import ResourceSummaryPanel from './ResourceSummaryPanel';
+import { useOperationsStagingStore } from '@/features/campaigns/operations/useOperationsStagingStore';
 
 const PILLAR_COLORS = {
   military:   { text: 'text-red-400',    border: 'border-red-500/30',    bg: 'bg-red-500/10' },
@@ -91,6 +92,9 @@ function MissingResources({ cost, resources }) {
 
 export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId, players, mapDef, stateById, operationsStatus, onStaged }) {
   const actingPlayerId = actingAsPlayerId ?? myPlayer?.id;
+  const round = campaign?.current_round ?? 1;
+
+  const stagingStore = useOperationsStagingStore({ campaignId: campaign?.id, playerId: actingPlayerId, round });
 
   const [staging, setStaging] = useState(null);
   const [resources, setResources] = useState({});
@@ -152,7 +156,17 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
       });
       setSelectedBuilding(null);
       setSelectedTerritory('');
-      await load();
+      // Mirror to localStorage for reactive header
+      const res = await base44.functions.invoke('operationsLockPhase', {
+        action: 'getOperationsStatus',
+        campaign_id: campaign.id,
+        acting_as_player_id: actingPlayerId,
+      });
+      const serverStaged = res.data?.economic?.staged ?? [];
+      stagingStore.setEconomicStaging(serverStaged);
+      window.dispatchEvent(new Event('storage'));
+      setStaging(res.data?.economic ?? null);
+      if (res.data?.economic?.resources) setResources(res.data.economic.resources);
       onStaged?.();
     } catch (e) {
       setError(e?.response?.data?.error ?? 'Failed to stage project');
@@ -171,7 +185,16 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
         pillar: 'economic',
         index,
       });
-      await load();
+      // Mirror to localStorage for reactive header
+      const res = await base44.functions.invoke('operationsLockPhase', {
+        action: 'getOperationsStatus',
+        campaign_id: campaign.id,
+        acting_as_player_id: actingPlayerId,
+      });
+      const serverStaged = res.data?.economic?.staged ?? [];
+      stagingStore.setEconomicStaging(serverStaged);
+      window.dispatchEvent(new Event('storage'));
+      setStaging(res.data?.economic ?? null);
       onStaged?.();
     } catch (e) {
       setRemoveError(e?.response?.data?.error ?? 'Failed to remove project');

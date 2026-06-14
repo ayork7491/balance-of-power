@@ -16,6 +16,7 @@ import { base44 } from '@/api/base44Client';
 import { useFortifyPhase } from '@/features/campaigns/fortify/useFortifyPhase';
 import MovementSelector from '@/components/phases/fortify/MovementSelector';
 import { useCampaignTestContext } from '@/features/adminTestMode/CampaignTestContext';
+import { useConsolidationStagingStore } from '@/features/campaigns/consolidation/useConsolidationStagingStore';
 
 export default function MilitaryConsolidationPanel({
   campaign,
@@ -29,6 +30,12 @@ export default function MilitaryConsolidationPanel({
 }) {
   const { actingAsCampaignPlayerId, effectiveActingPlayer } = useCampaignTestContext();
   const actionPlayer = effectiveActingPlayer ?? myPlayer;
+
+  const stagingStore = useConsolidationStagingStore({
+    campaignId: campaign?.id,
+    playerId: actionPlayer?.id,
+    round: campaign?.current_round ?? 1,
+  });
 
   const [movements, setMovements] = useState([]);
   const [error, setError] = useState(null);
@@ -74,7 +81,11 @@ export default function MilitaryConsolidationPanel({
         committed_troops: troops,
         ...actingPayload(),
       });
-      setMovements(res.data.movements);
+      const updatedMovements = res.data.movements;
+      setMovements(updatedMovements);
+      // Mirror to localStorage for reactive ConsolidationPhaseHeader
+      stagingStore.setMilitaryStaging(updatedMovements);
+      window.dispatchEvent(new Event('storage'));
       setSuccess('Fortification staged');
       reload();
     } catch (err) {
@@ -91,7 +102,11 @@ export default function MilitaryConsolidationPanel({
         movement_id: movementId,
         ...actingPayload(),
       });
-      setMovements(res.data.movements);
+      const updatedMovements = res.data.movements;
+      setMovements(updatedMovements);
+      // Mirror to localStorage for reactive ConsolidationPhaseHeader
+      stagingStore.setMilitaryStaging(updatedMovements);
+      window.dispatchEvent(new Event('storage'));
       setSuccess('Movement removed');
       reload();
     } catch (err) {
