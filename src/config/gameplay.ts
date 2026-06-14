@@ -64,9 +64,6 @@ export const BATTLE_SCALING = {
 } as const;
 
 /**
- * STRUCTURE_COSTS — deliberately omitted from V1.
- *
- * The resource/economy system (brick, lumber, wool, grain, ore) is not implemented yet.
- * Structure costs will be added here once the resource generation and spending loop is designed.
- * Placeholder types live in types/Resources.ts and config/theme.ts for reference.
+ * STRUCTURE_COSTS — see config/buildingDefinitions.ts for current building costs.
+ * Resources: gold, iron, timber, stone, food (canonical Sprint 3B+ names).
  */

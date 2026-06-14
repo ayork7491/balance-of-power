@@ -95,8 +95,14 @@ export function calculateTroopBonus(totalTroops, settings = {}, avgBattleSize = 
  * @param {Array<{id, control_bonus}>} mapRegions - from getMapMetadata().regions
  * @returns {number}
  */
-export function calculateRegionBonus(playerId, allTerritoryStates, mapTerritories, mapRegions) {
+/**
+ * calculateRegionBonus — scales control_bonus by avgBattleSize so bonuses remain
+ * meaningful regardless of campaign troop scale.
+ * Scaled bonus = floor(control_bonus * (avgBattleSize / 1000)), minimum 1 per controlled region.
+ */
+export function calculateRegionBonus(playerId, allTerritoryStates, mapTerritories, mapRegions, avgBattleSize = DEPLOY_DEFAULTS.defaultAvgBattleSize) {
   let bonus = 0;
+  const scaleFactor = avgBattleSize / 1000;
   for (const region of (mapRegions ?? [])) {
     const regionTerrs = mapTerritories.filter(t => t.region_id === region.id);
     if (!regionTerrs.length) continue;
@@ -104,7 +110,7 @@ export function calculateRegionBonus(playerId, allTerritoryStates, mapTerritorie
       const state = allTerritoryStates.find(s => s.territory_id === t.territory_id);
       return state?.owner_player_id === playerId;
     });
-    if (allOwned) bonus += region.control_bonus ?? 0;
+    if (allOwned) bonus += Math.max(1, Math.floor((region.control_bonus ?? 0) * scaleFactor));
   }
   return bonus;
 }
@@ -119,8 +125,12 @@ export function calculateRegionBonus(playerId, allTerritoryStates, mapTerritorie
  * @param {Array<{id, control_bonus}>} mapContinents - from getMapMetadata().continents
  * @returns {number}
  */
-export function calculateContinentBonus(playerId, allTerritoryStates, mapTerritories, mapContinents) {
+/**
+ * calculateContinentBonus — scales by avgBattleSize same as region bonus.
+ */
+export function calculateContinentBonus(playerId, allTerritoryStates, mapTerritories, mapContinents, avgBattleSize = DEPLOY_DEFAULTS.defaultAvgBattleSize) {
   let bonus = 0;
+  const scaleFactor = avgBattleSize / 1000;
   for (const continent of (mapContinents ?? [])) {
     const contTerrs = mapTerritories.filter(t => t.continent_id === continent.id);
     if (!contTerrs.length) continue;
@@ -128,7 +138,7 @@ export function calculateContinentBonus(playerId, allTerritoryStates, mapTerrito
       const state = allTerritoryStates.find(s => s.territory_id === t.territory_id);
       return state?.owner_player_id === playerId;
     });
-    if (allOwned) bonus += continent.control_bonus ?? 0;
+    if (allOwned) bonus += Math.max(1, Math.floor((continent.control_bonus ?? 0) * scaleFactor));
   }
   return bonus;
 }

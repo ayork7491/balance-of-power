@@ -38,13 +38,9 @@
  * NO resource is generated for territories without a resource_distribution.
  */
 
-// Sprint 3A canonical resources — used for new PlayerResourceLedger
-// Old V1 keys (brick/lumber/wool/grain/ore) are kept below for backward
-// compatibility with existing mapMetadata.js resource_distribution presets.
+// Canonical resource keys — gold, iron, timber, stone, food.
+// Legacy V1 keys (brick, lumber, wool, grain, ore) have been removed.
 export const RESOURCE_KEYS = ['gold', 'iron', 'timber', 'stone', 'food'];
-
-// V1 legacy keys — still used by mapMetadata.js distributions (Sprint 3B: remove)
-export const V1_RESOURCES = ['brick', 'lumber', 'wool', 'grain', 'ore'];
 
 /**
  * seededRandom
@@ -100,8 +96,7 @@ export function rollWeightedResource(dist, roll) {
  */
 export function generateResourcesForPlayer(playerId, round, allTerritoryStates, mapTerritories, campaignId) {
   const ownedStates = allTerritoryStates.filter(s => s.owner_player_id === playerId);
-  // Initialize with V1 keys (Sprint 3B: change to new canonical keys)
-  const totals = { brick: 0, lumber: 0, wool: 0, grain: 0, ore: 0 };
+  const totals = { gold: 0, iron: 0, timber: 0, stone: 0, food: 0 };
 
   for (const ts of ownedStates) {
     const def = mapTerritories.find(t => t.territory_id === ts.territory_id);

@@ -280,22 +280,49 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
             <div className="space-y-2 pt-1 border-t border-border">
               <p className="text-[10px] font-display tracking-wider uppercase text-muted-foreground">Stage a Construction Project</p>
 
+              {/* No territories warning */}
+              {myTerritories.length === 0 && (
+                <div className="flex items-center gap-2 px-2 py-2 rounded border border-amber-500/30 bg-amber-500/10 text-[10px] text-amber-400">
+                  <AlertCircle className="w-3 h-3 shrink-0" />
+                  You must own at least one territory to construct a building.
+                </div>
+              )}
+
+              {/* No resources at all warning */}
+              {myTerritories.length > 0 && Object.values(resources).every(v => (v ?? 0) === 0) && (
+                <div className="flex items-center gap-2 px-2 py-2 rounded border border-amber-500/30 bg-amber-500/10 text-[10px] text-amber-400">
+                  <AlertCircle className="w-3 h-3 shrink-0" />
+                  No resources available. Activate territories in the Planning Phase to generate resources.
+                </div>
+              )}
+
               {/* Building type grid with cost preview */}
               <div className="space-y-1.5">
                 {BUILDING_OPTIONS.map(b => {
                   const colors = PILLAR_COLORS[b.pillar];
                   const isSelected = selectedBuilding === b.type;
                   const affordable = canAffordBuilding(b.cost, resources);
+                  // Compute exactly what's missing for this building
+                  const missingResources = Object.entries(b.cost)
+                    .filter(([r, needed]) => (resources[r] ?? 0) < needed)
+                    .map(([r, needed]) => `${RESOURCE_ICONS[r] ?? r} ${needed - (resources[r] ?? 0)} more ${r}`);
+                  const noTerritories = myTerritories.length === 0;
+                  const blockedReasons = [
+                    ...missingResources,
+                    noTerritories ? 'No territories owned' : '',
+                  ].filter(Boolean);
+
                   return (
                     <button
                       key={b.type}
                       onClick={() => setSelectedBuilding(isSelected ? null : b.type)}
+                      disabled={noTerritories}
                       className={`w-full flex items-start gap-2 px-2 py-2 rounded border text-left transition-all ${
                         isSelected
                           ? `${colors.border} ${colors.bg}`
-                          : affordable
+                          : affordable && !noTerritories
                           ? 'border-border bg-muted/10 hover:border-muted-foreground/30'
-                          : 'border-border bg-muted/5 opacity-50'
+                          : 'border-border bg-muted/5 opacity-60'
                       }`}
                     >
                       <span className="text-sm shrink-0 mt-0.5">{b.icon}</span>
@@ -305,7 +332,6 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
                             {b.label}
                           </p>
                           <span className={`text-[9px] capitalize px-1 py-0.5 rounded border ${colors.border} ${colors.text}`}>{b.pillar}</span>
-                          {!affordable && <span className="text-[9px] text-destructive">insufficient</span>}
                         </div>
                         <div className="flex flex-wrap gap-1 mt-0.5">
                           {Object.entries(b.cost).filter(([, v]) => v > 0).map(([r, needed]) => {
@@ -313,11 +339,21 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
                             const ok = have >= needed;
                             return (
                               <span key={r} className={`text-[9px] font-mono ${ok ? 'text-muted-foreground' : 'text-destructive'}`}>
-                                {RESOURCE_ICONS[r]}{needed}
+                                {RESOURCE_ICONS[r]}{needed}{!ok && `(${have})`}
                               </span>
                             );
                           })}
                         </div>
+                        {/* Explicit blocker list when not affordable */}
+                        {!affordable && isSelected && blockedReasons.length > 0 && (
+                          <div className="mt-1 space-y-0.5">
+                            {blockedReasons.map((r, i) => (
+                              <p key={i} className="text-[9px] text-destructive flex items-center gap-0.5">
+                                <AlertCircle className="w-2.5 h-2.5 shrink-0" /> Missing: {r}
+                              </p>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </button>
                   );

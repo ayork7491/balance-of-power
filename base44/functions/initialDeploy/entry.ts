@@ -382,6 +382,73 @@ Deno.serve(async (req) => {
       console.warn('[processPhaseEnd] Starting influence seed failed (non-fatal):', infErr?.message);
     }
 
+    // ── STEP 8: Seed starting resources for all owned territories ─────────
+    // Players enter Round 1 Planning with 1 of each territory's primary resource
+    // already in storage, so they can build and act immediately in Operations.
+    try {
+      const SC_RESOURCE_TYPES = {
+        I1:'iron',  I2:'iron',  I3:'stone', I4:'iron',  I5:'stone',
+        I6:'timber',I7:'timber',I8:'iron',
+        W1:'timber',W2:'stone', W3:'timber',W4:'timber',W5:'timber',
+        W6:'timber',W7:'gold',  W8:'gold',  W9:'iron',
+        B1:'stone', B2:'stone', B3:'stone', B4:'stone', B5:'iron',
+        B6:'stone', B7:'stone', B8:'stone', B9:'iron',  B10:'gold',
+        S1:'timber',S2:'gold',  S3:'iron',  S4:'gold',  S5:'gold',
+        S6:'stone', S7:'timber',S8:'gold',  S9:'iron',
+        C1:'iron',  C2:'gold',  C3:'iron',  C4:'gold',  C5:'gold',
+        C6:'gold',  C7:'stone', C8:'gold',
+      };
+      const VALID_RESOURCES = ['gold', 'iron', 'timber', 'stone', 'food'];
+      const emptyStorage = () => ({ gold: 0, iron: 0, timber: 0, stone: 0, food: 0 });
+
+      const startingStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+      const ownedStarting = startingStates.filter(s => s.owner_player_id != null);
+
+      // Generate 1 primary resource per territory as starting stock
+      const ledgerAccum = {};
+      for (const ts of ownedStarting) {
+        const primary = SC_RESOURCE_TYPES[ts.territory_id] ?? ts.resource_type ?? 'gold';
+        const before = { ...emptyStorage(), ...(ts.resource_storage ?? {}) };
+        const after = { ...before, [primary]: (before[primary] ?? 0) + 1 };
+        await base44.asServiceRole.entities.TerritoryState.update(ts.id, { resource_storage: after });
+        if (!ledgerAccum[ts.owner_player_id]) ledgerAccum[ts.owner_player_id] = emptyStorage();
+        ledgerAccum[ts.owner_player_id][primary] = (ledgerAccum[ts.owner_player_id][primary] ?? 0) + 1;
+      }
+
+      // Also seed ledgers so resources appear immediately available
+      for (const [playerId, gained] of Object.entries(ledgerAccum)) {
+        const existing = await base44.asServiceRole.entities.PlayerResourceLedger.filter({ campaign_id, player_id: playerId });
+        const prev = existing[0];
+        const merged = { ...emptyStorage(), ...(prev ?? {}) };
+        for (const r of VALID_RESOURCES) merged[r] = (merged[r] ?? 0) + (gained[r] ?? 0);
+        if (prev) {
+          await base44.asServiceRole.entities.PlayerResourceLedger.update(prev.id, {
+            ...merged, updated_at_round: 1, updated_at_phase: 'initial_deploy',
+          });
+        } else {
+          await base44.asServiceRole.entities.PlayerResourceLedger.create({
+            campaign_id, player_id: playerId, ...merged,
+            updated_at_round: 1, updated_at_phase: 'initial_deploy',
+          });
+        }
+      }
+
+      console.log('[processPhaseEnd] Starting resources seeded for', Object.keys(ledgerAccum).length, 'players.');
+    } catch (resErr) {
+      console.warn('[processPhaseEnd] Starting resources seed failed (non-fatal):', resErr?.message);
+    }
+
+    // ── STEP 9: Initialize territory development records ─────────────────
+    try {
+      await base44.asServiceRole.functions.invoke('territoryDevelopment', {
+        action: 'initDevelopment',
+        campaign_id,
+      });
+      console.log('[processPhaseEnd] Territory development initialized.');
+    } catch (devErr) {
+      console.warn('[processPhaseEnd] Territory development init failed (non-fatal):', devErr?.message);
+    }
+
     return Response.json({
       success: true,
       next_phase: 'deploy',

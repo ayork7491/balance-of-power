@@ -37,6 +37,7 @@ import EconomicConsolidationPanel from '@/components/consolidation/EconomicConso
 import DiplomaticConsolidationPanel from '@/components/consolidation/DiplomaticConsolidationPanel';
 import AdminConsolidationTab from '@/components/consolidation/AdminConsolidationTab';
 import PhaseAuditExport from '@/components/command/PhaseAuditExport';
+import TerritoryDevelopmentPanel from '@/components/territory/TerritoryDevelopmentPanel';
 
 // Setup panels
 import FactionSelectionPanel from '@/components/setup/FactionSelectionPanel';
@@ -424,10 +425,16 @@ function EconomicContent({ campaign, players, myPlayer, stateById, mapDef, onPha
           operationsStatus={operationsStatus}
         />
       )}
-      {/* Other phases: full resource panel + logistics */}
+      {/* Other phases: full resource panel + logistics + development */}
       {!isDeploy && !isAttack && (
         <>
           <ResourcePhasePanel campaign={campaign} myPlayer={myPlayer} mapDef={mapDef} isAdmin={isAdmin} />
+          <div className="border-t border-border">
+            <TerritoryDevelopmentPanel
+              campaign={campaign} myPlayer={myPlayer}
+              actingAsPlayerId={actingAsPlayerId} players={players} mapDef={mapDef}
+            />
+          </div>
           <div className="border-t border-border">
             <LogisticsPanel campaign={campaign} myPlayer={myPlayer} mapDef={mapDef} />
           </div>

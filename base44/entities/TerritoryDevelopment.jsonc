@@ -1,0 +1,69 @@
+{
+  "name": "TerritoryDevelopment",
+  "type": "object",
+  "description": "Tracks development level and capital status for each owned territory. One record per territory per campaign. Development is fueled by food investment. Higher levels unlock additional resources and building slots.",
+  "properties": {
+    "campaign_id": {
+      "type": "string",
+      "description": "FK \u2192 Campaign.id"
+    },
+    "territory_id": {
+      "type": "string",
+      "description": "Canonical territory_id (e.g. 'B2', 'S5')."
+    },
+    "owner_player_id": {
+      "type": "string",
+      "description": "FK \u2192 CampaignPlayer.id \u2014 current owner. Updated when territory changes hands."
+    },
+    "development_level": {
+      "type": "number",
+      "default": 1,
+      "description": "Current development level. Level 1 = primary resource only, 1 omni slot. Level 2 = secondary unlocked. Level 3 = first map slot unlocked. Level 4 = tertiary unlocked. Level 5+ = additional map slots."
+    },
+    "development_progress": {
+      "type": "number",
+      "default": 0,
+      "description": "Accumulated food invested toward the next level. Resets to 0 on level-up."
+    },
+    "food_to_next_level": {
+      "type": "number",
+      "default": 3,
+      "description": "Food required to reach the next development level. Increases with each level."
+    },
+    "total_food_invested": {
+      "type": "number",
+      "default": 0,
+      "description": "Total food ever invested into this territory across all rounds."
+    },
+    "is_capital": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if this is the player's designated capital territory. Each player may have at most one capital."
+    },
+    "capital_set_round": {
+      "type": "number",
+      "description": "Round when capital was designated."
+    },
+    "unlocked_resources": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Resource tiers unlocked by development. ['primary'] at level 1, ['primary','secondary'] at level 2, etc."
+    },
+    "unlocked_slot_count": {
+      "type": "number",
+      "default": 1,
+      "description": "Total building slots unlocked. Starts at 1 (omni slot). Map-defined slots unlock at levels 3, 5+."
+    },
+    "last_updated_round": {
+      "type": "number",
+      "default": 0
+    }
+  },
+  "required": [
+    "campaign_id",
+    "territory_id"
+  ]
+}

@@ -40,15 +40,17 @@
 // ─── Resource distribution presets (must match mapData.ts RES constants) ──────
 // Weights sum to 100. Used for 1-resource-per-territory roll each deploy round.
 
+// ─── Canonical resource names: gold, iron, timber, stone, food ─────────────────
+// Legacy V1 keys (brick, lumber, wool, grain, ore) have been removed.
 const RES = {
-  mountains: { brick: 10, lumber: 5,  wool: 5,  grain: 10, ore: 70 },
-  forest:    { brick: 5,  lumber: 60, wool: 15, grain: 10, ore: 10 },
-  swamp:     { brick: 15, lumber: 20, wool: 30, grain: 25, ore: 10 },
-  tundra:    { brick: 20, lumber: 10, wool: 15, grain: 15, ore: 40 },
-  coastal:   { brick: 10, lumber: 10, wool: 35, grain: 30, ore: 15 },
-  desert:    { brick: 30, lumber: 5,  wool: 10, grain: 15, ore: 40 },
-  urban:     { brick: 25, lumber: 15, wool: 15, grain: 15, ore: 30 },
-  plains:    { brick: 10, lumber: 15, wool: 20, grain: 50, ore: 5  },
+  mountains: { iron: 70, stone: 15, gold: 10, timber: 5,  food: 0  },
+  forest:    { timber: 60, food: 15, stone: 10, gold: 10, iron: 5  },
+  swamp:     { food: 30, timber: 25, stone: 20, gold: 15, iron: 10 },
+  tundra:    { iron: 40, stone: 20, food: 20, gold: 10, timber: 10 },
+  coastal:   { gold: 35, food: 25, stone: 20, iron: 10, timber: 10 },
+  desert:    { stone: 40, gold: 30, iron: 15, food: 10, timber: 5  },
+  urban:     { gold: 30, iron: 25, stone: 20, timber: 15, food: 10 },
+  plains:    { food: 50, timber: 20, gold: 15, stone: 10, iron: 5  },
 };
 
 // ─── V1 Standard Map metadata ──────────────────────────────────────────────────
@@ -61,13 +63,16 @@ export const MAP_V1_METADATA = {
     { id: 'southlands', control_bonus: 9 },
   ],
 
+  // region control_bonus scaled to avg_battle_size / 1000 at runtime (see deployIncome.js)
+  // Raw values here represent bonus per 1000 avg_battle_size.
+  // e.g. at avg_battle_size=1000: north_coast=3, heartland=5, etc.
   regions: [
-    { id: 'north_coast',  continent_id: 'northlands', control_bonus: 2 },
-    { id: 'west_reach',   continent_id: 'northlands', control_bonus: 2 },
-    { id: 'heartland',    continent_id: 'northlands', control_bonus: 3 },
-    { id: 'east_shore',   continent_id: 'northlands', control_bonus: 2 },
-    { id: 'south_plains', continent_id: 'southlands', control_bonus: 3 },
-    { id: 'far_south',    continent_id: 'southlands', control_bonus: 2 },
+    { id: 'north_coast',  continent_id: 'northlands', control_bonus: 3 },
+    { id: 'west_reach',   continent_id: 'northlands', control_bonus: 3 },
+    { id: 'heartland',    continent_id: 'northlands', control_bonus: 5 },
+    { id: 'east_shore',   continent_id: 'northlands', control_bonus: 3 },
+    { id: 'south_plains', continent_id: 'southlands', control_bonus: 5 },
+    { id: 'far_south',    continent_id: 'southlands', control_bonus: 3 },
   ],
 
   // territory_id → { region_id, continent_id, resource_distribution }
