@@ -36,6 +36,7 @@ import MilitaryConsolidationPanel from '@/components/consolidation/MilitaryConso
 import EconomicConsolidationPanel from '@/components/consolidation/EconomicConsolidationPanel';
 import DiplomaticConsolidationPanel from '@/components/consolidation/DiplomaticConsolidationPanel';
 import AdminConsolidationTab from '@/components/consolidation/AdminConsolidationTab';
+import PhaseAuditExport from '@/components/command/PhaseAuditExport';
 
 // Setup panels
 import FactionSelectionPanel from '@/components/setup/FactionSelectionPanel';
@@ -138,16 +139,31 @@ export default function CommandCenterPanel({
     }
   }
 
-  // ── Battle phase: unified conflict queue ─────────────────────────────────
+  // ── Battle phase: conflict queue + optional admin tab ───────────────────
   if (isBattle) {
+    const battleTabs = isAdmin ? [{ id: 'conflict', label: 'Conflict', icon: Shield }, ADMIN_TAB] : null;
     return (
       <div className="flex flex-col">
         <PhaseSummaryBar campaign={campaign} players={players} myPlayer={myPlayer} />
-        <ConflictQueuePanel
-          campaign={campaign} players={players} myPlayer={myPlayer}
-          mapDef={mapDef} onPhaseChanged={onPhaseChanged}
-          actingAsPlayerId={actingAsPlayerId} isAdmin={isAdmin}
-        />
+        {isAdmin && (
+          <div className="sticky top-0 z-10 flex border-b border-border bg-panel-header">
+            {battleTabs.map(t => (
+              <PillarTab key={t.id} {...t} isActive={pillarTab === t.id} onClick={setPillarTab} />
+            ))}
+          </div>
+        )}
+        {(!isAdmin || pillarTab !== 'admin') && (
+          <ConflictQueuePanel
+            campaign={campaign} players={players} myPlayer={myPlayer}
+            mapDef={mapDef} onPhaseChanged={onPhaseChanged}
+            actingAsPlayerId={actingAsPlayerId} isAdmin={isAdmin}
+          />
+        )}
+        {isAdmin && pillarTab === 'admin' && (
+          <div className="p-3 space-y-3">
+            <PhaseAuditExport campaign={campaign} />
+          </div>
+        )}
       </div>
     );
   }
