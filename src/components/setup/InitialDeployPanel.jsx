@@ -8,11 +8,12 @@
  *
  * See SETUP_NOTES.md for full privacy contract.
  */
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { Loader2, Lock, Check, Wrench, AlertTriangle } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { useInitialDeploy, useDeployLockStatus } from '@/features/campaigns/setup';
 import { useCampaignTestContext } from '@/features/adminTestMode/CampaignTestContext';
+import CapitalSelector from '@/components/setup/CapitalSelector';
 
 export default function InitialDeployPanel({
   campaign,
@@ -74,6 +75,22 @@ export default function InitialDeployPanel({
     () => myTerritories.filter(ts => (placements[ts.territory_id] ?? 0) < 1),
     [myTerritories, placements],
   );
+
+  // Capital state
+  const [capitalData, setCapitalData] = useState(null);
+  useEffect(() => {
+    if (!isLocked || !campaign?.id || !myPlayer?.id) return;
+    base44.functions.invoke('territoryDevelopment', {
+      action: 'getPlayerDevelopment',
+      campaign_id: campaign.id,
+    }).then(res => setCapitalData(res.data)).catch(() => {});
+  }, [isLocked, campaign?.id, myPlayer?.id]);
+
+  const capitalTerritories = useMemo(() =>
+    myTerritories.map(ts => ({
+      territory_id: ts.territory_id,
+      name: mapDef?.territories?.find(t => t.territory_id === ts.territory_id)?.name ?? ts.territory_id,
+    })), [myTerritories, mapDef]);
 
   // Repair state
   const [repairing, setRepairing] = useState(false);
@@ -259,6 +276,25 @@ export default function InitialDeployPanel({
             : `You've placed ${Math.abs(troopsRemaining)} too many. Reduce placements.`
           }
         </p>
+      )}
+
+      {/* Capital selection — shown after locking */}
+      {isLocked && (
+        <div className="space-y-2 pt-2 border-t border-border">
+          <p className="text-xs font-display tracking-wider uppercase text-amber-400">Designate Capital</p>
+          <p className="text-[10px] text-muted-foreground">
+            Choose your capital territory. Food generated each round is automatically invested here first.
+          </p>
+          <CapitalSelector
+            campaign={campaign}
+            myPlayer={myPlayer}
+            territories={capitalTerritories}
+            currentCapitalId={capitalData?.capital_territory_id ?? null}
+            lastSetRound={null}
+            onCapitalSet={(tid) => setCapitalData(prev => ({ ...prev, capital_territory_id: tid }))}
+            allowChangeLabel="Set Capital"
+          />
+        </div>
       )}
 
       {/* Player lock status — is_locked ONLY, no placement data */}

@@ -16,13 +16,15 @@
  *   - Other players' placements are never fetched or displayed.
  *   - Lock status shown via useDeployPhaseLockStatus (is_locked only).
  */
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { Loader2, Lock, ChevronDown, ChevronUp, TestTube } from 'lucide-react';
+import { base44 } from '@/api/base44Client';
 import { useDeployPhase, useDeployPhaseLockStatus, useDeployIncome } from '@/features/campaigns/deploy';
 import { useActingAsPayload } from '@/features/adminTestMode/useActingAsPayload';
 import DeployIncomeCard from './DeployIncomeCard';
 import DeployLockStatusRow from './DeployLockStatusRow';
 import DeployPlacementList from './DeployPlacementList';
+import CapitalSelector from '@/components/setup/CapitalSelector';
 export default function DeployPanel({
   campaign,
   players,
@@ -34,9 +36,11 @@ export default function DeployPanel({
 }) {
   const round         = campaign?.current_round ?? 1;
   const isAdmin       = myPlayer?.is_admin;
-  const [showIncome, setShowIncome]     = useState(true);
+  const [showIncome, setShowIncome] = useState(true);
+  const [capitalData, setCapitalData] = useState(null);
 
   const { actingPlayer, actingAsId } = useActingAsPayload(myPlayer);
+  const actingPlayerId = actingAsId ?? myPlayer?.id;
 
   // CRITICAL: derive territories from actingPlayer (not myPlayer) so that
   // admins acting as test players get the correct territory list.
@@ -68,6 +72,22 @@ export default function DeployPanel({
   const deployStarted = !!income; // income record exists = deploy was started
 
 
+
+  // Load capital data once deploy starts
+  useEffect(() => {
+    if (!campaign?.id || !actingPlayerId) return;
+    base44.functions.invoke('territoryDevelopment', {
+      action: 'getPlayerDevelopment',
+      campaign_id: campaign.id,
+      acting_as_player_id: actingPlayerId,
+    }).then(res => setCapitalData(res.data)).catch(() => {});
+  }, [campaign?.id, actingPlayerId]);
+
+  const capitalTerritories = useMemo(() =>
+    myTerritories.map(ts => ({
+      territory_id: ts.territory_id,
+      name: mapDef?.territories?.find(t => t.territory_id === ts.territory_id)?.name ?? ts.territory_id,
+    })), [myTerritories, mapDef]);
 
   const handleLockAndRefresh = async () => {
     await handleLock(onPhaseChanged, actingAsId);
@@ -178,7 +198,25 @@ export default function DeployPanel({
 
       {error && <p className="text-xs text-destructive">{error}</p>}
 
-
+      {/* Capital change — available during Planning Phase (once per round) */}
+      {deployStarted && myTerritories.length > 0 && (
+        <div className="space-y-1.5 pt-2 border-t border-border">
+          <p className="text-xs font-display tracking-wider uppercase text-amber-400">Capital</p>
+          <p className="text-[10px] text-muted-foreground">
+            Change once per round. Food generated each round auto-invests into your capital.
+          </p>
+          <CapitalSelector
+            campaign={campaign}
+            myPlayer={myPlayer}
+            actingAsPlayerId={actingAsId}
+            territories={capitalTerritories}
+            currentCapitalId={capitalData?.capital_territory_id ?? null}
+            lastSetRound={capitalData?.capital_set_round ?? null}
+            onCapitalSet={(tid) => setCapitalData(prev => ({ ...(prev ?? {}), capital_territory_id: tid, capital_set_round: round ?? 1 }))}
+            allowChangeLabel="Change Capital"
+          />
+        </div>
+      )}
 
       {deployStarted && !isLocked && troopsRemaining !== 0 && (
         <p className="text-xs text-muted-foreground">

@@ -56,6 +56,117 @@ const SC_TERTIARY_RESOURCE = {
   C4:'timber',C6:'gold',
 };
 
+// ─── Adjacency data (inline — no local imports in Deno) ───────────────────────
+// All edges are bidirectional.
+const SC_ADJACENCY_EDGES = [
+  // Outer Passes / High Crown
+  {from:'I1',to:'I2'},{from:'I1',to:'I3'},{from:'I2',to:'I3'},{from:'I2',to:'I4'},
+  {from:'I3',to:'I5'},{from:'I4',to:'I5'},{from:'I4',to:'I6'},{from:'I5',to:'I7'},
+  {from:'I6',to:'I7'},{from:'I6',to:'I8'},{from:'I7',to:'I8'},
+  // Wilds / Deepwoods
+  {from:'W1',to:'W2'},{from:'W1',to:'W4'},{from:'W2',to:'W3'},{from:'W2',to:'W5'},
+  {from:'W3',to:'W6'},{from:'W4',to:'W5'},{from:'W5',to:'W6'},{from:'W5',to:'W7'},
+  {from:'W6',to:'W7'},{from:'W6',to:'W8'},{from:'W7',to:'W8'},{from:'W7',to:'W9'},
+  {from:'W8',to:'W9'},
+  // Cross-region (I→W)
+  {from:'I1',to:'W1'},{from:'I2',to:'W1'},{from:'I4',to:'W4'},{from:'I6',to:'W3'},
+  {from:'I8',to:'W6'},{from:'I7',to:'W8'},{from:'I5',to:'W2'},
+  // Borderlands (B)
+  {from:'B1',to:'B2'},{from:'B1',to:'B3'},{from:'B2',to:'B3'},{from:'B2',to:'B4'},
+  {from:'B3',to:'B5'},{from:'B4',to:'B5'},{from:'B4',to:'B6'},{from:'B5',to:'B6'},
+  {from:'B5',to:'B7'},{from:'B6',to:'B7'},{from:'B7',to:'B8'},{from:'B7',to:'B9'},
+  {from:'B8',to:'B9'},{from:'B8',to:'B10'},{from:'B9',to:'B10'},
+  // Cross-region (W→B)
+  {from:'W3',to:'B1'},{from:'W5',to:'B2'},{from:'W6',to:'B4'},{from:'W8',to:'B6'},
+  {from:'W9',to:'B8'},
+  // Steppes (S)
+  {from:'S1',to:'S2'},{from:'S1',to:'S4'},{from:'S2',to:'S3'},{from:'S2',to:'S5'},
+  {from:'S3',to:'S6'},{from:'S4',to:'S5'},{from:'S4',to:'S7'},{from:'S5',to:'S6'},
+  {from:'S5',to:'S8'},{from:'S6',to:'S9'},{from:'S7',to:'S8'},{from:'S8',to:'S9'},
+  // Cross-region (B→S)
+  {from:'B1',to:'S1'},{from:'B3',to:'S2'},{from:'B5',to:'S4'},{from:'B7',to:'S7'},
+  {from:'B9',to:'S8'},{from:'B10',to:'S9'},
+  // Coast (C)
+  {from:'C1',to:'C2'},{from:'C1',to:'C3'},{from:'C2',to:'C3'},{from:'C2',to:'C4'},
+  {from:'C3',to:'C5'},{from:'C4',to:'C5'},{from:'C4',to:'C6'},{from:'C5',to:'C6'},
+  {from:'C5',to:'C7'},{from:'C6',to:'C7'},{from:'C6',to:'C8'},{from:'C7',to:'C8'},
+  // Cross-region (S→C)
+  {from:'S1',to:'C1'},{from:'S3',to:'C3'},{from:'S6',to:'C5'},{from:'S9',to:'C8'},
+];
+
+function buildAdjacency() {
+  const adj = {};
+  for (const {from, to} of SC_ADJACENCY_EDGES) {
+    if (!adj[from]) adj[from] = new Set();
+    if (!adj[to])   adj[to]   = new Set();
+    adj[from].add(to);
+    adj[to].add(from);
+  }
+  return adj;
+}
+const SC_ADJ = buildAdjacency();
+
+function getNeighbors(tid) {
+  return [...(SC_ADJ[tid] ?? [])];
+}
+
+// BFS distance up to maxDist
+function distanceTo(from, to, maxDist) {
+  if (from === to) return 0;
+  const visited = new Set([from]);
+  const queue = [[from, 0]];
+  while (queue.length) {
+    const [cur, dist] = queue.shift();
+    if (dist >= maxDist) continue;
+    for (const nb of getNeighbors(cur)) {
+      if (nb === to) return dist + 1;
+      if (!visited.has(nb)) { visited.add(nb); queue.push([nb, dist + 1]); }
+    }
+  }
+  return Infinity;
+}
+
+// ─── Adjacency-based level-up rules ───────────────────────────────────────────
+// Returns null if allowed, or an error string if blocked.
+function checkLevelUpAllowed(territoryId, targetLevel, allDevRecords) {
+  const devMap = {};
+  for (const d of allDevRecords) devMap[d.territory_id] = d.development_level ?? 1;
+
+  if (targetLevel >= 4) {
+    // All adjacent territories must be at least level 2
+    for (const nb of getNeighbors(territoryId)) {
+      if ((devMap[nb] ?? 1) < 2) {
+        return `Level 4 requires all adjacent territories to be at least Level 2. ${nb} is only Level ${devMap[nb] ?? 1}.`;
+      }
+    }
+    // No other level 4+ territory within 2 hops
+    for (const [tid, lvl] of Object.entries(devMap)) {
+      if (tid === territoryId) continue;
+      if (lvl >= 4 && distanceTo(territoryId, tid, 2) <= 2) {
+        return `Level 4 territories cannot exist within 2 territories of each other. Conflicts with ${tid}.`;
+      }
+    }
+  }
+
+  if (targetLevel >= 5) {
+    // All adjacent territories must be at least level 3
+    for (const nb of getNeighbors(territoryId)) {
+      if ((devMap[nb] ?? 1) < 3) {
+        return `Level 5 requires all adjacent territories to be at least Level 3. ${nb} is only Level ${devMap[nb] ?? 1}.`;
+      }
+    }
+    // No other level 5+ territory within 4 hops
+    for (const [tid, lvl] of Object.entries(devMap)) {
+      if (tid === territoryId) continue;
+      if (lvl >= 5 && distanceTo(territoryId, tid, 4) <= 4) {
+        return `Level 5 territories cannot exist within 4 territories of each other. Conflicts with ${tid}.`;
+      }
+    }
+  }
+
+  return null;
+}
+
 // Map-defined structure slots per territory
 const SC_STRUCTURE_SLOTS = {
   I8:['military'], I4:['military','economic'], I6:['economic','military'], I7:['military','diplomatic'],
@@ -216,6 +327,7 @@ Deno.serve(async (req) => {
           food_to_next_level: dev.food_to_next_level ?? foodToNextLevel(dev.development_level ?? 1),
           total_food_invested: dev.total_food_invested ?? 0,
           is_capital: dev.is_capital ?? false,
+          capital_set_round: dev.capital_set_round ?? null,
           unlocked_resources: dev.unlocked_resources ?? ['primary'],
           unlocked_slot_count: dev.unlocked_slot_count ?? 1,
           primary_resource: SC_PRIMARY_RESOURCE[ts.territory_id] ?? ts.resource_type ?? 'food',
@@ -230,6 +342,7 @@ Deno.serve(async (req) => {
         success: true,
         territories,
         capital_territory_id: capital?.territory_id ?? null,
+        capital_set_round: capital?.capital_set_round ?? null,
         food_available: ledger.food ?? 0,
       });
     }
@@ -301,24 +414,47 @@ Deno.serve(async (req) => {
         return Response.json({ error: `Insufficient food. You have ${currentFood}, need ${food_amount}.` }, { status: 400 });
       }
 
-      // Get or create dev record
-      const devRecords = await base44.asServiceRole.entities.TerritoryDevelopment.filter({ campaign_id, territory_id });
+      // Get or create dev record; also load all campaign dev records for adjacency checks
+      const [devRecords, allCampaignDev] = await Promise.all([
+        base44.asServiceRole.entities.TerritoryDevelopment.filter({ campaign_id, territory_id }),
+        base44.asServiceRole.entities.TerritoryDevelopment.filter({ campaign_id }),
+      ]);
       let dev = devRecords[0];
       if (!dev) {
         dev = await base44.asServiceRole.entities.TerritoryDevelopment.create(
           buildDevRecord(campaign_id, territory_id, actingPlayer.id, round)
         );
+        allCampaignDev.push(dev);
       }
 
-      // Apply food investment — level up loop
+      // Apply food investment — level up loop with adjacency checks
       let currentLevel = dev.development_level ?? 1;
       let progress = (dev.development_progress ?? 0) + food_amount;
       let totalInvested = (dev.total_food_invested ?? 0) + food_amount;
       const levelUps = [];
+      let blockedAt = null;
+
+      // Build a mutable dev map reflecting current levels so adjacency checks are accurate
+      const devMap = {};
+      for (const d of allCampaignDev) devMap[d.territory_id] = d.development_level ?? 1;
 
       while (progress >= foodToNextLevel(currentLevel)) {
+        const nextLevel = currentLevel + 1;
+        // Build snapshot with this territory at nextLevel for adjacency check
+        const snapshot = { ...devMap };
+        snapshot[territory_id] = nextLevel;
+
+        // Inline adjacency check against the snapshot
+        const snapshotRecords = Object.entries(snapshot).map(([tid, lvl]) => ({ territory_id: tid, development_level: lvl }));
+        const blocked = checkLevelUpAllowed(territory_id, nextLevel, snapshotRecords);
+        if (blocked) {
+          blockedAt = nextLevel;
+          break;
+        }
+
         progress -= foodToNextLevel(currentLevel);
-        currentLevel += 1;
+        currentLevel = nextLevel;
+        devMap[territory_id] = currentLevel;
         levelUps.push(currentLevel);
       }
 
@@ -350,7 +486,7 @@ Deno.serve(async (req) => {
         payload: {
           territory_id, food_invested: food_amount, new_level: currentLevel,
           level_ups: levelUps.length, unlocked_resources: newUnlockedResources,
-          unlocked_slot_count: newSlotCount,
+          unlocked_slot_count: newSlotCount, blocked_at: blockedAt,
         },
         is_public: false,
       });
@@ -363,11 +499,132 @@ Deno.serve(async (req) => {
         previous_level: dev.development_level ?? 1,
         new_level: currentLevel,
         level_ups: levelUps.length,
+        blocked_at: blockedAt,
+        blocked_reason: blockedAt ? `Cannot advance to Level ${blockedAt} due to adjacency rules.` : null,
         development_progress: Math.max(0, progress),
         food_to_next_level: foodToNextLevel(currentLevel),
         unlocked_resources: newUnlockedResources,
         unlocked_slot_count: newSlotCount,
       });
+    }
+
+    // ── ACTION: autoInvestFoodToCapital ────────────────────────────────────
+    // Called at end of resource generation. For each active player, takes food
+    // generated this round and invests it into their capital. If the capital
+    // would be blocked by adjacency rules, it spills into adjacent owned
+    // territories until all food is placed or no valid target remains.
+    if (action === 'autoInvestFoodToCapital') {
+      if (!isAdmin) return Response.json({ error: 'Admin only' }, { status: 403 });
+
+      const [allStates, allDev, allLedgers] = await Promise.all([
+        base44.asServiceRole.entities.TerritoryState.filter({ campaign_id }),
+        base44.asServiceRole.entities.TerritoryDevelopment.filter({ campaign_id }),
+        base44.asServiceRole.entities.PlayerResourceLedger.filter({ campaign_id }),
+      ]);
+
+      const activePlayers = players.filter(p => !p.is_eliminated);
+      const results = [];
+
+      for (const player of activePlayers) {
+        const ledger = allLedgers.find(l => l.player_id === player.id);
+        const foodAvailable = ledger?.food ?? 0;
+        if (foodAvailable <= 0) { results.push({ player_id: player.id, food_invested: 0, reason: 'no food' }); continue; }
+
+        const ownedTerritories = allStates.filter(s => s.owner_player_id === player.id).map(s => s.territory_id);
+        if (!ownedTerritories.length) { results.push({ player_id: player.id, food_invested: 0, reason: 'no territories' }); continue; }
+
+        const capitalDev = allDev.find(d => d.owner_player_id === player.id && d.is_capital);
+        const capitalId = capitalDev?.territory_id ?? null;
+
+        // Build ordered list of targets: capital first, then adjacent owned, then all owned
+        const visited = new Set();
+        const targets = [];
+        if (capitalId) {
+          targets.push(capitalId);
+          visited.add(capitalId);
+          for (const nb of getNeighbors(capitalId)) {
+            if (ownedTerritories.includes(nb) && !visited.has(nb)) { targets.push(nb); visited.add(nb); }
+          }
+        }
+        for (const tid of ownedTerritories) {
+          if (!visited.has(tid)) { targets.push(tid); visited.add(tid); }
+        }
+
+        // Build mutable dev map for this campaign
+        const devMap = {};
+        for (const d of allDev) devMap[d.territory_id] = d.development_level ?? 1;
+
+        let remaining = foodAvailable;
+        const invested = {};
+
+        for (const tid of targets) {
+          if (remaining <= 0) break;
+          let dev = allDev.find(d => d.territory_id === tid && d.owner_player_id === player.id);
+          if (!dev) continue;
+
+          let level = dev.development_level ?? 1;
+          let prog = dev.development_progress ?? 0;
+          let toInvest = 0;
+
+          // Invest 1 food at a time to check adjacency at each potential level-up
+          while (remaining > 0) {
+            prog += 1;
+            toInvest += 1;
+            remaining -= 1;
+
+            while (prog >= foodToNextLevel(level)) {
+              const nextLevel = level + 1;
+              const snapshot = { ...devMap };
+              snapshot[tid] = nextLevel;
+              const snapshotRecords = Object.entries(snapshot).map(([t, l]) => ({ territory_id: t, development_level: l }));
+              const blocked = checkLevelUpAllowed(tid, nextLevel, snapshotRecords);
+              if (blocked) {
+                // Can't level up — keep progress, stop investing here
+                prog = foodToNextLevel(level) - 1; // leave just below threshold
+                remaining += 1; toInvest -= 1; // refund this food unit
+                remaining = 0; // force skip to next target
+                break;
+              }
+              prog -= foodToNextLevel(level);
+              level += 1;
+              devMap[tid] = level;
+            }
+
+            if (remaining === 0) break;
+          }
+
+          if (toInvest > 0) {
+            invested[tid] = toInvest;
+            const newResources = unlockedResources(tid, level);
+            const newSlots = unlockedSlotCount(tid, level);
+            await base44.asServiceRole.entities.TerritoryDevelopment.update(dev.id, {
+              development_level: level,
+              development_progress: Math.max(0, prog),
+              food_to_next_level: foodToNextLevel(level),
+              total_food_invested: (dev.total_food_invested ?? 0) + toInvest,
+              unlocked_resources: newResources,
+              unlocked_slot_count: newSlots,
+              last_updated_round: round,
+            });
+            // Update the allDev cache for subsequent players' adjacency checks
+            const idx = allDev.findIndex(d => d.id === dev.id);
+            if (idx >= 0) { allDev[idx] = { ...allDev[idx], development_level: level, development_progress: Math.max(0, prog) }; }
+          }
+        }
+
+        // Deduct invested food from ledger; unspendable food (blocked everywhere) is kept
+        const totalInvested = Object.values(invested).reduce((s, v) => s + v, 0);
+        const newFood = foodAvailable - totalInvested;
+        if (ledger && totalInvested > 0) {
+          await base44.asServiceRole.entities.PlayerResourceLedger.update(ledger.id, {
+            food: Math.max(0, newFood), updated_at_round: round, updated_at_phase: campaign.current_phase,
+          });
+        }
+
+        results.push({ player_id: player.id, capital_id: capitalId, food_invested: totalInvested, food_retained: Math.max(0, newFood), invested_breakdown: invested });
+      }
+
+      return Response.json({ success: true, results });
     }
 
     return Response.json({ error: `Unknown action: ${action}` }, { status: 400 });

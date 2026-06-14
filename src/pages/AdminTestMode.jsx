@@ -17,6 +17,7 @@ import DebugOverlay from '@/components/admin/DebugOverlay';
 import PhaseControls from '@/components/admin/PhaseControls';
 import SnapshotInspector from '@/components/admin/SnapshotInspector';
 import { useFortifyLockStatus } from '@/features/campaigns/fortify/useFortifyLockStatus';
+import CampaignToolsPanel from '@/components/admin/CampaignToolsPanel';
 
 export default function AdminTestMode() {
   const { id } = useParams();
@@ -160,6 +161,11 @@ export default function AdminTestMode() {
 
           {/* Right Column */}
           <div className="space-y-5">
+            {/* Campaign Seeding Tools */}
+            <div className="panel p-4">
+              <CampaignToolsPanel campaign={campaign} />
+            </div>
+
             {/* Debug Overlay - Restricted */}
             <div className="panel p-4">
               <DebugOverlay
