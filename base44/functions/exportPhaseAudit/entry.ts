@@ -137,13 +137,13 @@ function tEnrich(territory_id) {
 function buildSnapshotFromData({
   territories, influence, regionalPools, supplyRoutes,
   buildings, battleCards, tradeProposals, objectives,
-  victoryTrackers, phaseDecisions,
+  victoryTrackers, phaseDecisions, territoryDevelopment,
 }, playerMap) {
 
   return {
     territory_states: (() => {
       const devMap = {};
-      for (const d of (cache?.territoryDevelopment ?? [])) devMap[d.territory_id] = d;
+      for (const d of (territoryDevelopment ?? [])) devMap[d.territory_id] = d;
       return (territories ?? []).map(t => {
         const dev = devMap[t.territory_id] ?? null;
         return {
