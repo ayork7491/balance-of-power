@@ -895,11 +895,13 @@ Deno.serve(async (req) => {
 
       // ── Diagnostics tracker ─────────────────────────────────────────────
       const diagnostics = {
-        before_snapshot_source: 'pending',
-        after_snapshot_source:  'pending',
-        delta_generation:       'pending',
-        battle_audit_generation: 'pending',
-        action_log_generation:  'pending',
+        before_snapshot_source:   'pending',
+        after_snapshot_source:    'pending',
+        delta_generation:         'pending',
+        battle_audit_generation:  'pending',
+        action_log_generation:    'pending',
+        battle_validation_skipped: false,
+        battle_validation_reason:  null,
       };
 
       // ── SINGLE BULK FETCH — all DB queries in one Promise.all ───────────
@@ -1395,8 +1397,10 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Ownership changes — Operations and Conflict only
-      if (['operations', 'conflict'].includes(targetCategory)) {
+      // Ownership changes — Conflict only
+      // Operations snapshot is captured BEFORE battle resolution, so comparing battle
+      // ending state against it would produce false mismatches.
+      if (targetCategory === 'conflict') {
         const resolvedBattlesWithOwnershipChange = battleAudit.filter(b =>
           b.result_applied !== false && b.ending_state?.owner_player_id &&
           b.ending_state?.owner_player_id !== b.defender_player_id
@@ -1426,6 +1430,10 @@ Deno.serve(async (req) => {
             }
           }
         }
+      } else {
+        // Non-conflict phases: skip battle result validation entirely — battles resolve later
+        diagnostics.battle_validation_skipped = true;
+        diagnostics.battle_validation_reason = 'non_battle_phase';
       }
 
       // Resource activation warnings — Planning only (Issue 5)
@@ -1508,7 +1516,9 @@ Deno.serve(async (req) => {
       }
 
       // ── Issue 5 validations — combat troop accounting ─────────────────────
-      if (targetCategory === 'conflict' || targetCategory === 'operations') {
+      // Only run for Conflict phase. Operations snapshot is captured before battle
+      // resolution, so any troop count comparisons against battle outcomes are invalid.
+      if (targetCategory === 'conflict') {
         const afterTerritoryMap = {};
         for (const t of (afterSnapshotData?.territory_states ?? [])) afterTerritoryMap[t.territory_id] = t;
         const beforeTerritoryMap2 = {};
@@ -1711,8 +1721,11 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Territory troop mismatch — battle result troops vs live territory state
-      if (afterSnapshotData?.territory_states) {
+      // Territory troop mismatch — battle result troops vs after snapshot
+      // Only valid for Conflict phase where the after-snapshot is captured post-resolution.
+      // Operations after-snapshot is captured before combat resolves, so troop counts
+      // will legitimately differ from any future battle ending state.
+      if (targetCategory === 'conflict' && afterSnapshotData?.territory_states) {
         const afterTroopMap = {};
         for (const t of afterSnapshotData.territory_states) afterTroopMap[t.territory_id] = { troops: t.troop_count ?? 0, owner: t.owner_player_id };
         for (const b of battleAudit) {
