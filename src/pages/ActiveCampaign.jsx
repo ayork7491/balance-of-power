@@ -229,6 +229,15 @@ function ActiveCampaignContent() {
     return m;
   }, [logisticsHubs]);
 
+  // Set of capital territory IDs for map crown icons
+  const capitalTerritoryIds = useMemo(() => {
+    const s = new Set();
+    for (const [tid, dev] of Object.entries(devRecordsByTerritoryId)) {
+      if (dev.is_capital) s.add(tid);
+    }
+    return s;
+  }, [devRecordsByTerritoryId]);
+
   // ── Panel routing (Sprint 5B) ─────────────────────────────────────────────
 
   const clearSelection = () => {
@@ -404,6 +413,7 @@ function ActiveCampaignContent() {
             highlightIds={highlightIds}
             attackableIds={attackableIds}
             lockedIds={lockedIds}
+            capitalTerritoryIds={capitalTerritoryIds}
             onSelect={setSelectedTerritoryId}
             currentPhase={phase}
             actingPlayer={actionPlayer}

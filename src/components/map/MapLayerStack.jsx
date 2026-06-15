@@ -36,6 +36,7 @@ export default function MapLayerStack({
   getPlayerHex,
   mapView = 'artistic', // 'artistic' | 'tactical'
   showBorders = false,
+  capitalTerritoryIds = new Set(), // Set of territory_ids that are capitals
 }) {
   const DECORATIVE = { pointerEvents: 'none', userSelect: 'none' };
   const bgUrl = mapView === 'tactical' ? TACTICAL_BG : ARTISTIC_BG;
@@ -78,6 +79,38 @@ export default function MapLayerStack({
           );
         })}
       </g>
+
+      {/* ── 01b: Capital crown icons ── */}
+      {capitalTerritoryIds.size > 0 && (
+        <g id="layer-01b-capitals" style={{ pointerEvents: 'none', userSelect: 'none' }}>
+          {mapDef.territories
+            .filter(t => capitalTerritoryIds.has(t.territory_id))
+            .map(territory => {
+              const tState = stateById[territory.territory_id];
+              const ownerHex = tState?.owner_player_id ? getPlayerHex(players, tState.owner_player_id) : null;
+              // Position crown above the troop badge
+              const tx = territory.troop_x ?? territory.cx;
+              const ty = territory.troop_y ?? territory.cy;
+              const crownY = ty - 160;
+              const fontSize = 120;
+              return (
+                <text
+                  key={`capital-${territory.territory_id}`}
+                  x={tx}
+                  y={crownY}
+                  textAnchor="middle"
+                  fontSize={fontSize}
+                  fill={ownerHex ?? '#f59e0b'}
+                  stroke="rgba(0,0,0,0.8)"
+                  strokeWidth={fontSize * 0.08}
+                  paintOrder="stroke"
+                >
+                  👑
+                </text>
+              );
+            })}
+        </g>
+      )}
 
       {/* ── 02: Labels — routes always suppressed ── */}
       <g id="layer-02-labels" style={DECORATIVE}>

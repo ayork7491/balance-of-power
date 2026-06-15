@@ -144,19 +144,19 @@ export default function TerritoryDetailPanel({
             )}
           </div>
 
-          {/* Development Level */}
-          {devRecord && (
+          {/* Development Level — shown for all owned territories */}
+          {tState?.owner_player_id && (
             <div className="flex items-center justify-between text-xs">
               <span className="text-muted-foreground flex items-center gap-1">
                 <TrendingUp className="w-3 h-3" /> Development
               </span>
               <div className="flex items-center gap-1.5">
-                <span className="font-mono font-bold text-amber-400">Lv {devRecord.development_level ?? 1}</span>
-                {devRecord.is_capital && (
-                  <span className="text-[9px] px-1.5 py-0.5 rounded border border-amber-400/40 bg-amber-400/10 text-amber-400">Capital</span>
+                <span className="font-mono font-bold text-amber-400">Lv {devRecord?.development_level ?? 1}</span>
+                {devRecord?.is_capital && (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded border border-amber-400/40 bg-amber-400/10 text-amber-400">👑 Capital</span>
                 )}
                 <span className="text-muted-foreground text-[10px]">
-                  ({devRecord.development_progress ?? 0}/{devRecord.food_to_next_level ?? 3} food)
+                  ({devRecord?.development_progress ?? 0}/{devRecord?.food_to_next_level ?? 3} food)
                 </span>
               </div>
             </div>
@@ -172,7 +172,7 @@ export default function TerritoryDetailPanel({
                 </div>
               )}
               {secondaryResource && (
-                devRecord && (devRecord.development_level ?? 1) >= 2 ? (
+                (devRecord?.development_level ?? 1) >= 2 ? (
                   <div className="flex items-center justify-between">
                     <span className="text-muted-foreground">Secondary <span className="text-[10px] text-muted-foreground/60">(40%)</span></span>
                     <span className={secondaryCfg.color}>{secondaryCfg.icon} {secondaryCfg.label}</span>
@@ -185,7 +185,7 @@ export default function TerritoryDetailPanel({
                 )
               )}
               {tertiaryResource && (
-                devRecord && (devRecord.development_level ?? 1) >= 4 ? (
+                (devRecord?.development_level ?? 1) >= 4 ? (
                   <div className="flex items-center justify-between">
                     <span className="text-muted-foreground">Tertiary <span className="text-[10px] text-muted-foreground/60">(10%)</span></span>
                     <span className={tertiaryCfg.color}>{tertiaryCfg.icon} {tertiaryCfg.label}</span>

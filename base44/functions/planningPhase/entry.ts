@@ -769,23 +769,93 @@ Deno.serve(async (req) => {
           }
         }
 
-        // Food goes directly into the PlayerResourceLedger (auto-invested into capital by autoInvestFoodToCapital)
+        // Food is invested directly into the capital's development track.
+        // We inline the investment logic here rather than calling autoInvestFoodToCapital
+        // so that development progress updates atomically with the planning lock.
         if (foodAccum > 0) {
-          const ledgerRecords = await base44.asServiceRole.entities.PlayerResourceLedger.filter({
-            campaign_id, player_id: actingPlayer.id,
-          });
+          const [ledgerRecords, allDevRecords] = await Promise.all([
+            base44.asServiceRole.entities.PlayerResourceLedger.filter({ campaign_id, player_id: actingPlayer.id }),
+            base44.asServiceRole.entities.TerritoryDevelopment.filter({ campaign_id, owner_player_id: actingPlayer.id }),
+          ]);
           const existingLedger = ledgerRecords[0];
-          if (existingLedger) {
-            await base44.asServiceRole.entities.PlayerResourceLedger.update(existingLedger.id, {
-              food: (existingLedger.food ?? 0) + foodAccum,
-              updated_at_round: round, updated_at_phase: 'deploy',
+
+          // Find capital dev record
+          const capitalDevRecord = allDevRecords.find(d => d.is_capital) ?? null;
+
+          if (capitalDevRecord) {
+            // Invest food into capital development
+            // foodToNextLevel thresholds: level 1→3, 2→5, 3→8, 4→12, 5→17, higher→level+12
+            function foodThreshold(lvl) {
+              const thresholds = [0, 3, 5, 8, 12, 17];
+              return thresholds[lvl] ?? (lvl + 12);
+            }
+
+            let level = capitalDevRecord.development_level ?? 1;
+            let progress = (capitalDevRecord.development_progress ?? 0) + foodAccum;
+            let totalInvested = (capitalDevRecord.total_food_invested ?? 0) + foodAccum;
+
+            // Level-up loop
+            while (progress >= foodThreshold(level)) {
+              progress -= foodThreshold(level);
+              level += 1;
+            }
+
+            // Compute unlocked resources based on level
+            const allUnlocked = ['primary'];
+            if (level >= 2) allUnlocked.push('secondary');
+            if (level >= 4) allUnlocked.push('tertiary');
+            const slotCount = level >= 5 ? 3 : level >= 3 ? 2 : 1;
+
+            await base44.asServiceRole.entities.TerritoryDevelopment.update(capitalDevRecord.id, {
+              development_level: level,
+              development_progress: Math.max(0, progress),
+              food_to_next_level: foodThreshold(level),
+              total_food_invested: totalInvested,
+              unlocked_resources: allUnlocked,
+              unlocked_slot_count: slotCount,
+              last_updated_round: round,
+            });
+
+            // Food is fully consumed by capital investment — no ledger storage needed
+            // (food stays at 0 in the ledger; we just create/update it for consistency)
+            if (existingLedger) {
+              await base44.asServiceRole.entities.PlayerResourceLedger.update(existingLedger.id, {
+                updated_at_round: round, updated_at_phase: 'deploy',
+              });
+            } else {
+              await base44.asServiceRole.entities.PlayerResourceLedger.create({
+                campaign_id, player_id: actingPlayer.id,
+                gold: 0, iron: 0, timber: 0, stone: 0, food: 0,
+                updated_at_round: round, updated_at_phase: 'deploy',
+              });
+            }
+
+            // Log the investment for audit visibility
+            activationResults.push({
+              territory_id: capitalDevRecord.territory_id,
+              player_id: actingPlayer.id,
+              resource_type: 'food',
+              amount_generated: foodAccum,
+              generated: { food: foodAccum },
+              destination: 'capital_development',
+              capital_territory_id: capitalDevRecord.territory_id,
+              development_level_before: capitalDevRecord.development_level ?? 1,
+              development_level_after: level,
             });
           } else {
-            await base44.asServiceRole.entities.PlayerResourceLedger.create({
-              campaign_id, player_id: actingPlayer.id,
-              gold: 0, iron: 0, timber: 0, stone: 0, food: foodAccum,
-              updated_at_round: round, updated_at_phase: 'deploy',
-            });
+            // No capital set — store food in ledger so player can manually invest later
+            if (existingLedger) {
+              await base44.asServiceRole.entities.PlayerResourceLedger.update(existingLedger.id, {
+                food: (existingLedger.food ?? 0) + foodAccum,
+                updated_at_round: round, updated_at_phase: 'deploy',
+              });
+            } else {
+              await base44.asServiceRole.entities.PlayerResourceLedger.create({
+                campaign_id, player_id: actingPlayer.id,
+                gold: 0, iron: 0, timber: 0, stone: 0, food: foodAccum,
+                updated_at_round: round, updated_at_phase: 'deploy',
+              });
+            }
           }
         }
 

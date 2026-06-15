@@ -107,6 +107,7 @@ export default function MapRenderer({
   onDraftTerritorySelect = null,
   onDeployTerritorySelect = null,
   lockedIds = new Set(),
+  capitalTerritoryIds = new Set(),
   debugMode = false,
   _suppressConnectionLines = false,
 }) {
@@ -459,6 +460,7 @@ export default function MapRenderer({
             getPlayerHex={getPlayerHex}
             mapView={mapView}
             showBorders={showBorders}
+            capitalTerritoryIds={capitalTerritoryIds}
           />
 
           {/* Arrow layer rendered inside the same SVG so it inherits the pan/zoom transform */}
