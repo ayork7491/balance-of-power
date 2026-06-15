@@ -583,6 +583,20 @@ Deno.serve(async (req) => {
         console.log('[startDeploy] phase_start snapshot repaired.');
       }
 
+      // Also seed influence on idempotent return for Round 1 — covers campaigns where
+      // startDeploy ran before the seedStartingInfluence call was added.
+      if (round === 1) {
+        try {
+          await base44.asServiceRole.functions.invoke('planningPhase', {
+            action: 'seedStartingInfluence',
+            campaign_id,
+            acting_as_player_id: null,
+          });
+        } catch (infErr) {
+          console.warn('[startDeploy idempotent] Starting influence seed failed (non-fatal):', infErr?.message);
+        }
+      }
+
       return Response.json({ success: true, idempotent: true, incomes: incomesMap });
     }
 
