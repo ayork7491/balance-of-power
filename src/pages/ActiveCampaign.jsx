@@ -28,7 +28,7 @@ import { useAttackReveals, useAttackPhase } from '@/features/campaigns/attack';
 import { useBattleCards } from '@/features/campaigns/battle';
 import { useAttackArrows } from '@/features/campaigns/attack/useAttackArrows.js';
 import { useCampaign } from '@/features/campaigns';
-import { useTerritoryState, getMap, buildAdjacencyMap } from '@/features/maps';
+import { useTerritoryState, getMap, buildAdjacencyMap, buildTypedAdjacencyMap } from '@/features/maps';
 import { CampaignTestModeProvider, useCampaignTestContext } from '@/features/adminTestMode/CampaignTestContext';
 import { usePlayerLogistics } from '@/features/campaigns/logistics/usePlayerLogistics';
 import { useInfluenceState } from '@/features/campaigns/influence/useInfluenceState';
@@ -109,9 +109,15 @@ function ActiveCampaignContent() {
   // Static map definition
   const mapDef = useMemo(() => getMap(mapId), [mapId]);
 
-  // Adjacency map
+  // Adjacency map (flat Set lookup — used for BFS and interaction)
   const adjacencyMap = useMemo(
     () => mapDef ? buildAdjacencyMap(mapDef) : {},
+    [mapDef]
+  );
+
+  // Typed adjacency map (includes edge type — used for TerritoryDetailPanel display)
+  const typedAdjacencyMap = useMemo(
+    () => mapDef ? buildTypedAdjacencyMap(mapDef) : {},
     [mapDef]
   );
 
@@ -163,9 +169,13 @@ function ActiveCampaignContent() {
     ? (mapDef?.continents.find(c => c.id === selectedTerritory.continent_id) ?? null) : null;
   const adjacentTerritories = useMemo(() => {
     if (!selectedTerritoryId || !mapDef) return [];
-    const ids = adjacencyMap[selectedTerritoryId] ?? new Set();
-    return mapDef.territories.filter(t => ids.has(t.territory_id));
-  }, [selectedTerritoryId, mapDef, adjacencyMap]);
+    const typedNeighbors = typedAdjacencyMap[selectedTerritoryId] ?? [];
+    const typeByTid = {};
+    for (const n of typedNeighbors) typeByTid[n.id] = n.type;
+    return mapDef.territories
+      .filter(t => typeByTid[t.territory_id] !== undefined)
+      .map(t => ({ ...t, _adjacencyType: typeByTid[t.territory_id] }));
+  }, [selectedTerritoryId, mapDef, typedAdjacencyMap]);
 
   // Own staged attacks — only loaded during attack phase, only own player (user-scoped)
   const {

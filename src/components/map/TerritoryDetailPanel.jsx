@@ -284,12 +284,23 @@ export default function TerritoryDetailPanel({
                 <Swords className="w-3 h-3" /> Adjacent ({adjacentTerritories.length})
               </p>
               <div className="flex flex-wrap gap-1">
-                {adjacentTerritories.map(t => (
-                  <span key={t.territory_id} className="px-1.5 py-0.5 rounded bg-muted text-muted-foreground text-xs">
-                    {t.name}
-                  </span>
-                ))}
+                {adjacentTerritories.map(t => {
+                  const edgeType = t._adjacencyType;
+                  const edgeBadge = edgeType === 'maritime'
+                    ? <span className="text-[9px] text-cyan-400 ml-0.5">⚓</span>
+                    : edgeType === 'river_crossing'
+                    ? <span className="text-[9px] text-blue-400 ml-0.5">〰</span>
+                    : null;
+                  return (
+                    <span key={t.territory_id} className="inline-flex items-center px-1.5 py-0.5 rounded bg-muted text-muted-foreground text-xs">
+                      {t.name}{edgeBadge}
+                    </span>
+                  );
+                })}
               </div>
+              {adjacentTerritories.some(t => t._adjacencyType !== 'land') && (
+                <p className="text-[10px] text-muted-foreground mt-1">⚓ maritime · 〰 river crossing</p>
+              )}
             </div>
           )}
 

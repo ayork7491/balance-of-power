@@ -35,6 +35,7 @@ export { validateMap, assertMapValid } from './mapValidation';
 // Pure utilities (adjacency, BFS, geometry, control checks)
 export {
   buildAdjacencyMap,
+  buildTypedAdjacencyMap,
   getNeighbors,
   areAdjacent,
   getFortifiableTargets,

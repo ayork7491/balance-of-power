@@ -8,13 +8,55 @@
  */
 import type { MapDefinition } from './types';
 
-/** Build adjacency lookup: { territory_id → Set<territory_id> } */
+/** Build adjacency lookup: { territory_id → Set<territory_id> }
+ *  Reads from typed_adjacency first (Shattered Crown), falls back to legacy flat adjacency.
+ *  All edge types (land, maritime, river_crossing) are included.
+ */
 export function buildAdjacencyMap(mapDef: MapDefinition): Record<string, Set<string>> {
   const adj: Record<string, Set<string>> = {};
   for (const t of mapDef.territories) adj[t.territory_id] = new Set();
-  for (const [a, b] of mapDef.adjacency) {
-    adj[a]?.add(b);
-    adj[b]?.add(a);
+
+  if (mapDef.typed_adjacency && mapDef.typed_adjacency.length > 0) {
+    // Typed adjacency — Shattered Crown: all edge types traversable
+    for (const edge of mapDef.typed_adjacency) {
+      if (!adj[edge.from]) adj[edge.from] = new Set();
+      if (!adj[edge.to])   adj[edge.to]   = new Set();
+      adj[edge.from].add(edge.to);
+      adj[edge.to].add(edge.from);
+    }
+  } else {
+    // Legacy flat adjacency — V1 Standard map
+    for (const [a, b] of mapDef.adjacency) {
+      adj[a]?.add(b);
+      adj[b]?.add(a);
+    }
+  }
+  return adj;
+}
+
+/**
+ * Build a typed adjacency lookup: { territory_id → { id: string, type: string }[] }
+ * Returns the edge type ('land', 'maritime', 'river_crossing') for each neighbor.
+ * Falls back to 'land' for maps without typed_adjacency.
+ */
+export function buildTypedAdjacencyMap(mapDef: MapDefinition): Record<string, { id: string; type: string }[]> {
+  const adj: Record<string, { id: string; type: string }[]> = {};
+  for (const t of mapDef.territories) adj[t.territory_id] = [];
+
+  if (mapDef.typed_adjacency && mapDef.typed_adjacency.length > 0) {
+    for (const edge of mapDef.typed_adjacency) {
+      if (!adj[edge.from]) adj[edge.from] = [];
+      if (!adj[edge.to])   adj[edge.to]   = [];
+      adj[edge.from].push({ id: edge.to,   type: edge.type });
+      adj[edge.to].push(  { id: edge.from, type: edge.type });
+    }
+  } else {
+    for (const [a, b] of mapDef.adjacency) {
+      if (!adj[a]) adj[a] = [];
+      if (!adj[b]) adj[b] = [];
+      adj[a].push({ id: b, type: 'land' });
+      adj[b].push({ id: a, type: 'land' });
+    }
   }
   return adj;
 }
