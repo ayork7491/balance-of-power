@@ -129,7 +129,7 @@ function ActiveCampaignContent() {
   // privacy gate to determine which territories show full vs masked data.
   const { stateById, loading: loadingState, reload: reloadState } = useTerritoryState(
     id,
-    myPlayer?.id ?? null,
+    actionPlayer?.id ?? myPlayer?.id ?? null,
     campaign?.current_phase ?? null,
   );
 
