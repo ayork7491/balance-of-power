@@ -119,7 +119,11 @@ export default function TerritoryDetailPanel({
 
             <div className="flex items-center gap-1.5 text-sm font-mono font-bold text-foreground">
               <Shield className="w-3.5 h-3.5 text-primary" />
-              {tState?.troop_count ?? 0}
+              {tState?._hidden ? (
+                <span className="text-muted-foreground tracking-widest">???</span>
+              ) : (
+                tState?.troop_count ?? 0
+              )}
               <span className="text-xs text-muted-foreground font-normal">troops</span>
             </div>
           </div>
@@ -221,7 +225,12 @@ export default function TerritoryDetailPanel({
           )}
 
           {/* Territory storage (if any resources are stored here) */}
-          {tState?.resource_storage && Object.values(tState.resource_storage).some(v => v > 0) && (
+          {tState?._hidden && tState?.owner_player_id && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground italic">
+              <span>Resource storage hidden</span>
+            </div>
+          )}
+          {!tState?._hidden && tState?.resource_storage && Object.values(tState.resource_storage).some(v => v > 0) && (
             <div className="flex items-start justify-between text-xs gap-2">
               <span className="text-muted-foreground shrink-0">Stored</span>
               <div className="flex flex-wrap gap-1 justify-end">

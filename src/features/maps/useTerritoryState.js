@@ -13,7 +13,29 @@
 import { useState, useEffect, useCallback } from 'react';
 import { base44 } from '@/api/base44Client';
 
-export function useTerritoryState(campaignId) {
+// Phases where sensitive data (troop counts, resource storage) is hidden for non-owners.
+const HIDDEN_INFO_PHASES = new Set(['attack', 'battle', 'fortify', 'deploy']);
+
+/**
+ * Apply the privacy gate to a territory state record.
+ * If the territory is not owned by myPlayerId and we are in a hidden-info phase,
+ * mask troop_count and resource_storage so the raw numbers never reach the UI.
+ */
+function applyPrivacyGate(record, myPlayerId, phase) {
+  if (!record) return record;
+  // Always show own territories in full.
+  if (record.owner_player_id && record.owner_player_id === myPlayerId) return record;
+  // Only mask during active gameplay phases.
+  if (!phase || !HIDDEN_INFO_PHASES.has(phase)) return record;
+  return {
+    ...record,
+    troop_count: null,       // null = hidden (UI renders '???' )
+    resource_storage: null,  // null = hidden
+    _hidden: true,
+  };
+}
+
+export function useTerritoryState(campaignId, myPlayerId, phase) {
   const [stateById, setStateById] = useState({}); // { [territory_id]: TerritoryState }
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState(null);
@@ -25,14 +47,14 @@ export function useTerritoryState(campaignId) {
     try {
       const records = await base44.entities.TerritoryState.filter({ campaign_id: campaignId });
       const keyed = {};
-      for (const r of records) keyed[r.territory_id] = r;
+      for (const r of records) keyed[r.territory_id] = applyPrivacyGate(r, myPlayerId, phase);
       setStateById(keyed);
     } catch {
       setError('Failed to load territory state.');
     } finally {
       setLoading(false);
     }
-  }, [campaignId]);
+  }, [campaignId, myPlayerId, phase]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -49,11 +71,11 @@ export function useTerritoryState(campaignId) {
           delete next[tid];
           return next;
         }
-        return { ...prev, [tid]: event.data };
+        return { ...prev, [tid]: applyPrivacyGate(event.data, myPlayerId, phase) };
       });
     });
     return unsub;
-  }, [campaignId]);
+  }, [campaignId, myPlayerId, phase]);
 
   return { stateById, loading, error, reload: load };
 }

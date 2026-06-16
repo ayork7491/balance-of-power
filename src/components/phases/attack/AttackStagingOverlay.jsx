@@ -106,7 +106,7 @@ export default function AttackStagingOverlay({
               <p className="text-muted-foreground uppercase tracking-wide text-[10px] font-display">Target</p>
               <p className="font-medium text-foreground truncate">{getTerritoryName(targetId, mapDef)}</p>
               <p className="font-mono" style={{ color: targetHex ?? undefined }}>
-                {targetOwner ? `${targetOwner.display_name} · ${targetState?.troop_count ?? 0}` : 'Neutral'}
+                {targetOwner ? `${targetOwner.display_name} · ${targetState?._hidden ? '???' : targetState?.troop_count ?? 0}` : 'Neutral'}
               </p>
             </div>
           </div>

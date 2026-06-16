@@ -72,9 +72,14 @@ function ActiveCampaignContent() {
   // Campaign + players
   const { campaign, players, loading: loadingCampaign, reload: reloadCampaign } = useCampaign(id);
 
-  // Territory state (real-time)
+  // Territory state (real-time) — pass myPlayer.id + phase so the privacy gate
+  // can mask troop counts and resource storage for non-owned territories.
   const mapId = campaign?.map_id ?? 'map_v1_standard';
-  const { stateById, loading: loadingState, reload: reloadState } = useTerritoryState(id);
+  const { stateById, loading: loadingState, reload: reloadState } = useTerritoryState(
+    id,
+    myPlayer?.id ?? null,
+    campaign?.current_phase ?? null,
+  );
 
   // TerritoryBuilding records — fetched once per campaign, re-fetched on phase change.
   // Used to show correct slot occupancy in TerritoryDetailPanel (includes in-progress builds).
