@@ -1006,6 +1006,76 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── TerritoryBuilding lifecycle: planned → under_construction → active ──────
+    // Buildings created during Operations lock-in start as 'planned'.
+    // At end of first Consolidation they become 'under_construction'.
+    // After rounds_required more rounds, they become 'active'.
+    // V1: all buildings complete in 1 round (planned→active immediately).
+    const BUILDING_ROUNDS = {
+      barracks: 1, war_council: 2, logistics_corps: 1,
+      embassy: 1, council_chamber: 2, foreign_office: 1, monument: 2,
+      marketplace: 1, builders_guild: 1, trade_network: 2,
+      resource_hub: 1, supply_route: 1, warehouse: 1,
+    };
+    const allTerritoryBuildings = await base44.asServiceRole.entities.TerritoryBuilding.filter({ campaign_id });
+    for (const bld of allTerritoryBuildings) {
+      if (bld.status === 'planned') {
+        const requiredRounds = BUILDING_ROUNDS[bld.building_type] ?? 1;
+        const progress = (bld.construction_progress ?? 0) + 1;
+        if (progress >= requiredRounds) {
+          await base44.asServiceRole.entities.TerritoryBuilding.update(bld.id, {
+            status: 'active',
+            construction_progress: progress,
+            completed_round: round,
+          });
+          // Set has_resource_hub flag if applicable
+          if (bld.building_type === 'resource_hub') {
+            const ts = allTerritoryStates.find(s => s.territory_id === bld.territory_id);
+            if (ts) {
+              await base44.asServiceRole.entities.TerritoryState.update(ts.id, { has_resource_hub: true });
+            }
+          }
+          await log(base44, campaign_id, round, phase, 'building_activated', bld.player_id, {
+            building_type: bld.building_type, territory_id: bld.territory_id,
+            started_round: bld.started_round, completed_round: round,
+          }, true);
+        } else {
+          await base44.asServiceRole.entities.TerritoryBuilding.update(bld.id, {
+            status: 'under_construction',
+            construction_progress: progress,
+          });
+          await log(base44, campaign_id, round, phase, 'building_under_construction', bld.player_id, {
+            building_type: bld.building_type, territory_id: bld.territory_id,
+            construction_progress: progress, rounds_required: requiredRounds,
+          }, false);
+        }
+      } else if (bld.status === 'under_construction') {
+        const requiredRounds = BUILDING_ROUNDS[bld.building_type] ?? 1;
+        const progress = (bld.construction_progress ?? 0) + 1;
+        if (progress >= requiredRounds) {
+          await base44.asServiceRole.entities.TerritoryBuilding.update(bld.id, {
+            status: 'active',
+            construction_progress: progress,
+            completed_round: round,
+          });
+          if (bld.building_type === 'resource_hub') {
+            const ts = allTerritoryStates.find(s => s.territory_id === bld.territory_id);
+            if (ts) {
+              await base44.asServiceRole.entities.TerritoryState.update(ts.id, { has_resource_hub: true });
+            }
+          }
+          await log(base44, campaign_id, round, phase, 'building_activated', bld.player_id, {
+            building_type: bld.building_type, territory_id: bld.territory_id,
+            started_round: bld.started_round, completed_round: round,
+          }, true);
+        } else {
+          await base44.asServiceRole.entities.TerritoryBuilding.update(bld.id, {
+            construction_progress: progress,
+          });
+        }
+      }
+    }
+
     // Phase snapshot — full v2 schema
     const [finalStates, fortEndInfluence, fortEndRegionalPools, fortEndBuildings, fortEndSupplyRoutes, fortEndObjectives, fortEndVictory, fortEndDev] = await Promise.all([
       base44.asServiceRole.entities.TerritoryState.filter({ campaign_id }),
@@ -1123,11 +1193,15 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'shipment_contents must include at least one resource' }, { status: 400 });
     }
 
-    // Validate origin ownership
+    // Validate origin AND destination ownership
     const allStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
     const originState = allStates.find(s => s.territory_id === origin_territory_id);
     if (!originState || originState.owner_player_id !== actingPlayer.id) {
       return Response.json({ error: 'You do not own the origin territory' }, { status: 400 });
+    }
+    const destState = allStates.find(s => s.territory_id === destination_territory_id);
+    if (!destState || destState.owner_player_id !== actingPlayer.id) {
+      return Response.json({ error: 'You do not own the destination territory. Resources can only be moved to territories you own.' }, { status: 400 });
     }
 
     // Validate resource availability at origin

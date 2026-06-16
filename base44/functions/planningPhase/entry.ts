@@ -779,8 +779,18 @@ Deno.serve(async (req) => {
           ]);
           const existingLedger = ledgerRecords[0];
 
-          // Find capital dev record
-          const capitalDevRecord = allDevRecords.find(d => d.is_capital) ?? null;
+          // Find capital dev record — auto-designate if none set yet
+          let capitalDevRecord = allDevRecords.find(d => d.is_capital) ?? null;
+
+          if (!capitalDevRecord && allDevRecords.length > 0) {
+            // Auto-designate the first dev record as capital so food doesn't silently vanish
+            // (player can change it later via setCapital)
+            capitalDevRecord = allDevRecords[0];
+            await base44.asServiceRole.entities.TerritoryDevelopment.update(capitalDevRecord.id, {
+              is_capital: true, capital_set_round: round,
+            });
+            capitalDevRecord = { ...capitalDevRecord, is_capital: true, capital_set_round: round };
+          }
 
           if (capitalDevRecord) {
             // Invest food into capital development

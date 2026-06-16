@@ -134,8 +134,10 @@ function NewCaravanForm({ campaign, actingPlayerId, mapDef, stateById, players, 
     return { ...analysis, path, noPath: false };
   }, [origin, destination, adjacencyMap, stateById, actingPlayerId, players]);
 
-  // Any territory on the map is a valid destination (except origin)
-  const allTerritories = mapDef?.territories ?? [];
+  // Destination: only territories owned by the acting player (resources must go to owned territory)
+  const ownedTerritories = mapDef?.territories?.filter(t =>
+    t.territory_id !== origin && stateById[t.territory_id]?.owner_player_id === actingPlayerId
+  ) ?? [];
 
   const getResourceMax = (r) => Math.max(0, (originStorage[r] ?? 0));
 
@@ -238,8 +240,8 @@ function NewCaravanForm({ campaign, actingPlayerId, mapDef, stateById, players, 
           onChange={e => setDestination(e.target.value)}
           className="w-full bg-muted/20 border border-border rounded px-2 py-1.5 text-xs text-foreground"
         >
-          <option value="">— select destination —</option>
-          {allTerritories.filter(t => t.territory_id !== origin).map(t => (
+          <option value="">— select destination (owned) —</option>
+          {ownedTerritories.map(t => (
             <option key={t.territory_id} value={t.territory_id}>{t.name}</option>
           ))}
         </select>

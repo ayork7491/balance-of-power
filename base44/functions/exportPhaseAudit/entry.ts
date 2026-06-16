@@ -573,30 +573,62 @@ function getBattleResolutionAudit(allBattleCards, playerMap, attackReveals) {
       defender_player_id: bc.defender_player_id ?? null,
 
       starting_state: {
-        owner:  bc.defender_player_id ? (playerMap[bc.defender_player_id]?.display_name ?? bc.defender_player_id) : 'unoccupied',
+        // Use defender_player_id if set, otherwise truly unoccupied.
+        // Bloodbath: source_player_id IS the territory owner; defender may be null for bloodbath.
+        owner: (() => {
+          if (bc.defender_player_id) return playerMap[bc.defender_player_id]?.display_name ?? bc.defender_player_id;
+          if (bc.battle_type === 'bloodbath' && bc.source_player_id) return playerMap[bc.source_player_id]?.display_name ?? bc.source_player_id;
+          return 'unoccupied';
+        })(),
+        owner_player_id: bc.defender_player_id ?? (bc.battle_type === 'bloodbath' ? bc.source_player_id : null) ?? null,
         troops: bc.defender_troops ?? 0,
         attacking_troops: bc.total_attacking_troops ?? 0,
         total_troops: bc.total_troops_in_battle ?? 0,
+        // Per-attacker breakdown for troop accounting
+        attacker_origins: (bc.attackers ?? []).map(a => ({
+          player_id: a.player_id,
+          player_name: playerMap[a.player_id]?.display_name ?? a.player_id,
+          origin_territory_id: a.origin_territory_id,
+          origin_territory_name: (() => {
+            const d = { I8:'Eastspire',I4:'Greyhold',I6:'Ridgefall',I7:'Basinwatch',I1:'Frostgate',I2:'Northpass',I3:'Cliffwatch',I5:'Crownforge',W1:'Thornwood Edge',W2:'Greenmarch',W3:'Broken Pines',W4:'Mossfen',W5:'Wildcross',W6:'Emberwood',W7:'Lowbranch',W8:'Riverholt',W9:'Ashen Ford',B1:'North Ruin Gate',B2:'Old Bastion',B3:'Highbridge',B4:'East Rupture',B5:'West Crucible',B6:'Crownbreak',B7:'Glass Rift',B8:'Southwatch Ruins',B9:'Golden Causeway',B10:'Riftmarket',S1:'Westmeadow',S2:'Sunroad',S4:'Amberhold',S7:'South Orchard',S3:'Harvest Ford',S5:'Granary Cross',S6:'Dawnmarch',S8:'Lowgold',S9:'Coastward Fields',C1:'Northcliff',C2:'Saltwind Pass',C3:'Broken Harbor',C4:'Blacktide Gate',C5:'Shardport',C6:'Mirror Cape',C7:'Southwake',C8:'Tidebreak' };
+            return d[a.origin_territory_id] ?? a.origin_territory_id;
+          })(),
+          committed_troops: a.committed_troops ?? 0,
+        })),
       },
 
       ending_state: {
         owner:  winnerName ?? 'unclaimed',
         owner_player_id: winnerPlayerId,
+        // survivor_count: troops remaining in the territory after battle resolution
         troops: (() => {
-          // winner_bop_survivors is written by battlePhase since 5F.8.
-          // For older cards that lack it, compute it inline from TT survivors.
           if (result.winner_bop_survivors != null) return result.winner_bop_survivors;
           if (!winnerPlayerId) return null;
-          const committedBOP = (bc.attackers ?? []).filter(a => a.player_id === winnerPlayerId).reduce((s, a) => s + (a.committed_troops ?? 0), 0) || (bc.defender_player_id === winnerPlayerId ? (bc.defender_troops ?? 0) : 0);
           const survivingTT = result.surviving_tabletop_troops ?? 0;
           const tabletopSz  = bc.tabletop_size ?? 0;
           const totalTroops = bc.total_troops_in_battle ?? 0;
-          if (tabletopSz <= 0) return committedBOP;
+          if (tabletopSz <= 0) {
+            // No tabletop data — use committed troops as ceiling
+            const committedBOP = (bc.attackers ?? []).filter(a => a.player_id === winnerPlayerId).reduce((s, a) => s + (a.committed_troops ?? 0), 0) || (bc.defender_player_id === winnerPlayerId ? (bc.defender_troops ?? 0) : 0);
+            return committedBOP;
+          }
           const ratio = Math.max(0, Math.min(1, survivingTT / tabletopSz));
-          const raw   = Math.round(ratio * totalTroops);
-          return committedBOP > 0 ? Math.min(raw, committedBOP) : raw;
+          return Math.round(ratio * totalTroops);
         })(),
-        surviving_tabletop: result.surviving_tabletop_troops ?? null,
+        // Troop accounting fields (separate from territory garrison)
+        surviving_tabletop_troops: result.surviving_tabletop_troops ?? null,
+        tabletop_survivors_scaled: (() => {
+          const survivingTT = result.surviving_tabletop_troops ?? 0;
+          const tabletopSz  = bc.tabletop_size ?? 0;
+          const totalTroops = bc.total_troops_in_battle ?? 0;
+          if (tabletopSz <= 0) return null;
+          return Math.round((survivingTT / tabletopSz) * totalTroops);
+        })(),
+        // Bloodbath ownership rule: ownership only changes if winner is NOT the territory owner
+        ownership_changed: (() => {
+          const beforeOwner = bc.defender_player_id ?? (bc.battle_type === 'bloodbath' ? bc.source_player_id : null);
+          return winnerPlayerId !== null && winnerPlayerId !== beforeOwner;
+        })(),
       },
 
       winner:       winnerName,
@@ -714,6 +746,17 @@ function buildEnrichedActions(cache, phase, round, playerMap) {
 
   // ── OPERATIONS (attack) ───────────────────────────────────────────────────
   if (category === 'operations') {
+    // Check if phase has been revealed (AttackReveals exist OR battle cards exist for this round)
+    const hasRevealed = (cache.attackReveals ?? []).length > 0 || (cache.allBattleCards ?? []).some(bc => bc.round === round);
+    if (!hasRevealed) {
+      military.push({
+        pillar: 'military',
+        action_type: 'hidden_pending_reveal',
+        note: 'Military actions are hidden until phase reveal. Counts and details are intentionally omitted. Attack cards will appear here after the Operations phase is revealed.',
+        revealed: false,
+        round, phase,
+      });
+    }
     // Accepted attacks
     for (const a of (cache.attackReveals ?? [])) {
       military.push({
@@ -1370,9 +1413,11 @@ Deno.serve(async (req) => {
       const ownershipFromBattles = battleAudit
         .filter(b => b.result_applied !== false && b.ending_state?.owner_player_id)
         .map(b => {
+          // Bloodbath: territory owner = source_player_id; defender_player_id may be null
+          const trueBeforeOwner = b.defender_player_id ?? (b.battle_type === 'bloodbath' ? b.source_player_id : null);
           const afterOwner = b.ending_state?.owner_player_id ?? null;
           const afterName  = afterOwner ? (playerMap[afterOwner]?.display_name ?? afterOwner) : 'unoccupied';
-          const beforeOwner = b.defender_player_id ?? null;
+          const beforeOwner = trueBeforeOwner;
           const beforeName  = beforeOwner ? (playerMap[beforeOwner]?.display_name ?? beforeOwner) : 'unoccupied';
           // Only record if ownership actually changed
           if (afterOwner === beforeOwner) return null;

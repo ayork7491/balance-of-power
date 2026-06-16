@@ -282,8 +282,11 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'target_territory_id or target_region_id is required for investigate_influence' }, { status: 400 });
     }
 
-    // Spend influence
-    await spendRegionalInfluence(base44, campaign_id, actingPlayer.id, region_id, costConfig.amount, round);
+    // Spend influence (skip if called from operationsLockPhase which already spent it)
+    const skipInfluenceSpend = body._skip_influence_spend === true;
+    if (!skipInfluenceSpend) {
+      await spendRegionalInfluence(base44, campaign_id, actingPlayer.id, region_id, costConfig.amount, round);
+    }
 
     // Gather data via resolution handler
     const reportData = await handler(base44, campaign_id, target_territory_id ?? null, target_region_id ?? null, players);

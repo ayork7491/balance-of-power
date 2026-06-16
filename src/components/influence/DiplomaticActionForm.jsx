@@ -4,9 +4,10 @@
  * Rendered inline inside DiplomaticActionsPanel when an action is selected.
  * Shows region selector (for spending) + action-specific target selectors.
  */
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { PLAYER_COLORS } from '@/config/theme';
+import { base44 } from '@/api/base44Client';
 
 const REGION_LABELS = {
   outer_passes:       'Outer Passes',
@@ -61,6 +62,18 @@ export default function DiplomaticActionForm({
   const [targetSupplyRouteId, setTargetSupplyRouteId] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [localError, setLocalError] = useState(null);
+  const [supplyRoutes, setSupplyRoutes] = useState([]);
+  const [loadingRoutes, setLoadingRoutes] = useState(false);
+
+  // Load supply routes when merchant_convoy is selected
+  useEffect(() => {
+    if (actionType !== 'merchant_convoy' || !campaign?.id) return;
+    setLoadingRoutes(true);
+    base44.entities.SupplyRoute.filter({ campaign_id: campaign.id })
+      .then(routes => setSupplyRoutes(routes.filter(r => r.route_status === 'active')))
+      .catch(() => setSupplyRoutes([]))
+      .finally(() => setLoadingRoutes(false));
+  }, [actionType, campaign?.id]);
 
   // Regions with enough influence for this action cost
   const affordableRegions = useMemo(() => {
@@ -84,13 +97,17 @@ export default function DiplomaticActionForm({
     [players, myPlayer]
   );
 
-  // Territories grouped by region (for influence_network, broker_peace)
+  // For influence_network: ALL territories (spread goes to adjacent regardless of region)
+  // For broker_peace: territories in selected region
   const territoriesInRegion = useMemo(() => {
     if (!selectedRegion || !mapDef) return [];
+    if (actionType === 'influence_network') {
+      return [...mapDef.territories].sort((a, b) => a.name.localeCompare(b.name));
+    }
     return mapDef.territories
       .filter(t => SC_TERRITORY_REGION[t.territory_id] === selectedRegion)
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [selectedRegion, mapDef]);
+  }, [selectedRegion, mapDef, actionType]);
 
   const validate = () => {
     if (!selectedRegion) return 'Select a region to spend influence from.';
@@ -287,28 +304,53 @@ export default function DiplomaticActionForm({
         </>
       )}
 
-      {/* Supply route input (merchant_convoy) */}
+      {/* Supply route selector (merchant_convoy) */}
       {actionType === 'merchant_convoy' && (
         <div>
           <label className="text-[10px] font-display tracking-wider uppercase text-muted-foreground block mb-1">
-            Supply Route ID
+            Supply Route to Protect
           </label>
-          <input
-            type="text"
-            value={targetSupplyRouteId}
-            onChange={e => setTargetSupplyRouteId(e.target.value)}
-            placeholder="Enter supply route ID…"
-            className="w-full text-xs bg-input border border-border rounded px-2 py-1.5 text-foreground placeholder:text-muted-foreground"
-          />
-          <p className="text-[10px] text-muted-foreground mt-1">The route will be marked as protected from disruption this round.</p>
+          {loadingRoutes ? (
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground py-1">
+              <Loader2 className="w-3 h-3 animate-spin" /> Loading supply routes…
+            </div>
+          ) : supplyRoutes.length === 0 ? (
+            <div className="flex items-start gap-1.5 text-xs text-destructive px-2 py-1.5 rounded border border-destructive/30 bg-destructive/10">
+              <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
+              No active supply routes exist. Establish a supply route first before using Merchant Convoy.
+            </div>
+          ) : (
+            <>
+              <select
+                value={targetSupplyRouteId}
+                onChange={e => setTargetSupplyRouteId(e.target.value)}
+                className="w-full text-xs bg-input border border-border rounded px-2 py-1.5 text-foreground"
+              >
+                <option value="">— select supply route —</option>
+                {supplyRoutes.map(r => (
+                  <option key={r.id} value={r.id}>
+                    {r.hub_territory_id} → {r.source_territory_id} ({r.resource_type})
+                  </option>
+                ))}
+              </select>
+              <p className="text-[10px] text-muted-foreground mt-1">The selected route will be protected from disruption this round.</p>
+            </>
+          )}
         </div>
       )}
 
       {/* War rations — no extra target needed */}
       {actionType === 'war_rations' && selectedRegion && (
-        <p className="text-[10px] text-muted-foreground">
-          Reduces food upkeep for your faction this round. Effect stored as active modifier.
-        </p>
+        <div className="rounded border border-amber-500/20 bg-amber-500/5 px-2 py-2 space-y-1">
+          <p className="text-[10px] text-amber-400 font-semibold">Preventative Effect — Current Round</p>
+          <p className="text-[10px] text-muted-foreground">
+            Prevents development decay and food upkeep loss for your faction this round.
+            Your capital's development progress will not degrade if food investment falls short.
+          </p>
+          <p className="text-[10px] text-muted-foreground">
+            Expires end of round {campaign?.current_round ?? '?'}. Affects your player only.
+          </p>
+        </div>
       )}
 
       {localError && (

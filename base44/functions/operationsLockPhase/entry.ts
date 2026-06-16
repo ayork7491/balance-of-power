@@ -523,7 +523,63 @@ Deno.serve(async (req) => {
         }
         dipResults.push({ action_type, region_id, result: 'battle_card_generated' });
       } else {
-        // Pure influence actions — record as DiplomaticAction
+        // Pure influence actions — record as DiplomaticAction + apply immediate effects
+        const SC_ADJACENCY_MAP = (() => {
+          const edges = [
+            ['I8','I4'],['I4','I3'],['I4','I7'],['I6','I3'],['I6','I5'],['I6','I7'],['I1','I2'],['I1','I5'],
+            ['I2','I3'],['I2','I5'],['I6','B1'],['I7','B1'],['I7','B3'],['I8','C1'],['W1','W2'],['W2','W3'],
+            ['W2','W4'],['W2','W5'],['W3','W5'],['W3','W6'],['W4','W5'],['W4','W7'],['W5','W6'],['W5','W7'],
+            ['W5','W8'],['W6','W9'],['W7','W8'],['W8','W9'],['W7','S1'],['W9','S2'],['B1','B3'],['B1','B2'],
+            ['B3','B2'],['B3','B4'],['B2','B4'],['B2','B5'],['B2','B6'],['B4','B7'],['B5','B6'],['B5','B8'],
+            ['B6','B7'],['B6','B8'],['B6','B9'],['B7','B10'],['B8','B9'],['B9','B10'],['B10','C6'],['B10','C4'],
+            ['B10','S3'],['S1','S2'],['S1','S4'],['S4','S5'],['S4','S7'],['S7','S5'],['S7','S8'],['S2','S3'],
+            ['S2','S5'],['S5','S8'],['S5','S6'],['S3','S6'],['S6','S9'],['S6','C8'],['S9','C8'],['C1','C2'],
+            ['C2','C3'],['C3','C4'],['C3','C5'],['C4','C5'],['C4','C6'],['C5','C6'],['C5','C7'],['C6','C7'],
+            ['C6','C8'],['C7','C8'],
+          ];
+          const adj = {};
+          for (const [a, b] of edges) {
+            if (!adj[a]) adj[a] = []; if (!adj[b]) adj[b] = [];
+            adj[a].push(b); adj[b].push(a);
+          }
+          return adj;
+        })();
+
+        let effectMetadata = {};
+        let dipResult = 'action_recorded';
+
+        // Apply Influence Network effect: +1 permanent influence to all adjacent territories
+        if (action_type === 'influence_network' && target_territory_id) {
+          const neighbors = SC_ADJACENCY_MAP[target_territory_id] ?? [];
+          const spreadResults = [];
+          for (const neighborId of neighbors) {
+            const existing = await base44.asServiceRole.entities.TerritoryInfluence.filter({
+              campaign_id, territory_id: neighborId, player_id: actingPlayer.id,
+            });
+            const rec = existing[0];
+            if (rec) {
+              const newAmt = Math.max(0, (rec.influence_amount ?? 0) + 1);
+              await base44.asServiceRole.entities.TerritoryInfluence.update(rec.id, {
+                influence_amount: newAmt, last_updated_round: round, source: 'influence_network',
+              });
+              spreadResults.push({ territory_id: neighborId, new_total: newAmt });
+            } else {
+              await base44.asServiceRole.entities.TerritoryInfluence.create({
+                campaign_id, territory_id: neighborId, player_id: actingPlayer.id,
+                influence_amount: 1, last_updated_round: round, source: 'influence_network',
+              });
+              spreadResults.push({ territory_id: neighborId, new_total: 1 });
+            }
+          }
+          effectMetadata = {
+            source_territory: target_territory_id,
+            territories_affected: spreadResults.map(r => r.territory_id),
+            spread_count: spreadResults.length,
+            results: spreadResults,
+          };
+          dipResult = `influence_network_applied_to_${spreadResults.length}_territories`;
+        }
+
         const existingActions = await base44.asServiceRole.entities.DiplomaticAction.filter({
           campaign_id, round, player_id: actingPlayer.id, action_type,
         });
@@ -535,14 +591,35 @@ Deno.serve(async (req) => {
             region_id,
             influence_spent: cost,
             status: 'active',
+            expires_round: round,
             target_player_id: target_player_id ?? undefined,
             target_player_b_id: target_player_b_id ?? undefined,
             target_territory_id: target_territory_id ?? undefined,
             target_supply_route_id: target_supply_route_id ?? undefined,
-            effect_metadata: {},
+            effect_metadata: effectMetadata,
           });
         }
-        dipResults.push({ action_type, region_id, result: 'action_recorded' });
+        // For intelligence actions, also create an IntelligenceReport via intelligencePhase
+        const INTEL_ACTION_IDS = new Set(['recon_territory', 'audit_stockpile', 'investigate_influence']);
+        if (INTEL_ACTION_IDS.has(action_type)) {
+          try {
+            await base44.asServiceRole.functions.invoke('intelligencePhase', {
+              action: 'submitIntelAction',
+              campaign_id,
+              acting_as_player_id: actingPlayer.id,
+              intel_action_id: action_type,
+              region_id,
+              target_territory_id: target_territory_id ?? undefined,
+              target_region_id: undefined,
+              _skip_influence_spend: true, // influence already spent above
+            });
+            dipResult = `${action_type}_report_generated`;
+          } catch (intelErr) {
+            console.warn(`[lockOperationsPhase] Intel report creation failed for ${action_type}:`, intelErr?.message);
+          }
+        }
+
+        dipResults.push({ action_type, region_id, result: dipResult, effect_metadata: effectMetadata });
       }
     }
     results.diplomatic = { locked: true, actions_committed: dipResults.length, details: dipResults };

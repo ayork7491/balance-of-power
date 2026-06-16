@@ -11,13 +11,121 @@
  */
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { base44 } from '@/api/base44Client';
-import { Loader2, Check, X, ArrowRight, TestTube, User } from 'lucide-react';
+import { Loader2, Check, X, ArrowRight, TestTube, User, ChevronDown } from 'lucide-react';
 import { useFortifyPhase } from '@/features/campaigns/fortify/useFortifyPhase';
 import { useFortifyLockStatus } from '@/features/campaigns/fortify/useFortifyLockStatus';
 import MovementSelector from './MovementSelector';
 import ConstructionSelector from './ConstructionSelector';
 import AdminAdvancePhase from '@/components/admin/AdminAdvancePhase';
 import { useCampaignTestContext } from '@/features/adminTestMode/CampaignTestContext';
+
+// ── Drawer-only fortification form (no map selection required) ────────────────
+function DrawerFortifyForm({ myPlayer, stateById, mapDef, adjacencyMap, maxDistance, existingMovements, onStageMovement }) {
+  const [origin, setOrigin] = useState('');
+  const [destination, setDestination] = useState('');
+  const [troops, setTroops] = useState('');
+
+  const myTerritories = useMemo(() =>
+    Object.values(stateById).filter(s => s.owner_player_id === myPlayer?.id),
+    [stateById, myPlayer]
+  );
+
+  const validDestinations = useMemo(() => {
+    if (!origin || !adjacencyMap) return [];
+    const playerId = myPlayer?.id;
+    const visited = new Set([origin]);
+    const queue = [[origin, 0]];
+    const valid = [];
+    while (queue.length > 0) {
+      const [current, dist] = queue.shift();
+      if (dist > 0 && dist <= maxDistance) {
+        const s = stateById[current];
+        if (s?.owner_player_id === playerId) valid.push(current);
+        else continue;
+      }
+      if (dist < maxDistance) {
+        const neighbors = adjacencyMap[origin] instanceof Set ? Array.from(adjacencyMap[origin]) : (adjacencyMap[current] ?? []);
+        const neighborList = Array.isArray(neighbors) ? neighbors : Array.from(neighbors);
+        for (const n of neighborList) {
+          if (!visited.has(n)) {
+            const ns = stateById[n];
+            if (ns?.owner_player_id === playerId || n === origin) {
+              visited.add(n);
+              queue.push([n, dist + 1]);
+            }
+          }
+        }
+      }
+    }
+    return valid;
+  }, [origin, myPlayer, stateById, adjacencyMap, maxDistance]);
+
+  const availableTroops = useMemo(() => {
+    if (!origin) return 0;
+    const s = stateById[origin];
+    const committed = existingMovements.filter(m => m.origin_territory_id === origin).reduce((sum, m) => sum + (m.committed_troops || 0), 0);
+    return Math.max(0, (s?.troop_count || 0) - committed);
+  }, [origin, stateById, existingMovements]);
+
+  const getName = (tid) => mapDef?.territories?.find(t => t.territory_id === tid)?.name ?? tid;
+
+  const handleStage = () => {
+    if (!origin || !destination || !troops) return;
+    onStageMovement(origin, destination, parseInt(troops));
+    setOrigin('');
+    setDestination('');
+    setTroops('');
+  };
+
+  return (
+    <div className="space-y-2 p-3 rounded border border-border bg-muted/10">
+      <p className="text-[10px] font-display tracking-wider uppercase text-muted-foreground">Stage Fortification</p>
+      <div className="space-y-1.5">
+        <div>
+          <label className="text-[10px] text-muted-foreground block mb-1">Origin territory</label>
+          <select value={origin} onChange={e => { setOrigin(e.target.value); setDestination(''); setTroops(''); }}
+            className="w-full text-xs bg-muted/20 border border-border rounded px-2 py-1.5 text-foreground">
+            <option value="">— select origin —</option>
+            {myTerritories.map(s => (
+              <option key={s.territory_id} value={s.territory_id}>{getName(s.territory_id)} ({s.troop_count ?? 0} troops)</option>
+            ))}
+          </select>
+        </div>
+        {origin && (
+          <div>
+            <label className="text-[10px] text-muted-foreground block mb-1">Destination territory</label>
+            {validDestinations.length === 0 ? (
+              <p className="text-[10px] text-muted-foreground">No valid destinations within {maxDistance} hops.</p>
+            ) : (
+              <select value={destination} onChange={e => setDestination(e.target.value)}
+                className="w-full text-xs bg-muted/20 border border-border rounded px-2 py-1.5 text-foreground">
+                <option value="">— select destination —</option>
+                {validDestinations.map(tid => (
+                  <option key={tid} value={tid}>{getName(tid)}</option>
+                ))}
+              </select>
+            )}
+          </div>
+        )}
+        {origin && destination && (
+          <div>
+            <label className="text-[10px] text-muted-foreground block mb-1">Troops to move (max {availableTroops})</label>
+            <input type="number" min="1" max={availableTroops} value={troops} onChange={e => setTroops(e.target.value)}
+              placeholder="0"
+              className="w-full text-xs bg-muted/20 border border-border rounded px-2 py-1.5 text-foreground" />
+          </div>
+        )}
+        <button
+          onClick={handleStage}
+          disabled={!origin || !destination || !troops || parseInt(troops) < 1 || parseInt(troops) > availableTroops}
+          className="w-full text-xs px-3 py-2 rounded bg-primary text-primary-foreground hover:brightness-110 disabled:opacity-40 transition-all"
+        >
+          Stage Movement
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export default function FortifyPanel({
   campaign,
@@ -255,8 +363,8 @@ export default function FortifyPanel({
           </div>
         )}
 
-        {/* Movement Selector */}
-        {!isLocked && movements.length < maxFortifications && (
+        {/* Movement Selector — map flow (requires map selection) */}
+        {!isLocked && movements.length < maxFortifications && selectedTerritoryId && (
           <MovementSelector
             campaign={campaign}
             myPlayer={actionPlayer}
@@ -268,6 +376,19 @@ export default function FortifyPanel({
             existingMovements={movements}
             onStageMovement={handleStageMovement}
             onClearSelection={onClearSelection}
+          />
+        )}
+
+        {/* Drawer-only fortification form (no map selection needed) */}
+        {!isLocked && movements.length < maxFortifications && !selectedTerritoryId && (
+          <DrawerFortifyForm
+            myPlayer={actionPlayer}
+            stateById={stateById}
+            mapDef={mapDef}
+            adjacencyMap={adjacencyMap}
+            maxDistance={maxDistance}
+            existingMovements={movements}
+            onStageMovement={handleStageMovement}
           />
         )}
       </div>
