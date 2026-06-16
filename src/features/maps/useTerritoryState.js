@@ -10,7 +10,7 @@
  *   Schema = shape/position/adjacency/resources (static, per map definition)
  *   State  = owner/troops/structures (dynamic, per campaign instance)
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { base44 } from '@/api/base44Client';
 
 // Phases where sensitive data (troop counts, resource storage) is hidden for non-owners.
@@ -18,13 +18,12 @@ const HIDDEN_INFO_PHASES = new Set(['attack', 'battle', 'fortify', 'deploy']);
 
 /**
  * Apply the privacy gate to a territory state record.
- * If the territory is not owned by myPlayerId and we are in a hidden-info phase,
- * mask troop_count and resource_storage so the raw numbers never reach the UI.
+ * myCampaignPlayerIds is a Set of CampaignPlayer.id values for the current user.
  */
-function applyPrivacyGate(record, myPlayerId, phase) {
+function applyPrivacyGate(record, myCampaignPlayerIds, phase) {
   if (!record) return record;
   // Always show own territories in full.
-  if (record.owner_player_id && record.owner_player_id === myPlayerId) return record;
+  if (record.owner_player_id && myCampaignPlayerIds.has(record.owner_player_id)) return record;
   // Only mask during active gameplay phases.
   if (!phase || !HIDDEN_INFO_PHASES.has(phase)) return record;
   return {
@@ -35,10 +34,16 @@ function applyPrivacyGate(record, myPlayerId, phase) {
   };
 }
 
+// myPlayerId here is the CampaignPlayer.id (not the auth user id).
+// Pass null to disable masking (e.g. during setup phases or when player is unknown).
 export function useTerritoryState(campaignId, myPlayerId, phase) {
   const [stateById, setStateById] = useState({}); // { [territory_id]: TerritoryState }
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState(null);
+
+  // Build a Set of CampaignPlayer IDs that belong to myPlayerId.
+  // myPlayerId is the CampaignPlayer.id passed in from ActiveCampaign.
+  const myPlayerIdSet = useMemo(() => new Set(myPlayerId ? [myPlayerId] : []), [myPlayerId]);
 
   const load = useCallback(async () => {
     if (!campaignId) return;
@@ -47,14 +52,14 @@ export function useTerritoryState(campaignId, myPlayerId, phase) {
     try {
       const records = await base44.entities.TerritoryState.filter({ campaign_id: campaignId });
       const keyed = {};
-      for (const r of records) keyed[r.territory_id] = applyPrivacyGate(r, myPlayerId, phase);
+      for (const r of records) keyed[r.territory_id] = applyPrivacyGate(r, myPlayerIdSet, phase);
       setStateById(keyed);
     } catch {
       setError('Failed to load territory state.');
     } finally {
       setLoading(false);
     }
-  }, [campaignId, myPlayerId, phase]);
+  }, [campaignId, myPlayerIdSet, phase]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -71,7 +76,7 @@ export function useTerritoryState(campaignId, myPlayerId, phase) {
           delete next[tid];
           return next;
         }
-        return { ...prev, [tid]: applyPrivacyGate(event.data, myPlayerId, phase) };
+        return { ...prev, [tid]: applyPrivacyGate(event.data, myPlayerIdSet, phase) };
       });
     });
     return unsub;
