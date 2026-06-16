@@ -114,7 +114,7 @@ export default function MapLayerStack({
 
       {/* ── 02: Labels — routes always suppressed ── */}
       <g id="layer-02-labels" style={DECORATIVE}>
-        {scale >= 0.05 && mapDef.territories.map(territory => {
+        {scale > 0 && isFinite(scale) && scale >= 0.05 && mapDef.territories.map(territory => {
           const fontSize = Math.max(30, Math.min(80, 55 / scale));
           const lx = territory.label_x ?? territory.cx;
           const ly = territory.label_y ?? (territory.cy + 18);

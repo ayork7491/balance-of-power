@@ -113,6 +113,7 @@ export default function MapRenderer({
 }) {
   const containerRef = useRef(null);
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
+  const [fitApplied, setFitApplied] = useState(false);
   const [mapView, setMapView] = useState('artistic');
   const [showBorders, setShowBorders] = useState(false);
 
@@ -175,6 +176,7 @@ export default function MapRenderer({
       const fit = computeFitTransform(cw, ch, mapDef);
       fitScaleRef.current = fit.scale;
       setTransform(fit);
+      setFitApplied(true);
     };
 
     applyFit(); // attempt immediately
@@ -455,7 +457,7 @@ export default function MapRenderer({
             hoveredId={hoveredId}
             attackOriginId={attackOriginId}
             fortifyOriginId={fortifyOriginId}
-            scale={transform.scale}
+            scale={fitApplied ? transform.scale : 0}
             regionColorById={regionColorById}
             getPlayerHex={getPlayerHex}
             mapView={mapView}
