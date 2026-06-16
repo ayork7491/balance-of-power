@@ -125,14 +125,6 @@ function ActiveCampaignContent() {
     [players, myPlayerId]
   );
 
-  // Territory state (real-time) — myPlayer.id is the CampaignPlayer ID used by the
-  // privacy gate to determine which territories show full vs masked data.
-  const { stateById, loading: loadingState, reload: reloadState } = useTerritoryState(
-    id,
-    actionPlayer?.id ?? myPlayer?.id ?? null,
-    campaign?.current_phase ?? null,
-  );
-
   // Load game profile for faction names
   useEffect(() => {
     if (!campaign?.game_profile_id) return;
@@ -140,6 +132,24 @@ function ActiveCampaignContent() {
       .then(r => setGameProfile(r[0] ?? null))
       .catch(() => {});
   }, [campaign?.game_profile_id]);
+
+  const phase = campaign?.current_phase;
+  const isArchived = campaign?.status === 'archived';
+  const isAdmin = myPlayer?.is_admin;
+
+  // Effective viewing player — resolves from context (self for normal players)
+  const effectivePlayer = effectiveViewingPlayer ?? myPlayer;
+
+  // Effective acting player — resolves from context (self for normal players)
+  const actionPlayer = effectiveActingPlayer ?? myPlayer;
+
+  // Territory state (real-time) — uses actionPlayer.id so the privacy gate respects
+  // the acting-as perspective in test mode, falling back to the real player.
+  const { stateById, loading: loadingState, reload: reloadState } = useTerritoryState(
+    id,
+    actionPlayer?.id ?? myPlayer?.id ?? null,
+    campaign?.current_phase ?? null,
+  );
 
   // Selected territory details (using centralized selectedTerritoryId)
   const selectedTerritory   = useMemo(
@@ -156,16 +166,6 @@ function ActiveCampaignContent() {
     const ids = adjacencyMap[selectedTerritoryId] ?? new Set();
     return mapDef.territories.filter(t => ids.has(t.territory_id));
   }, [selectedTerritoryId, mapDef, adjacencyMap]);
-
-  const phase = campaign?.current_phase;
-  const isArchived = campaign?.status === 'archived';
-  const isAdmin = myPlayer?.is_admin;
-
-  // Effective viewing player — resolves from context (self for normal players)
-  const effectivePlayer = effectiveViewingPlayer ?? myPlayer;
-
-  // Effective acting player — resolves from context (self for normal players)
-  const actionPlayer = effectiveActingPlayer ?? myPlayer;
 
   // Own staged attacks — only loaded during attack phase, only own player (user-scoped)
   const {
