@@ -440,10 +440,29 @@ Deno.serve(async (req) => {
       results,
     }, true);
 
+    // ── Run maintenance pass after generation ──────────────────────────────
+    // Deducts food for Level 4/5 territories (1 food for L4, 3 for L5+).
+    // Territories that cannot pay decay (level drops). Level 3 and below cost 0,
+    // so they are the natural decay floor.
+    let maintenanceReport = null;
+    try {
+      const maintRes = await base44.functions.invoke('territoryDevelopment', {
+        action: 'runMaintenance',
+        campaign_id,
+      });
+      maintenanceReport = maintRes?.reports ?? null;
+    } catch (maintErr) {
+      // Non-fatal: log but don't block phase advancement
+      await log(base44, campaign_id, round, 'maintenance_error', null, {
+        error: maintErr?.message ?? 'unknown',
+      }, false);
+    }
+
     return Response.json({
       success: true,
       territories_generated: results.length,
       results,
+      maintenance_report: maintenanceReport,
     });
   }
 

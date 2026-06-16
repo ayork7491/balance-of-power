@@ -182,6 +182,13 @@ const SC_STRUCTURE_SLOTS = {
   C5:['economic','diplomatic'], C6:['omni'], C7:['diplomatic','diplomatic'], C8:['military','diplomatic'],
 };
 
+// Maintenance cost per round for a given development level
+function getMaintenanceCost(level) {
+  if (level === 4) return 1;
+  if (level >= 5) return 3;
+  return 0; // Level 3 and below: no cost, no decay
+}
+
 // Food cost to advance from level N to N+1
 function foodToNextLevel(currentLevel) {
   if (currentLevel <= 1) return 3;
@@ -625,6 +632,117 @@ Deno.serve(async (req) => {
       }
 
       return Response.json({ success: true, results });
+    }
+
+    // ── ACTION: runMaintenance ─────────────────────────────────────────────
+    // Admin: deduct food for Level 4/5 territories from each player's food ledger.
+    // Priority: Smallest buffer first (buffer = progress toward current level cap).
+    // If a player lacks food, the territory decays: TotalFoodInvested decreases
+    // and level is recalculated. Level 3 territories cost 0, so decay stops naturally.
+    if (action === 'runMaintenance') {
+      if (!isAdmin) return Response.json({ error: 'Admin only' }, { status: 403 });
+
+      const [allDev, allLedgers] = await Promise.all([
+        base44.asServiceRole.entities.TerritoryDevelopment.filter({ campaign_id }),
+        base44.asServiceRole.entities.PlayerResourceLedger.filter({ campaign_id }),
+      ]);
+
+      const activePlayers = players.filter(p => !p.is_eliminated);
+      const reports = [];
+
+      for (const player of activePlayers) {
+        const ledger = allLedgers.find(l => l.player_id === player.id);
+        let food = ledger?.food ?? 0;
+        const playerDev = allDev.filter(d => d.owner_player_id === player.id);
+
+        // Only territories with a maintenance cost (Level 4+)
+        const chargeable = playerDev
+          .filter(d => getMaintenanceCost(d.development_level ?? 1) > 0)
+          .map(d => ({
+            ...d,
+            _cost: getMaintenanceCost(d.development_level ?? 1),
+            // Buffer = accumulated progress within the current level
+            _buffer: d.development_progress ?? 0,
+          }))
+          .sort((a, b) => a._buffer - b._buffer); // smallest buffer first
+
+        if (chargeable.length === 0) continue;
+
+        const decayed = [];
+        let foodSpent = 0;
+
+        for (const dev of chargeable) {
+          let cost = dev._cost;
+          if (food >= cost) {
+            // Pay maintenance normally
+            food -= cost;
+            foodSpent += cost;
+          } else {
+            // Cannot pay — apply decay
+            // Each missing food unit reduces total_food_invested by 1 and recalculates level
+            const shortfall = cost - food;
+            foodSpent += food;
+            food = 0;
+
+            let newTotal = Math.max(0, (dev.total_food_invested ?? 0) - shortfall);
+
+            // Recompute level from total_food_invested scratch
+            let newLevel = 1;
+            let tempFood = newTotal;
+            while (tempFood >= foodToNextLevel(newLevel)) {
+              tempFood -= foodToNextLevel(newLevel);
+              newLevel += 1;
+            }
+            const newProgress = tempFood;
+
+            await base44.asServiceRole.entities.TerritoryDevelopment.update(dev.id, {
+              development_level: newLevel,
+              development_progress: Math.max(0, newProgress),
+              food_to_next_level: foodToNextLevel(newLevel),
+              total_food_invested: newTotal,
+              unlocked_resources: unlockedResources(dev.territory_id, newLevel),
+              unlocked_slot_count: unlockedSlotCount(dev.territory_id, newLevel),
+              last_updated_round: round,
+            });
+
+            decayed.push({
+              territory_id: dev.territory_id,
+              old_level: dev.development_level,
+              new_level: newLevel,
+              shortfall,
+            });
+          }
+        }
+
+        // Deduct spent food from ledger
+        if (foodSpent > 0 && ledger) {
+          await base44.asServiceRole.entities.PlayerResourceLedger.update(ledger.id, {
+            food: Math.max(0, food),
+            updated_at_round: round,
+            updated_at_phase: campaign.current_phase ?? 'deploy',
+          });
+        }
+
+        if (foodSpent > 0 || decayed.length > 0) {
+          await base44.asServiceRole.entities.SetupLog.create({
+            campaign_id, phase: campaign.current_phase ?? 'deploy', round,
+            event_type: 'territory_maintenance_applied',
+            player_id: player.id,
+            payload: { food_spent: foodSpent, food_remaining: food, decayed },
+            is_public: false,
+          });
+        }
+
+        reports.push({
+          player_id: player.id,
+          display_name: player.display_name,
+          food_spent: foodSpent,
+          food_remaining: food,
+          decayed,
+        });
+      }
+
+      return Response.json({ success: true, reports });
     }
 
     return Response.json({ error: `Unknown action: ${action}` }, { status: 400 });
