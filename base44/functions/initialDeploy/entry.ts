@@ -396,31 +396,8 @@ Deno.serve(async (req) => {
       }, false);
     }
 
-    // ── STEP 5: Advance campaign to Round 1 deploy ───────────────────────────
-    await base44.asServiceRole.entities.Campaign.update(campaign_id, {
-      current_phase: 'deploy',
-      current_round: 1,
-      setup_current_index: 0,
-      initial_deploy_reveal_completed_at: new Date().toISOString(),
-    });
-
-    await log(base44, campaign_id, 'phase_advanced', null, { next_phase: 'deploy', round: 1 }, true);
-    console.log('[processPhaseEnd] SUCCESS: Advanced to deploy round 1.');
-
-    // ── STEP 6: Auto-start deploy phase (income + stubs) ─────────────────────
-    try {
-      await base44.asServiceRole.functions.invoke('deployPhase', {
-        action: 'startDeploy',
-        campaign_id,
-        _internal: true,
-      });
-      console.log('[processPhaseEnd] Deploy phase auto-started successfully.');
-    } catch (deployErr) {
-      console.warn('[processPhaseEnd] Auto-start deploy failed (non-fatal):', deployErr?.message);
-    }
-
-    // ── STEP 7: Seed starting influence — INLINE (1 perm + 1 spendable per territory)
-    // Inlined instead of cross-function call to avoid silent auth failures.
+    // ── STEP 5: Seed starting influence — INLINE (1 perm + 1 spendable per territory)
+    // Runs BEFORE phase advance to avoid race condition where UI loads before data is ready.
     {
       const SC_TERRITORY_REGION = {
         I8:'outer_passes', I4:'outer_passes', I6:'outer_passes', I7:'outer_passes',
@@ -438,7 +415,6 @@ Deno.serve(async (req) => {
       };
 
       try {
-        // Idempotency: check if already seeded
         const existingInfluence = await base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id });
         const alreadySeeded = existingInfluence.some(r => r.source === 'starting_bonus');
 
@@ -450,7 +426,6 @@ Deno.serve(async (req) => {
           let influenceCount = 0;
 
           for (const ts of ownedForInfluence) {
-            // 1 permanent influence per territory
             await base44.asServiceRole.entities.TerritoryInfluence.create({
               campaign_id,
               territory_id: ts.territory_id,
@@ -460,7 +435,6 @@ Deno.serve(async (req) => {
               source: 'starting_bonus',
             });
 
-            // 1 spendable influence per territory's region
             const regionId = SC_TERRITORY_REGION[ts.territory_id];
             if (regionId) {
               const existingPool = await base44.asServiceRole.entities.RegionalInfluencePool.filter({
@@ -487,9 +461,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── STEP 8: Seed starting resources — all routed to capital territory ──
-    // Players enter Round 1 Planning with 1 of each territory's primary resource
-    // already in their capital's storage, so they can build and act immediately.
+    // ── STEP 6: Seed starting resources — all routed to capital territory ──
     {
       const SC_RESOURCE_TYPES = {
         I1:'iron',  I2:'iron',  I3:'stone', I4:'iron',  I5:'stone',
@@ -510,40 +482,32 @@ Deno.serve(async (req) => {
         const startingStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
         const ownedStarting = startingStates.filter(s => s.owner_player_id != null);
 
-        // Load capital designations (fresh query — includes STEP 2b records)
         const allDevRecords = await base44.asServiceRole.entities.TerritoryDevelopment.filter({ campaign_id });
-        console.log('[STEP 8] Found', allDevRecords.length, 'TerritoryDevelopment records.',
+        console.log('[STEP 6] Found', allDevRecords.length, 'TerritoryDevelopment records.',
           'Capitals:', allDevRecords.filter(d => d.is_capital).map(d => `${d.territory_id}(${d.owner_player_id})`).join(', ') || 'NONE');
 
-        // Group owned territories by player and accumulate resources
-        const playerResources = {}; // playerId → { gold, iron, timber, stone, food }
+        const playerResources = {};
         for (const ts of ownedStarting) {
           const primary = SC_RESOURCE_TYPES[ts.territory_id] ?? ts.resource_type ?? 'gold';
           if (!playerResources[ts.owner_player_id]) playerResources[ts.owner_player_id] = emptyStorage();
           playerResources[ts.owner_player_id][primary] = (playerResources[ts.owner_player_id][primary] ?? 0) + 1;
         }
 
-        // Index states for O(1) lookup
-        const step8StateById = {};
-        for (const ts of startingStates) step8StateById[ts.territory_id] = ts;
+        const step6StateById = {};
+        for (const ts of startingStates) step6StateById[ts.territory_id] = ts;
 
         for (const [playerId, gained] of Object.entries(playerResources)) {
-          // Find capital for this player
           const capitalDev = allDevRecords.find(d => d.owner_player_id === playerId && d.is_capital);
           const capitalTid = capitalDev?.territory_id ?? null;
-          const capitalTs = capitalTid ? step8StateById[capitalTid] : null;
-
-          console.log('[STEP 8] Player', playerId, '→ capital:', capitalTid, '→ capitalTs found:', !!capitalTs, '→ resources:', JSON.stringify(gained));
+          const capitalTs = capitalTid ? step6StateById[capitalTid] : null;
 
           if (capitalTs) {
-            // Route ALL starting resources to capital territory
             const before = { ...emptyStorage(), ...(capitalTs.resource_storage ?? {}) };
             const after = { ...before };
             for (const r of VALID_RESOURCES) after[r] = (after[r] || 0) + (gained[r] || 0);
             await base44.asServiceRole.entities.TerritoryState.update(capitalTs.id, { resource_storage: after });
-            console.log('[STEP 8] Wrote resources to capital', capitalTid, ':', JSON.stringify(after));
           } else {
-            console.warn('[STEP 8] NO CAPITAL FOUND for player', playerId, '— falling back to individual territories');
+            console.warn('[STEP 6] NO CAPITAL FOUND for player', playerId, '— falling back to individual territories');
             for (const ts of ownedStarting.filter(s => s.owner_player_id === playerId)) {
               const primary = SC_RESOURCE_TYPES[ts.territory_id] ?? ts.resource_type ?? 'gold';
               const before = { ...emptyStorage(), ...(ts.resource_storage ?? {}) };
@@ -552,7 +516,6 @@ Deno.serve(async (req) => {
             }
           }
 
-          // Seed player resource ledger
           const existing = await base44.asServiceRole.entities.PlayerResourceLedger.filter({ campaign_id, player_id: playerId });
           const prev = existing[0];
           const merged = { ...emptyStorage(), ...(prev ?? {}) };
@@ -575,7 +538,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── STEP 9: Initialize territory development records ─────────────────
+    // ── STEP 7: Initialize territory development records ─────────────────
     try {
       await base44.asServiceRole.functions.invoke('territoryDevelopment', {
         action: 'initDevelopment',
@@ -584,6 +547,30 @@ Deno.serve(async (req) => {
       console.log('[processPhaseEnd] Territory development initialized.');
     } catch (devErr) {
       console.warn('[processPhaseEnd] Territory development init failed (non-fatal):', devErr?.message);
+    }
+
+    // ── STEP 8: Advance campaign to Round 1 deploy ───────────────────────────
+    // This is done LAST so the UI doesn't reload before influence/resources/dev are ready.
+    await base44.asServiceRole.entities.Campaign.update(campaign_id, {
+      current_phase: 'deploy',
+      current_round: 1,
+      setup_current_index: 0,
+      initial_deploy_reveal_completed_at: new Date().toISOString(),
+    });
+
+    await log(base44, campaign_id, 'phase_advanced', null, { next_phase: 'deploy', round: 1 }, true);
+    console.log('[processPhaseEnd] SUCCESS: Advanced to deploy round 1.');
+
+    // ── STEP 9: Auto-start deploy phase (income + stubs) ─────────────────────
+    try {
+      await base44.asServiceRole.functions.invoke('deployPhase', {
+        action: 'startDeploy',
+        campaign_id,
+        _internal: true,
+      });
+      console.log('[processPhaseEnd] Deploy phase auto-started successfully.');
+    } catch (deployErr) {
+      console.warn('[processPhaseEnd] Auto-start deploy failed (non-fatal):', deployErr?.message);
     }
 
     return Response.json({
