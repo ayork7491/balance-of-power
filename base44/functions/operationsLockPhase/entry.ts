@@ -182,9 +182,7 @@ Deno.serve(async (req) => {
 
   // ── ACTION: getOperationsStatus ────────────────────────────────────────────
   if (action === 'getOperationsStatus') {
-    if (campaign.current_phase !== 'attack') {
-      return Response.json({ error: 'Not in Operations (attack) phase', phase: campaign.current_phase }, { status: 400 });
-    }
+    // No hard phase guard — allow reads during transitions to avoid UI errors.
     const [stagingDecision, attackDecision, attackLockRecords, territoryStates, regionalPools] = await Promise.all([
       getStagingDecision(base44, campaign_id, actingPlayer.id, round),
       getAttackDecision(base44, campaign_id, actingPlayer.id, round),

@@ -290,7 +290,8 @@ export default function DiplomaticOpsPanel({ campaign, myPlayer, actingAsPlayerI
       });
       setStaging(res.data?.diplomatic ?? null);
     } catch (e) {
-      setError(e?.response?.data?.error ?? 'Failed to load diplomatic ops state');
+      // Silently ignore load errors (e.g. during phase transitions)
+      console.warn('[DiplomaticOpsPanel] load error:', e?.response?.data?.error ?? e?.message);
     } finally {
       setLoading(false);
     }

@@ -128,7 +128,8 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
       setStaging(res.data?.economic ?? null);
       setResources(res.data?.economic?.resources ?? {});
     } catch (e) {
-      setError(e?.response?.data?.error ?? 'Failed to load economic ops state');
+      // Silently ignore load errors (e.g. during phase transitions)
+      console.warn('[EconomicOpsPanel] load error:', e?.response?.data?.error ?? e?.message);
     } finally {
       setLoading(false);
     }
