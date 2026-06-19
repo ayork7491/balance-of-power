@@ -119,6 +119,30 @@ async function spendRegionalInfluence(base44, campaignId, playerId, regionId, am
   }
 }
 
+// ─── Inline: Shattered Crown adjacency pairs (for supply route range validation) ──
+const SC_ADJ_PAIRS = [
+  ['I8','I4'],['I4','I3'],['I4','I7'],['I6','I3'],['I6','I5'],['I6','I7'],['I1','I2'],['I1','I5'],
+  ['I2','I3'],['I2','I5'],['I6','B1'],['I7','B1'],['I7','B3'],['I8','C1'],['W1','W2'],['W2','W3'],
+  ['W2','W4'],['W2','W5'],['W3','W5'],['W3','W6'],['W4','W5'],['W4','W7'],['W5','W6'],['W5','W7'],
+  ['W5','W8'],['W6','W9'],['W7','W8'],['W8','W9'],['W7','S1'],['W9','S2'],['B1','B3'],['B1','B2'],
+  ['B3','B2'],['B3','B4'],['B2','B4'],['B2','B5'],['B2','B6'],['B4','B7'],['B5','B6'],['B5','B8'],
+  ['B6','B7'],['B6','B8'],['B6','B9'],['B7','B10'],['B8','B9'],['B9','B10'],['B10','C6'],['B10','C4'],
+  ['B10','S3'],['S1','S2'],['S1','S4'],['S4','S5'],['S4','S7'],['S7','S5'],['S7','S8'],['S2','S3'],
+  ['S2','S5'],['S5','S8'],['S5','S6'],['S3','S6'],['S6','S9'],['S6','C8'],['S9','C8'],['C1','C2'],
+  ['C2','C3'],['C3','C4'],['C3','C5'],['C4','C5'],['C4','C6'],['C5','C6'],['C5','C7'],['C6','C7'],
+  ['C6','C8'],['C7','C8'],
+];
+function buildAdjacency(mapId) {
+  const pairs = mapId === 'map_v1_standard' ? [] : SC_ADJ_PAIRS;
+  const adj = {};
+  for (const [a, b] of pairs) {
+    if (!adj[a]) adj[a] = new Set();
+    if (!adj[b]) adj[b] = new Set();
+    adj[a].add(b); adj[b].add(a);
+  }
+  return adj;
+}
+
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
@@ -245,9 +269,14 @@ Deno.serve(async (req) => {
 
   // ── ACTION: stageEconomic ──────────────────────────────────────────────────
   if (action === 'stageEconomic') {
-    const { building_type, territory_id } = body;
+    const { building_type, territory_id, source_territory_id } = body;
     if (!building_type || !territory_id) {
       return Response.json({ error: 'building_type and territory_id are required' }, { status: 400 });
+    }
+
+    // supply_route requires source_territory_id (the territory the route extracts from)
+    if (building_type === 'supply_route' && !source_territory_id) {
+      return Response.json({ error: 'source_territory_id is required for supply_route' }, { status: 400 });
     }
 
     const staging = await getStagingDecision(base44, campaign_id, actingPlayer.id, round);
@@ -259,27 +288,103 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Economic operations already locked.' }, { status: 400 });
     }
 
-    // Validate territory ownership
-    const [ownedStates] = await Promise.all([
-      base44.asServiceRole.entities.TerritoryState.filter({ campaign_id, owner_player_id: actingPlayer.id }),
-    ]);
+    // Validate territory ownership and get all states
+    const allTerritoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+    const ownedStates = allTerritoryStates.filter(s => s.owner_player_id === actingPlayer.id);
     const ownedIds = new Set(ownedStates.map(s => s.territory_id));
     if (!ownedIds.has(territory_id)) {
       return Response.json({ error: 'You do not own that territory.' }, { status: 400 });
     }
 
-    // Construction limit: 1 per round
+    // Validate supply route: hub must have resource_hub building, source must be within range 2
+    if (building_type === 'supply_route') {
+      const hubBuildings = await base44.asServiceRole.entities.TerritoryBuilding.filter({
+        campaign_id, territory_id, building_type: 'resource_hub',
+      });
+      const hasHub = hubBuildings.some(b => b.status === 'active');
+      if (!hasHub) {
+        return Response.json({ error: 'Selected territory does not have an active Resource Hub.' }, { status: 400 });
+      }
+      // BFS to check source is within range 2 of hub
+      const adj = buildAdjacency(campaign.map_id ?? 'shattered_crown_v1');
+      const inRange2 = new Set();
+      const queue = [[territory_id, 0]];
+      const visited = new Set([territory_id]);
+      while (queue.length > 0) {
+        const [cur, dist] = queue.shift();
+        if (dist > 0) inRange2.add(cur);
+        if (dist < 2) {
+          for (const nb of (adj[cur] ?? new Set())) {
+            if (!visited.has(nb)) { visited.add(nb); queue.push([nb, dist + 1]); }
+          }
+        }
+      }
+      if (!inRange2.has(source_territory_id)) {
+        return Response.json({ error: 'Source territory must be within range 2 of the Resource Hub.' }, { status: 400 });
+      }
+    }
+
+    // Construction limit: 1 per round (base)
     const existing = stagingData.economic_staged ?? [];
     if (existing.length >= 1) {
       return Response.json({ error: 'Only 1 construction project can be staged per round.' }, { status: 400 });
     }
 
-    const newProject = { building_type, territory_id, staged_at: new Date().toISOString() };
+    // ── Deduct resources immediately from territory storage (like troops for attacks) ──
+    const BUILDING_COSTS = {
+      barracks:        { gold: 2, iron: 1 },
+      war_council:     { gold: 3, iron: 2 },
+      logistics_corps: { gold: 2, iron: 1, timber: 1 },
+      embassy:         { gold: 2, stone: 2 },
+      council_chamber: { gold: 3, stone: 2 },
+      foreign_office:  { gold: 2, stone: 1, timber: 1 },
+      monument:        { gold: 3, stone: 3 },
+      marketplace:     { gold: 2, timber: 1 },
+      builders_guild:  { gold: 3, timber: 2 },
+      trade_network:   { gold: 2, timber: 2 },
+      resource_hub:    { gold: 3, timber: 1, stone: 1 },
+      supply_route:    { gold: 1, timber: 1 },
+      warehouse:       { gold: 2, stone: 1 },
+    };
+    const cost = BUILDING_COSTS[building_type];
+    if (!cost) {
+      return Response.json({ error: `Unknown building type: ${building_type}` }, { status: 400 });
+    }
+
+    // Find the territory to deduct from: for supply_route use hub territory, else the target territory
+    const costTerritoryId = territory_id;
+    const costTs = allTerritoryStates.find(s => s.territory_id === costTerritoryId);
+    const storage = { ...(costTs?.resource_storage ?? {}) };
+
+    // Validate affordability
+    for (const [res, needed] of Object.entries(cost)) {
+      if (needed > 0 && (storage[res] ?? 0) < needed) {
+        return Response.json({
+          error: `Not enough ${res} in ${costTerritoryId}. Have ${storage[res] ?? 0}, need ${needed}.`,
+        }, { status: 400 });
+      }
+    }
+
+    // Deduct resources
+    for (const [res, needed] of Object.entries(cost)) {
+      if (needed > 0) storage[res] = (storage[res] ?? 0) - needed;
+    }
+    if (costTs) {
+      await base44.asServiceRole.entities.TerritoryState.update(costTs.id, { resource_storage: storage });
+    }
+
+    const newProject = {
+      building_type,
+      territory_id,
+      source_territory_id: source_territory_id ?? null,
+      cost_paid: cost,
+      staged_at: new Date().toISOString(),
+    };
     await upsertStagingDecision(base44, campaign_id, actingPlayer.id, round, {
       economic_staged: [...existing, newProject],
     });
 
-    return Response.json({ success: true, project: newProject, message: 'Construction project staged.' });
+    return Response.json({ success: true, project: newProject, message: 'Construction project staged. Resources deducted.' });
   }
 
   // ── ACTION: stageDiplomatic ────────────────────────────────────────────────
@@ -353,7 +458,19 @@ Deno.serve(async (req) => {
 
     if (pillar === 'economic') {
       const arr = [...(stagingData.economic_staged ?? [])];
-      arr.splice(index, 1);
+      const removed = arr.splice(index, 1)[0];
+      // Refund resources that were deducted at staging time
+      if (removed?.cost_paid && removed?.territory_id) {
+        const allStatesForRefund = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+        const refundTs = allStatesForRefund.find(s => s.territory_id === removed.territory_id);
+        if (refundTs) {
+          const newStorage = { ...(refundTs.resource_storage ?? {}) };
+          for (const [res, amount] of Object.entries(removed.cost_paid)) {
+            if (amount > 0) newStorage[res] = (newStorage[res] ?? 0) + amount;
+          }
+          await base44.asServiceRole.entities.TerritoryState.update(refundTs.id, { resource_storage: newStorage });
+        }
+      }
       await upsertStagingDecision(base44, campaign_id, actingPlayer.id, round, { economic_staged: arr });
     } else if (pillar === 'diplomatic') {
       const arr = [...(stagingData.diplomatic_staged ?? [])];
@@ -398,38 +515,114 @@ Deno.serve(async (req) => {
     const economicStaged = stagingData.economic_staged ?? [];
     if (economicStaged.length > 0) {
       const constructionResults = [];
+      const allTerritoryStatesForLock = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+
       for (const project of economicStaged) {
-        // Create a TerritoryBuilding record in 'planned' status
+        const pillarMap = {
+          barracks: 'military', war_council: 'military', logistics_corps: 'military',
+          embassy: 'diplomatic', council_chamber: 'diplomatic', foreign_office: 'diplomatic',
+          monument: 'diplomatic', marketplace: 'economic', builders_guild: 'economic',
+          trade_network: 'economic', resource_hub: 'economic', supply_route: 'economic', warehouse: 'economic',
+        };
+        const pillar = pillarMap[project.building_type] ?? 'economic';
+
+        // Supply route: resolve into battle card (enemy target) or SupplyRoute record (friendly/unoccupied)
+        if (project.building_type === 'supply_route' && project.source_territory_id) {
+          const sourceState = allTerritoryStatesForLock.find(s => s.territory_id === project.source_territory_id);
+          const sourceOwner = sourceState?.owner_player_id ?? null;
+          const isEnemy = sourceOwner && sourceOwner !== actingPlayer.id;
+
+          if (isEnemy) {
+            // Generate a supply_route_establishment battle card
+            const DEFAULT_AVG_BATTLE_SIZE = 1000;
+            const garrisonTroops = sourceState?.troop_count ?? 0;
+            const attackerTroops = Math.max(1, Math.floor(garrisonTroops * 0.3));
+            const totalTroops = attackerTroops + garrisonTroops;
+            const scaleFactor = parseFloat(Math.max(totalTroops / DEFAULT_AVG_BATTLE_SIZE, 1).toFixed(2));
+            const tabletopSize = Math.round(totalTroops / scaleFactor);
+
+            const existingCards = await base44.asServiceRole.entities.BattleCard.filter({
+              campaign_id, round, source_player_id: actingPlayer.id, battle_card_source: 'supply_route_establishment',
+            });
+            const alreadyExists = existingCards.some(c => c.target_territory_id === project.source_territory_id);
+            if (!alreadyExists) {
+              await base44.asServiceRole.entities.BattleCard.create({
+                campaign_id, round,
+                battle_type: 'supply_route_establishment',
+                battle_pillar: 'economic',
+                target_territory_id: project.source_territory_id,
+                defender_player_id: sourceOwner,
+                defender_troops: garrisonTroops,
+                attackers: [{ player_id: actingPlayer.id, origin_territory_id: project.territory_id, committed_troops: attackerTroops }],
+                total_attacking_troops: attackerTroops,
+                total_troops_in_battle: totalTroops,
+                scale_factor: scaleFactor,
+                tabletop_size: tabletopSize,
+                status: 'pending',
+                is_mutual: false,
+                battle_preferences: {},
+                battle_card_source: 'supply_route_establishment',
+                source_player_id: actingPlayer.id,
+                source_operation_metadata: {
+                  hub_territory_id: project.territory_id,
+                  route_target_territory: project.source_territory_id,
+                  declared_resource_type: sourceState?.resource_type ?? null,
+                },
+              });
+            }
+            constructionResults.push({ building_type: 'supply_route', hub_territory_id: project.territory_id, source_territory_id: project.source_territory_id, result: 'battle_card_generated' });
+          } else {
+            // Friendly or unoccupied — create SupplyRoute directly and the TerritoryBuilding
+            const existingRoute = await base44.asServiceRole.entities.SupplyRoute.filter({
+              campaign_id, owner_player_id: actingPlayer.id,
+              hub_territory_id: project.territory_id,
+              source_territory_id: project.source_territory_id,
+            });
+            if (existingRoute.length === 0) {
+              await base44.asServiceRole.entities.SupplyRoute.create({
+                campaign_id,
+                owner_player_id: actingPlayer.id,
+                hub_territory_id: project.territory_id,
+                source_territory_id: project.source_territory_id,
+                route_status: 'active',
+                range_distance: 2,
+                resource_type: sourceState?.resource_type ?? null,
+                created_round: round,
+                metadata_json: {},
+              });
+            }
+            // Also create TerritoryBuilding for the route itself
+            const existingBld = await base44.asServiceRole.entities.TerritoryBuilding.filter({
+              campaign_id, territory_id: project.territory_id,
+              building_type: 'supply_route', player_id: actingPlayer.id,
+            });
+            if (existingBld.length === 0) {
+              await base44.asServiceRole.entities.TerritoryBuilding.create({
+                campaign_id, territory_id: project.territory_id, player_id: actingPlayer.id,
+                building_type: 'supply_route', pillar_type: 'economic',
+                status: 'active', started_round: round, completed_round: round,
+                construction_progress: 1, metadata_json: { source_territory_id: project.source_territory_id },
+              });
+            }
+            constructionResults.push({ building_type: 'supply_route', hub_territory_id: project.territory_id, source_territory_id: project.source_territory_id, result: 'route_established' });
+          }
+          continue; // handled supply_route — skip generic TerritoryBuilding creation below
+        }
+
+        // Generic building: create TerritoryBuilding in 'planned' status (idempotent)
         const existing = await base44.asServiceRole.entities.TerritoryBuilding.filter({
-          campaign_id,
-          territory_id: project.territory_id,
-          building_type: project.building_type,
-          player_id: actingPlayer.id,
+          campaign_id, territory_id: project.territory_id, building_type: project.building_type, player_id: actingPlayer.id,
         });
-        // Idempotency: skip if already exists
         if (existing.length === 0) {
-          const pillarMap = {
-            barracks: 'military', war_council: 'military', logistics_corps: 'military',
-            embassy: 'diplomatic', council_chamber: 'diplomatic', foreign_office: 'diplomatic',
-            monument: 'diplomatic', marketplace: 'economic', builders_guild: 'economic',
-            trade_network: 'economic', resource_hub: 'economic', supply_route: 'economic', warehouse: 'economic',
-          };
-          const pillar = pillarMap[project.building_type] ?? 'economic';
           const created = await base44.asServiceRole.entities.TerritoryBuilding.create({
-            campaign_id,
-            territory_id: project.territory_id,
-            player_id: actingPlayer.id,
-            building_type: project.building_type,
-            pillar_type: pillar,
-            status: 'planned',
-            started_round: round,
-            construction_progress: 0,
-            metadata_json: {},
+            campaign_id, territory_id: project.territory_id, player_id: actingPlayer.id,
+            building_type: project.building_type, pillar_type: pillar,
+            status: 'planned', started_round: round, construction_progress: 0, metadata_json: {},
           });
           constructionResults.push({ building_id: created.id, building_type: project.building_type, territory_id: project.territory_id });
         }
       }
-      results.economic = { locked: true, projects_committed: constructionResults.length };
+      results.economic = { locked: true, projects_committed: constructionResults.length, details: constructionResults };
     } else {
       results.economic = { locked: true, skipped: true };
     }

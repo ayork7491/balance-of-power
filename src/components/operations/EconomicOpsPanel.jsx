@@ -6,13 +6,13 @@
  *   - Resource summary (global + territory storage)
  *   - Construction project staging with cost preview and affordability validation
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Loader2, RefreshCw, HardHat, X, CheckCircle2, Hammer, AlertCircle } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { ALL_BUILDING_DEFINITIONS } from '@/config/buildingDefinitions.ts';
 import { canPlaceBuilding } from '@/services/maps/structureSlots';
 import { getBuildingPillar } from '@/config/buildingDefinitions.ts';
-import { SC_TERRITORY_BY_ID } from '@/shared/maps/shatteredCrownConfig';
+import { SC_TERRITORY_BY_ID, SC_ADJACENCY } from '@/shared/maps/shatteredCrownConfig';
 import ResourceSummaryPanel from './ResourceSummaryPanel';
 import { useOperationsStagingStore } from '@/features/campaigns/operations/useOperationsStagingStore';
 
@@ -109,6 +109,7 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
   const [error, setError] = useState(null);
   const [selectedBuilding, setSelectedBuilding] = useState(null);
   const [selectedTerritory, setSelectedTerritory] = useState('');
+  const [selectedSourceTerritory, setSelectedSourceTerritory] = useState(''); // supply_route: source territory
   const [submitting, setSubmitting] = useState(false);
   const [removeError, setRemoveError] = useState(null);
 
@@ -152,8 +153,50 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
   // Territories with an active Resource Hub (has_resource_hub flag)
   const hubTerritories = myTerritories.filter(ts => ts.has_resource_hub);
 
-  // For supply_route: valid "hub" territories are those that have a resource hub
-  // AND have all required resources in their own storage (costs are paid from the hub territory).
+  // Build adjacency from SC_ADJACENCY (bidirectional)
+  const scAdjMap = useMemo(() => {
+    const adj = {};
+    for (const { from, to } of SC_ADJACENCY) {
+      if (!adj[from]) adj[from] = [];
+      if (!adj[to]) adj[to] = [];
+      adj[from].push(to);
+      adj[to].push(from);
+    }
+    return adj;
+  }, []);
+
+  // BFS within range 2 of a given territory across ALL territories (including enemy/unoccupied)
+  function getTerritoriesInRange2(hubTerritoryId) {
+    if (!hubTerritoryId) return [];
+    const inRange = [];
+    const visited = new Set([hubTerritoryId]);
+    const queue = [[hubTerritoryId, 0]];
+    while (queue.length > 0) {
+      const [cur, dist] = queue.shift();
+      if (dist > 0) inRange.push(cur);
+      if (dist < 2) {
+        for (const nb of (scAdjMap[cur] ?? [])) {
+          if (!visited.has(nb)) { visited.add(nb); queue.push([nb, dist + 1]); }
+        }
+      }
+    }
+    return inRange;
+  }
+
+  // Valid source territories for supply_route: within range 2 of selected hub, not the hub itself
+  const supplyRouteSourceTerritories = useMemo(() => {
+    if (!isSupplyRoute || !selectedTerritory) return [];
+    const inRange = getTerritoriesInRange2(selectedTerritory);
+    return inRange
+      .map(tid => {
+        const ts = Object.values(stateById).find(s => s.territory_id === tid) ?? { territory_id: tid };
+        const def = mapDef?.territories.find(t => t.territory_id === tid);
+        return { territory_id: tid, name: def?.name ?? tid, state: ts };
+      })
+      .filter(t => t.territory_id !== selectedTerritory);
+  }, [isSupplyRoute, selectedTerritory, stateById, mapDef]);
+
+  // For supply_route: hub territories that can afford the cost
   function hubCanAffordSupplyRoute(ts, buildingDef) {
     if (!buildingDef) return false;
     const storage = ts.resource_storage ?? {};
@@ -171,9 +214,6 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
       .every(([r, needed]) => (storage[r] ?? 0) >= needed);
   }
 
-  // For supply_route: "territory" selection means picking the hub territory whose resources fund it.
-  // validTerritories for supply_route = hub territories that can afford the cost.
-  // For other buildings: territories the player owns that can afford + have a slot (any owned = has base omni slot).
   const validTerritories = selectedBuildingDef
     ? isSupplyRoute
       ? hubTerritories.filter(ts => hubCanAffordSupplyRoute(ts, selectedBuildingDef))
@@ -181,10 +221,13 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
     : [];
 
   // Affordability: at least one valid territory
-  const canAfford = validTerritories.length > 0;
+  const canAfford = isSupplyRoute
+    ? validTerritories.length > 0  // source territory checked separately
+    : validTerritories.length > 0;
 
   const handleStage = async () => {
     if (!selectedBuilding || !selectedTerritory || !canAfford) return;
+    if (isSupplyRoute && !selectedSourceTerritory) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -194,9 +237,11 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
         acting_as_player_id: actingPlayerId,
         building_type: selectedBuilding,
         territory_id: selectedTerritory,
+        ...(isSupplyRoute ? { source_territory_id: selectedSourceTerritory } : {}),
       });
       setSelectedBuilding(null);
       setSelectedTerritory('');
+      setSelectedSourceTerritory('');
       // Mirror to localStorage for reactive header
       const res = await base44.functions.invoke('operationsLockPhase', {
         action: 'getOperationsStatus',
@@ -407,27 +452,25 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
                     })()}
                   </div>
 
-                  {/* Territory selector — for supply_route selects the hub territory; otherwise target territory */}
-                  <div className="space-y-1">
+                  {/* Territory selector */}
+                  <div className="space-y-1.5">
                     <p className="text-[10px] text-muted-foreground">
-                      {isSupplyRoute ? 'Select Resource Hub territory (funds the route):' : 'Select territory:'}
+                      {isSupplyRoute ? 'Step 1: Select Resource Hub territory:' : 'Select territory:'}
                     </p>
                     {isSupplyRoute && hubTerritories.length === 0 ? (
                       <div className="flex items-center gap-2 px-2 py-2 rounded border border-destructive/30 bg-destructive/5 text-[10px] text-destructive">
                         <AlertCircle className="w-3 h-3 shrink-0" />
-                        You need a Resource Hub building before establishing a supply route.
+                        You need an active Resource Hub building before establishing a supply route.
                       </div>
-                    ) : validTerritories.length === 0 ? (
+                    ) : validTerritories.length === 0 && !isSupplyRoute ? (
                       <div className="flex items-center gap-2 px-2 py-2 rounded border border-destructive/30 bg-destructive/5 text-[10px] text-destructive">
                         <AlertCircle className="w-3 h-3 shrink-0" />
-                        {isSupplyRoute
-                          ? 'No Resource Hub territory has sufficient resources.'
-                          : 'No single territory has all required resources stored in it.'}
+                        No single territory has all required resources stored in it.
                       </div>
                     ) : (
                       <select
                         value={selectedTerritory}
-                        onChange={e => setSelectedTerritory(e.target.value)}
+                        onChange={e => { setSelectedTerritory(e.target.value); setSelectedSourceTerritory(''); }}
                         className="w-full bg-muted/20 border border-border rounded px-2 py-1.5 text-xs text-foreground"
                       >
                         <option value="">— choose territory —</option>
@@ -437,10 +480,45 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
                         })}
                       </select>
                     )}
+
+                    {/* Step 2: Supply route source territory */}
                     {isSupplyRoute && selectedTerritory && (
-                      <p className="text-[9px] text-muted-foreground italic">
-                        The route will extend outward from this hub. Target unoccupied territories are set during battle resolution.
-                      </p>
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-muted-foreground">Step 2: Select source territory (within range 2):</p>
+                        {supplyRouteSourceTerritories.length === 0 ? (
+                          <div className="flex items-center gap-2 px-2 py-2 rounded border border-destructive/30 bg-destructive/5 text-[10px] text-destructive">
+                            <AlertCircle className="w-3 h-3 shrink-0" /> No territories within range 2 of this hub.
+                          </div>
+                        ) : (
+                          <select
+                            value={selectedSourceTerritory}
+                            onChange={e => setSelectedSourceTerritory(e.target.value)}
+                            className="w-full bg-muted/20 border border-border rounded px-2 py-1.5 text-xs text-foreground"
+                          >
+                            <option value="">— choose source territory —</option>
+                            {supplyRouteSourceTerritories.map(t => {
+                              const ownerState = t.state;
+                              const ownerPlayer = players?.find(p => p.id === ownerState?.owner_player_id);
+                              const isEnemy = ownerState?.owner_player_id && ownerState.owner_player_id !== actingPlayerId;
+                              const label = `${t.name}${ownerPlayer ? ` (${ownerPlayer.display_name}${isEnemy ? ' — enemy ⚔' : ''})` : ' (unoccupied)'}`;
+                              return <option key={t.territory_id} value={t.territory_id}>{label}</option>;
+                            })}
+                          </select>
+                        )}
+                        {selectedSourceTerritory && (() => {
+                          const sourceState = Object.values(stateById).find(s => s.territory_id === selectedSourceTerritory);
+                          const isEnemy = sourceState?.owner_player_id && sourceState.owner_player_id !== actingPlayerId;
+                          return isEnemy ? (
+                            <p className="text-[9px] text-amber-400 italic">
+                              ⚔ Enemy territory — a Supply Route Establishment battle card will be generated.
+                            </p>
+                          ) : (
+                            <p className="text-[9px] text-green-400 italic">
+                              ✓ Friendly/unoccupied — supply route will be established immediately.
+                            </p>
+                          );
+                        })()}
+                      </div>
                     )}
                   </div>
                 </div>
@@ -448,7 +526,7 @@ export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId,
 
               <button
                 onClick={handleStage}
-                disabled={!selectedBuilding || !selectedTerritory || submitting || !canAfford}
+                disabled={!selectedBuilding || !selectedTerritory || submitting || !canAfford || (isSupplyRoute && !selectedSourceTerritory)}
                 className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded border border-amber-400/40 bg-amber-400/10 text-amber-400 text-xs font-display tracking-widest uppercase hover:brightness-110 transition-all disabled:opacity-40"
               >
                 {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Hammer className="w-3.5 h-3.5" />}
