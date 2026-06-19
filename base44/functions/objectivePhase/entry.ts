@@ -242,6 +242,7 @@ async function getAllHeldCardIds(base44, campaignId) {
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
+  try {
   const base44 = createClientFromRequest(req);
   const user = await base44.auth.me();
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
@@ -252,15 +253,10 @@ Deno.serve(async (req) => {
     return Response.json({ error: 'campaign_id and action are required' }, { status: 400 });
   }
 
-  let campaigns, players;
-  try {
-    [campaigns, players] = await Promise.all([
-      base44.asServiceRole.entities.Campaign.filter({ id: campaign_id }),
-      base44.asServiceRole.entities.CampaignPlayer.filter({ campaign_id }),
-    ]);
-  } catch {
-    return Response.json({ error: 'Campaign not found' }, { status: 404 });
-  }
+  const [campaigns, players] = await Promise.all([
+    base44.asServiceRole.entities.Campaign.filter({ id: campaign_id }),
+    base44.asServiceRole.entities.CampaignPlayer.filter({ campaign_id }),
+  ]);
   const campaign = campaigns[0];
   if (!campaign) return Response.json({ error: 'Campaign not found' }, { status: 404 });
 
@@ -777,4 +773,8 @@ Deno.serve(async (req) => {
   }
 
   return Response.json({ error: `Unknown action: ${action}` }, { status: 400 });
+  } catch (err) {
+    console.error('[objectivePhase] Unhandled error:', err?.message ?? err);
+    return Response.json({ error: err?.message ?? 'Internal server error' }, { status: 500 });
+  }
 });
