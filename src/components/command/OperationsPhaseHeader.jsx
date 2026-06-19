@@ -89,11 +89,12 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
         setError(null);
         retryRef.current = null;
       } else {
+        // Silently ignore load errors (phase transitions, transient 500s)
         const msg = statusRes.reason?.response?.data?.error ?? statusRes.reason?.message ?? '';
-        // Suppress phase-mismatch errors (stale campaign state during transitions)
-        if (!msg.includes('attack') && !msg.includes('phase') && !status) {
-          retryRef.current = setTimeout(() => load(true), 3000);
-          setError(msg || 'Failed to load operations status.');
+        console.warn('[OperationsPhaseHeader] load error (suppressed):', msg);
+        // Retry once after a short delay
+        if (!retryRef.current) {
+          retryRef.current = setTimeout(() => { retryRef.current = null; load(true); }, 3000);
         }
       }
 
