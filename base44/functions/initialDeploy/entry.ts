@@ -205,6 +205,18 @@ Deno.serve(async (req) => {
       }, { status: 400 });
     }
 
+    // ── Capital validation: must set capital before locking ────────────────
+    const capitalDevRecords = await base44.asServiceRole.entities.TerritoryDevelopment.filter({
+      campaign_id, owner_player_id: actingPlayer.id,
+    });
+    const hasCapital = capitalDevRecords.some(d => d.is_capital);
+    if (!hasCapital) {
+      return Response.json({
+        error: 'You must designate a capital territory before locking your deployment.',
+        validation_error: 'capital_not_set',
+      }, { status: 400 });
+    }
+
     await base44.entities.PhaseDecision.update(decision.id, {
       is_locked: true,
       locked_at: new Date().toISOString(),
@@ -301,6 +313,43 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── STEP 2b: Auto-designate capital for players who don't have one ──────
+    // Required so STEP 8 can route starting resources to capital.
+    // Players who locked manually already have a capital (enforced by lockDeploy).
+    // Auto-submitted players may not — designate their first territory as capital.
+    try {
+      const [allDevRecords, allTerritoryStates2b] = await Promise.all([
+        base44.asServiceRole.entities.TerritoryDevelopment.filter({ campaign_id }),
+        base44.asServiceRole.entities.TerritoryState.filter({ campaign_id }),
+      ]);
+      for (const p of activePlayers) {
+        const playerDev = allDevRecords.filter(d => d.owner_player_id === p.id);
+        const hasCapital = playerDev.some(d => d.is_capital);
+        if (!hasCapital) {
+          const ownedTs = allTerritoryStates2b.filter(s => s.owner_player_id === p.id);
+          if (ownedTs.length > 0) {
+            const firstTid = ownedTs[0].territory_id;
+            const existingDev = playerDev.find(d => d.territory_id === firstTid);
+            if (existingDev) {
+              await base44.asServiceRole.entities.TerritoryDevelopment.update(existingDev.id, {
+                is_capital: true, capital_set_round: 0,
+              });
+            } else {
+              await base44.asServiceRole.entities.TerritoryDevelopment.create({
+                campaign_id, territory_id: firstTid, owner_player_id: p.id,
+                development_level: 1, development_progress: 0, food_to_next_level: 3,
+                total_food_invested: 0, is_capital: true, capital_set_round: 0,
+                unlocked_resources: ['primary'], unlocked_slot_count: 1, last_updated_round: 0,
+              });
+            }
+            console.log(`[processPhaseEnd] Auto-designated capital ${firstTid} for player ${p.display_name}`);
+          }
+        }
+      }
+    } catch (capitalErr) {
+      console.warn('[processPhaseEnd] Auto-capital designation failed (non-fatal):', capitalErr?.message);
+    }
+
     // ── STEP 3: Reload final decisions ───────────────────────────────────────
     const finalDecisions = await base44.asServiceRole.entities.PhaseDecision.filter({
       campaign_id, phase: 'initial_deploy',
@@ -375,16 +424,16 @@ Deno.serve(async (req) => {
       await base44.asServiceRole.functions.invoke('planningPhase', {
         action: 'seedStartingInfluence',
         campaign_id,
-        acting_as_player_id: null,
+        _internal: true,
       });
       console.log('[processPhaseEnd] Starting influence seeded successfully.');
     } catch (infErr) {
       console.warn('[processPhaseEnd] Starting influence seed failed (non-fatal):', infErr?.message);
     }
 
-    // ── STEP 8: Seed starting resources for all owned territories ─────────
+    // ── STEP 8: Seed starting resources — all routed to capital territory ──
     // Players enter Round 1 Planning with 1 of each territory's primary resource
-    // already in storage, so they can build and act immediately in Operations.
+    // already in their capital's storage, so they can build and act immediately.
     try {
       const SC_RESOURCE_TYPES = {
         I1:'iron',  I2:'iron',  I3:'stone', I4:'iron',  I5:'stone',
@@ -404,19 +453,44 @@ Deno.serve(async (req) => {
       const startingStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
       const ownedStarting = startingStates.filter(s => s.owner_player_id != null);
 
-      // Generate 1 primary resource per territory as starting stock
-      const ledgerAccum = {};
+      // Load capital designations
+      const allDevRecords = await base44.asServiceRole.entities.TerritoryDevelopment.filter({ campaign_id });
+
+      // Group owned territories by player and accumulate resources
+      const playerResources = {}; // playerId → { gold, iron, timber, stone, food }
       for (const ts of ownedStarting) {
         const primary = SC_RESOURCE_TYPES[ts.territory_id] ?? ts.resource_type ?? 'gold';
-        const before = { ...emptyStorage(), ...(ts.resource_storage ?? {}) };
-        const after = { ...before, [primary]: (before[primary] ?? 0) + 1 };
-        await base44.asServiceRole.entities.TerritoryState.update(ts.id, { resource_storage: after });
-        if (!ledgerAccum[ts.owner_player_id]) ledgerAccum[ts.owner_player_id] = emptyStorage();
-        ledgerAccum[ts.owner_player_id][primary] = (ledgerAccum[ts.owner_player_id][primary] ?? 0) + 1;
+        if (!playerResources[ts.owner_player_id]) playerResources[ts.owner_player_id] = emptyStorage();
+        playerResources[ts.owner_player_id][primary] = (playerResources[ts.owner_player_id][primary] ?? 0) + 1;
       }
 
-      // Also seed ledgers so resources appear immediately available
-      for (const [playerId, gained] of Object.entries(ledgerAccum)) {
+      // Write all starting resources to each player's capital territory
+      const stateById = {};
+      for (const ts of startingStates) stateById[ts.territory_id] = ts;
+
+      for (const [playerId, gained] of Object.entries(playerResources)) {
+        // Find capital for this player
+        const capitalDev = allDevRecords.find(d => d.owner_player_id === playerId && d.is_capital);
+        const capitalTid = capitalDev?.territory_id ?? null;
+        const capitalTs = capitalTid ? stateById[capitalTid] : null;
+
+        if (capitalTs) {
+          // Route all starting resources to capital
+          const before = { ...emptyStorage(), ...(capitalTs.resource_storage ?? {}) };
+          const after = { ...before };
+          for (const r of VALID_RESOURCES) after[r] = (after[r] || 0) + (gained[r] || 0);
+          await base44.asServiceRole.entities.TerritoryState.update(capitalTs.id, { resource_storage: after });
+        } else {
+          // Fallback: distribute to individual territories (shouldn't happen since capital is required)
+          for (const ts of ownedStarting.filter(s => s.owner_player_id === playerId)) {
+            const primary = SC_RESOURCE_TYPES[ts.territory_id] ?? ts.resource_type ?? 'gold';
+            const before = { ...emptyStorage(), ...(ts.resource_storage ?? {}) };
+            const after = { ...before, [primary]: (before[primary] ?? 0) + 1 };
+            await base44.asServiceRole.entities.TerritoryState.update(ts.id, { resource_storage: after });
+          }
+        }
+
+        // Seed player resource ledger
         const existing = await base44.asServiceRole.entities.PlayerResourceLedger.filter({ campaign_id, player_id: playerId });
         const prev = existing[0];
         const merged = { ...emptyStorage(), ...(prev ?? {}) };
@@ -433,7 +507,7 @@ Deno.serve(async (req) => {
         }
       }
 
-      console.log('[processPhaseEnd] Starting resources seeded for', Object.keys(ledgerAccum).length, 'players.');
+      console.log('[processPhaseEnd] Starting resources seeded (to capitals) for', Object.keys(playerResources).length, 'players.');
     } catch (resErr) {
       console.warn('[processPhaseEnd] Starting resources seed failed (non-fatal):', resErr?.message);
     }

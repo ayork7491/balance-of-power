@@ -76,15 +76,17 @@ export default function InitialDeployPanel({
     [myTerritories, placements],
   );
 
-  // Capital state
+  // Capital state — loaded during staging so player can set before locking
   const [capitalData, setCapitalData] = useState(null);
+  const [capitalLoading, setCapitalLoading] = useState(false);
   useEffect(() => {
-    if (!isLocked || !campaign?.id || !myPlayer?.id) return;
+    if (!campaign?.id || !myPlayer?.id) return;
+    setCapitalLoading(true);
     base44.functions.invoke('territoryDevelopment', {
       action: 'getPlayerDevelopment',
       campaign_id: campaign.id,
-    }).then(res => setCapitalData(res.data)).catch(() => {});
-  }, [isLocked, campaign?.id, myPlayer?.id]);
+    }).then(res => setCapitalData(res.data)).catch(() => {}).finally(() => setCapitalLoading(false));
+  }, [campaign?.id, myPlayer?.id]);
 
   const capitalTerritories = useMemo(() =>
     myTerritories.map(ts => ({
@@ -235,12 +237,45 @@ export default function InitialDeployPanel({
         </div>
       )}
 
+      {/* Capital selection — REQUIRED before locking */}
+      {!isLocked && (
+        <div className="space-y-2 pt-2 border-t border-border">
+          <p className="text-xs font-display tracking-wider uppercase text-amber-400">Designate Capital</p>
+          <p className="text-[10px] text-muted-foreground">
+            Choose your capital territory. Starting resources and food will be routed here. <span className="text-amber-400 font-semibold">Required before locking.</span>
+          </p>
+          {capitalLoading ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="w-3 h-3 animate-spin" /> Loading…</div>
+          ) : (
+            <CapitalSelector
+              campaign={campaign}
+              myPlayer={myPlayer}
+              territories={capitalTerritories}
+              currentCapitalId={capitalData?.capital_territory_id ?? null}
+              lastSetRound={null}
+              onCapitalSet={(tid) => setCapitalData(prev => ({ ...prev, capital_territory_id: tid }))}
+              allowChangeLabel="Set Capital"
+            />
+          )}
+        </div>
+      )}
+
       {/* Zero-troop warning — shown before lock attempt so player can fix it */}
       {!isLocked && zeroTroopTerritories.length > 0 && (
         <div className="flex items-start gap-2 px-3 py-2 rounded border border-status-pending/40 bg-status-pending/10 text-xs">
           <AlertTriangle className="w-3.5 h-3.5 text-status-pending shrink-0 mt-0.5" />
           <span className="text-status-pending">
             {zeroTroopTerritories.length} territory{zeroTroopTerritories.length > 1 ? 'ies need' : 'y needs'} at least 1 troop before locking.
+          </span>
+        </div>
+      )}
+
+      {/* Capital not set warning */}
+      {!isLocked && !capitalData?.capital_territory_id && !capitalLoading && (
+        <div className="flex items-start gap-2 px-3 py-2 rounded border border-amber-400/40 bg-amber-400/10 text-xs">
+          <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+          <span className="text-amber-400">
+            You must designate a capital territory before locking.
           </span>
         </div>
       )}
@@ -260,7 +295,7 @@ export default function InitialDeployPanel({
           </button>
           <button
             onClick={handleLockAndRefresh}
-            disabled={submitting || troopsRemaining !== 0}
+            disabled={submitting || troopsRemaining !== 0 || !capitalData?.capital_territory_id}
             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded bg-primary text-primary-foreground text-xs font-display tracking-wider uppercase hover:brightness-110 disabled:opacity-40"
           >
             {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
@@ -278,21 +313,16 @@ export default function InitialDeployPanel({
         </p>
       )}
 
-      {/* Capital selection — shown after locking */}
-      {isLocked && (
+      {/* Capital display — shown after locking (read-only) */}
+      {isLocked && capitalData?.capital_territory_id && (
         <div className="space-y-2 pt-2 border-t border-border">
-          <p className="text-xs font-display tracking-wider uppercase text-amber-400">Designate Capital</p>
-          <p className="text-[10px] text-muted-foreground">
-            Choose your capital territory. Food generated each round is automatically invested here first.
-          </p>
           <CapitalSelector
             campaign={campaign}
             myPlayer={myPlayer}
             territories={capitalTerritories}
-            currentCapitalId={capitalData?.capital_territory_id ?? null}
+            currentCapitalId={capitalData.capital_territory_id}
             lastSetRound={null}
-            onCapitalSet={(tid) => setCapitalData(prev => ({ ...prev, capital_territory_id: tid }))}
-            allowChangeLabel="Set Capital"
+            readonly={true}
           />
         </div>
       )}
