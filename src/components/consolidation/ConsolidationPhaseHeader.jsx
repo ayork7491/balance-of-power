@@ -47,30 +47,24 @@ export default function ConsolidationPhaseHeader({ campaign, myPlayer, actingAsP
     setError(null);
     if (!status) setLoading(true);
     try {
-      // Use getFortifyLockStatus for all-player lock status (safe, service-role),
-      // and read own decision separately (user-scoped is fine for own records).
-      const [lockRes, decisions] = await Promise.all([
-        base44.functions.invoke('getFortifyLockStatus', {
-          campaign_id: campaign.id,
-          round,
-        }),
-        base44.entities.PhaseDecision.filter({
-          campaign_id: campaign.id,
-          player_id: actingId,
-          phase: 'fortify',
-          round,
-        }),
-      ]);
-      const decision = decisions[0] ?? null;
+      const lockRes = await base44.functions.invoke('getFortifyLockStatus', {
+        campaign_id: campaign.id,
+        round,
+      });
+      const lockStatus = lockRes.data?.lock_status ?? [];
+      setAdminLocks(lockStatus);
+
+      // Derive own lock state from the all-player lock status (no extra user-scoped call)
+      const myLock = lockStatus.find(d => d.player_id === actingId);
       const s = {
-        is_locked: decision?.is_locked ?? false,
-        movements_staged: (decision?.data?.movements ?? []).length,
+        is_locked: myLock?.is_locked ?? false,
+        movements_staged: 0, // local-first store provides the live count
       };
       setStatus(s);
-      setAdminLocks(lockRes.data?.lock_status ?? []);
       onStatusLoaded?.(s);
     } catch (e) {
-      setError('Failed to load consolidation status.');
+      // Silently ignore load errors (phase transitions, transient failures)
+      console.warn('[ConsolidationPhaseHeader] load error:', e?.response?.data?.error ?? e?.message);
     } finally {
       setLoading(false);
     }
