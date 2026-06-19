@@ -39,12 +39,15 @@ export function useCampaign(campaignId) {
       hasDataRef.current = true;
       retryRef.current = null;
     } catch (err) {
-      // Don't wipe cached data on a transient error — just show a subtle error
-      if (!hasDataRef.current) {
+      const status = err?.response?.status ?? err?.status ?? 0;
+      // 404/403 during phase transitions are transient — retry silently
+      const isTransient = status === 404 || status === 403 || status === 0 || !status;
+      if (!hasDataRef.current && !isTransient) {
         setError(err.message || 'Failed to load campaign');
       }
-      // Schedule silent retry in 4 seconds
-      retryRef.current = setTimeout(() => loadData(), 4000);
+      // Always retry — back off slightly longer on auth errors
+      const delay = isTransient ? 2000 : 4000;
+      retryRef.current = setTimeout(() => loadData(), delay);
     } finally {
       setLoading(false);
     }
