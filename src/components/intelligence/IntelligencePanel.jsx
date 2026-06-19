@@ -22,7 +22,6 @@ export default function IntelligencePanel({
   const [intelState, setIntelState] = useState(null);
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const [activeAction, setActiveAction] = useState(null);
   const [actionsExpanded, setActionsExpanded] = useState(true);
   const [reportsExpanded, setReportsExpanded] = useState(true);
@@ -36,7 +35,6 @@ export default function IntelligencePanel({
   const load = useCallback(async () => {
     if (!campaignId || !actingPlayer?.id) return;
     setLoading(true);
-    setError(null);
     try {
       const [stateRes, reportsRes] = await Promise.all([
         base44.functions.invoke('intelligencePhase', {
@@ -53,7 +51,7 @@ export default function IntelligencePanel({
       setIntelState(stateRes.data);
       setReports(reportsRes.data?.reports ?? []);
     } catch (err) {
-      setError(err?.response?.data?.error ?? 'Failed to load intelligence state.');
+      console.warn('[IntelligencePanel] load error:', err?.response?.data?.error ?? err?.message);
     } finally {
       setLoading(false);
     }
@@ -83,7 +81,7 @@ export default function IntelligencePanel({
         </button>
       </div>
 
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {/* load errors suppressed — shown only on user-triggered scout actions */}
 
       {loading && !intelState ? (
         <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
