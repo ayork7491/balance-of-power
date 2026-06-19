@@ -196,7 +196,7 @@ function ActiveCampaignContent() {
     playerId: myPlayer?.id,
   });
 
-  // Influence state — all influence records for this campaign (Sprint 4G)
+  // Influence state — scoped to the acting-as player for correct privacy gating
   const {
     influenceByTerritory,
     influenceByRegion,
@@ -204,6 +204,7 @@ function ActiveCampaignContent() {
     spreadThreshold,
   } = useInfluenceState({
     campaignId: id,
+    actingAsPlayerId: actionPlayer?.id ?? null,
     enabled: !!id,
   });
 

@@ -30,12 +30,19 @@ const REPORT_TYPE_CONFIG = {
 
 const RESOURCE_ICONS = { gold: '💰', iron: '⚙️', timber: '🌲', stone: '🪨', food: '🌾' };
 
-function ReconData({ data }) {
+function ReconData({ data, players }) {
+  const ownerName = data.owner_player_id
+    ? (players?.find(p => p.id === data.owner_player_id)?.display_name ?? data.owner_player_id)
+    : 'Unoccupied';
   return (
     <div className="space-y-1.5 text-xs">
       <div className="flex items-center gap-2">
+        <span className="text-muted-foreground w-28">Owner</span>
+        <span className="text-foreground">{ownerName}</span>
+      </div>
+      <div className="flex items-center gap-2">
         <span className="text-muted-foreground w-28">Troop Count</span>
-        <span className="text-foreground font-mono font-semibold">{data.troop_count ?? '—'}</span>
+        <span className="text-foreground font-mono font-semibold text-cyan-400">{data.troop_count ?? '—'}</span>
       </div>
       {data.structures?.length > 0 && (
         <div className="flex items-start gap-2">
@@ -181,7 +188,7 @@ export default function IntelligenceReportCard({ report, players, mapDef, expand
           </div>
 
           {/* Data by type */}
-          {report.report_type === 'recon_territory' && <ReconData data={data} />}
+          {report.report_type === 'recon_territory' && <ReconData data={data} players={players} />}
           {report.report_type === 'audit_stockpile' && <AuditData data={data} />}
           {report.report_type === 'investigate_influence' && <InfluenceData data={data} players={players} />}
         </div>

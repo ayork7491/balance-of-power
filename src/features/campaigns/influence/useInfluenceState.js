@@ -10,7 +10,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { base44 } from '@/api/base44Client';
 
-export function useInfluenceState({ campaignId, enabled = true }) {
+export function useInfluenceState({ campaignId, actingAsPlayerId = null, enabled = true }) {
   const [influenceByTerritory, setInfluenceByTerritory] = useState({});
   const [influenceByRegion, setInfluenceByRegion] = useState({});
   const [playerTotals, setPlayerTotals] = useState({});
@@ -24,6 +24,7 @@ export function useInfluenceState({ campaignId, enabled = true }) {
       const res = await base44.functions.invoke('influencePhase', {
         action: 'getInfluenceState',
         campaign_id: campaignId,
+        ...(actingAsPlayerId ? { acting_as_player_id: actingAsPlayerId } : {}),
       });
       const data = res.data ?? {};
       setInfluenceByTerritory(data.by_territory ?? {});
@@ -37,7 +38,7 @@ export function useInfluenceState({ campaignId, enabled = true }) {
     } finally {
       setLoading(false);
     }
-  }, [campaignId, enabled]);
+  }, [campaignId, actingAsPlayerId, enabled]);
 
   useEffect(() => { load(); }, [load]);
 
