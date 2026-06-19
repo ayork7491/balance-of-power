@@ -13,6 +13,7 @@ import { base44 } from '@/api/base44Client';
 import TradeOfferBuilder from './trade/TradeOfferBuilder';
 import TradeRequestBuilder from './trade/TradeRequestBuilder';
 import TradeAcceptForm from './trade/TradeAcceptForm';
+import IntelligencePanel from '@/components/intelligence/IntelligencePanel';
 
 const RESOURCE_ICONS = { gold: '🟡', iron: '⚙️', timber: '🪵', stone: '🪨', food: '🌾' };
 const RESOURCE_TYPES = ['gold', 'iron', 'timber', 'stone', 'food'];
@@ -585,6 +586,18 @@ export default function DiplomaticConsolidationPanel({ campaign, myPlayer, actin
       <TradeProposalsSection campaign={campaign} actingPlayerId={actingPlayerId} players={players} stateById={stateById} mapDef={mapDef} />
       <ObjectiveHandSection campaign={campaign} actingPlayerId={actingPlayerId} />
       <ActiveEffectsSection campaign={campaign} actingPlayerId={actingPlayerId} players={players} />
+      {/* Intelligence — reports and actions accessible during Consolidation phase */}
+      <div className="border-t border-border pt-1">
+        <IntelligencePanel
+          campaign={campaign}
+          myPlayer={myPlayer}
+          isAdmin={myPlayer?.is_admin}
+          actingAsPlayerId={actingAsPlayerId}
+          mapDef={mapDef}
+          players={players}
+          stateById={stateById ?? {}}
+        />
+      </div>
     </div>
   );
 }
