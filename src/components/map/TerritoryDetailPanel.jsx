@@ -6,7 +6,7 @@
  * During territory_draft phase, shows a Claim Territory button if the territory
  * is unclaimed and it is the current player's turn.
  */
-import { X, Shield, Swords, MapPin, Check, Loader2, Lock, TrendingUp } from 'lucide-react';
+import { X, Shield, Swords, MapPin, Check, Loader2, Lock, TrendingUp, Eye } from 'lucide-react';
 import { PLAYER_COLORS } from '@/config/theme';
 import { getResourceConfig } from '@/config/resourceConfig';
 import { SC_TERRITORY_BY_ID } from '@/shared/maps/shatteredCrownConfig';
@@ -40,6 +40,7 @@ export default function TerritoryDetailPanel({
   mapDef,               // MapDefinition — needed for TerritoryHubInfo territory name lookups
   influenceRecords,     // { player_id, influence_amount }[] for this territory — Sprint 4G
   spreadThreshold,      // number — permanent influence threshold for spread — Sprint 4G
+  intelReport,          // Most recent IntelligenceReport for this territory (own player's reports only)
   onClose,
   // ── Lock state ──
   isLocked,             // boolean — territory is locked by a delayed battle
@@ -127,6 +128,63 @@ export default function TerritoryDetailPanel({
               <span className="text-xs text-muted-foreground font-normal">troops</span>
             </div>
           </div>
+
+          {/* Intel Report — shows revealed data from the most recent recon/audit report */}
+          {intelReport && (
+            <div className="rounded border border-cyan-500/30 bg-cyan-500/5 px-2.5 py-2 space-y-1.5">
+              <div className="flex items-center gap-1.5 text-[10px] text-cyan-400 font-display tracking-wider uppercase font-semibold">
+                <Eye className="w-3 h-3" />
+                {intelReport.report_type === 'recon_territory' ? 'Recon Report' :
+                 intelReport.report_type === 'audit_stockpile' ? 'Stockpile Audit' :
+                 'Intel Report'}
+                <span className="text-muted-foreground font-normal normal-case tracking-normal ml-auto">
+                  Round {intelReport.generated_round}
+                </span>
+              </div>
+              {intelReport.report_type === 'recon_territory' && (
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                  <div className="flex items-center gap-1">
+                    <Shield className="w-3 h-3 text-cyan-400" />
+                    <span className="text-muted-foreground">Troops:</span>
+                    <span className="font-mono font-bold text-cyan-300">{intelReport.report_data?.troop_count ?? '—'}</span>
+                  </div>
+                  {intelReport.report_data?.active_buildings?.length > 0 && (
+                    <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                      🏛 {intelReport.report_data.active_buildings.length} building{intelReport.report_data.active_buildings.length !== 1 ? 's' : ''}
+                    </div>
+                  )}
+                  {intelReport.report_data?.active_supply_routes?.length > 0 && (
+                    <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                      🛤 {intelReport.report_data.active_supply_routes.length} supply route{intelReport.report_data.active_supply_routes.length !== 1 ? 's' : ''}
+                    </div>
+                  )}
+                </div>
+              )}
+              {intelReport.report_type === 'audit_stockpile' && (() => {
+                const storage = intelReport.report_data?.territory_storage ?? {};
+                const hasStorage = Object.values(storage).some(v => v > 0);
+                const ICONS = { gold: '💰', iron: '⚙️', timber: '🌲', stone: '🪨', food: '🌾' };
+                return (
+                  <div className="space-y-1 text-xs">
+                    {hasStorage ? (
+                      <div className="flex flex-wrap gap-1">
+                        {Object.entries(storage).filter(([, v]) => v > 0).map(([r, amt]) => (
+                          <span key={r} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-muted/20 text-foreground">
+                            {ICONS[r]} {amt}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">No resources stored</span>
+                    )}
+                  </div>
+                );
+              })()}
+              <p className="text-[9px] text-muted-foreground/60 italic">
+                ⚠ Snapshot from Round {intelReport.generated_round} — may be outdated
+              </p>
+            </div>
+          )}
 
           {/* Region + Continent */}
           <div className="grid grid-cols-2 gap-2 text-xs">

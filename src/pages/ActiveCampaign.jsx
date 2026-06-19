@@ -32,6 +32,7 @@ import { useTerritoryState, getMap, buildAdjacencyMap, buildTypedAdjacencyMap } 
 import { CampaignTestModeProvider, useCampaignTestContext } from '@/features/adminTestMode/CampaignTestContext';
 import { usePlayerLogistics } from '@/features/campaigns/logistics/usePlayerLogistics';
 import { useInfluenceState } from '@/features/campaigns/influence/useInfluenceState';
+import { useIntelReports } from '@/features/campaigns/intelligence/useIntelReports';
 import { base44 } from '@/api/base44Client';
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
@@ -196,6 +197,13 @@ function ActiveCampaignContent() {
     playerId: myPlayer?.id,
   });
 
+  // Intel reports — indexed by territory for display in TerritoryDetailPanel
+  const { latestByTerritory: intelReportByTerritory, reload: reloadIntelReports } = useIntelReports({
+    campaignId: id,
+    actingAsPlayerId: actionPlayer?.id ?? null,
+    enabled: !!id,
+  });
+
   // Influence state — scoped to the acting-as player for correct privacy gating
   const {
     influenceByTerritory,
@@ -214,7 +222,8 @@ function ActiveCampaignContent() {
     reloadState();
     loadTerritoryBuildings();
     reloadLogistics();
-  }, [reloadCampaign, reloadState, loadTerritoryBuildings, reloadLogistics]);
+    reloadIntelReports();
+  }, [reloadCampaign, reloadState, loadTerritoryBuildings, reloadLogistics, reloadIntelReports]);
 
   // Attack reveals — loaded after attack phase ends (post-reveal)
   const { reveals: attackReveals } = useAttackReveals({
@@ -522,6 +531,7 @@ function ActiveCampaignContent() {
                 mapDef={mapDef}
                 influenceRecords={influenceByTerritory[selectedTerritoryId] ?? []}
                 spreadThreshold={spreadThreshold}
+                intelReport={intelReportByTerritory[selectedTerritoryId] ?? null}
                 onClose={() => { setSelectedTerritoryId(null); setDraftClaimError(null); }}
                 isLocked={lockedIds?.has(selectedTerritoryId)}
                 phase={phase}
