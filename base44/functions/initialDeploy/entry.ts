@@ -419,22 +419,78 @@ Deno.serve(async (req) => {
       console.warn('[processPhaseEnd] Auto-start deploy failed (non-fatal):', deployErr?.message);
     }
 
-    // ── STEP 7: Seed starting influence (1 perm + 1 spendable per territory) ─
-    try {
-      await base44.asServiceRole.functions.invoke('planningPhase', {
-        action: 'seedStartingInfluence',
-        campaign_id,
-        _internal: true,
-      });
-      console.log('[processPhaseEnd] Starting influence seeded successfully.');
-    } catch (infErr) {
-      console.warn('[processPhaseEnd] Starting influence seed failed (non-fatal):', infErr?.message);
+    // ── STEP 7: Seed starting influence — INLINE (1 perm + 1 spendable per territory)
+    // Inlined instead of cross-function call to avoid silent auth failures.
+    {
+      const SC_TERRITORY_REGION = {
+        I8:'outer_passes', I4:'outer_passes', I6:'outer_passes', I7:'outer_passes',
+        I1:'high_crown',   I2:'high_crown',   I3:'high_crown',   I5:'high_crown',
+        W1:'northern_wilds',W2:'northern_wilds',W3:'northern_wilds',W4:'northern_wilds',W5:'northern_wilds',
+        W6:'deepwoods',    W7:'deepwoods',    W8:'deepwoods',    W9:'deepwoods',
+        B1:'northern_ruins',B3:'northern_ruins',B2:'northern_ruins',B4:'northern_ruins',
+        B5:'central_crossroads',B6:'central_crossroads',B7:'central_crossroads',
+        B8:'southern_ruins',B9:'southern_ruins',B10:'southern_ruins',
+        S1:'western_plains',S4:'western_plains',S7:'western_plains',S2:'western_plains',
+        S5:'eastern_granaries',S8:'eastern_granaries',S3:'eastern_granaries',
+        S6:'eastern_granaries',S9:'eastern_granaries',
+        C1:'northern_isles',C2:'northern_isles',C3:'northern_isles',C4:'northern_isles',
+        C5:'southern_fractures',C6:'southern_fractures',C7:'southern_fractures',C8:'southern_fractures',
+      };
+
+      try {
+        // Idempotency: check if already seeded
+        const existingInfluence = await base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id });
+        const alreadySeeded = existingInfluence.some(r => r.source === 'starting_bonus');
+
+        if (alreadySeeded) {
+          console.log('[processPhaseEnd] Starting influence already seeded — skipping.');
+        } else {
+          const influenceStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+          const ownedForInfluence = influenceStates.filter(s => s.owner_player_id != null);
+          let influenceCount = 0;
+
+          for (const ts of ownedForInfluence) {
+            // 1 permanent influence per territory
+            await base44.asServiceRole.entities.TerritoryInfluence.create({
+              campaign_id,
+              territory_id: ts.territory_id,
+              player_id: ts.owner_player_id,
+              influence_amount: 1,
+              last_updated_round: 1,
+              source: 'starting_bonus',
+            });
+
+            // 1 spendable influence per territory's region
+            const regionId = SC_TERRITORY_REGION[ts.territory_id];
+            if (regionId) {
+              const existingPool = await base44.asServiceRole.entities.RegionalInfluencePool.filter({
+                campaign_id, region_id: regionId, player_id: ts.owner_player_id,
+              });
+              if (existingPool[0]) {
+                await base44.asServiceRole.entities.RegionalInfluencePool.update(existingPool[0].id, {
+                  spendable_influence: (existingPool[0].spendable_influence ?? 0) + 1,
+                  last_updated_round: 1,
+                });
+              } else {
+                await base44.asServiceRole.entities.RegionalInfluencePool.create({
+                  campaign_id, region_id: regionId, player_id: ts.owner_player_id,
+                  spendable_influence: 1, last_updated_round: 1,
+                });
+              }
+            }
+            influenceCount++;
+          }
+          console.log('[processPhaseEnd] Starting influence seeded for', influenceCount, 'territories.');
+        }
+      } catch (infErr) {
+        console.error('[processPhaseEnd] Starting influence seed FAILED:', infErr?.message, infErr?.stack);
+      }
     }
 
     // ── STEP 8: Seed starting resources — all routed to capital territory ──
     // Players enter Round 1 Planning with 1 of each territory's primary resource
     // already in their capital's storage, so they can build and act immediately.
-    try {
+    {
       const SC_RESOURCE_TYPES = {
         I1:'iron',  I2:'iron',  I3:'stone', I4:'iron',  I5:'stone',
         I6:'timber',I7:'timber',I8:'iron',
@@ -450,66 +506,73 @@ Deno.serve(async (req) => {
       const VALID_RESOURCES = ['gold', 'iron', 'timber', 'stone', 'food'];
       const emptyStorage = () => ({ gold: 0, iron: 0, timber: 0, stone: 0, food: 0 });
 
-      const startingStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
-      const ownedStarting = startingStates.filter(s => s.owner_player_id != null);
+      try {
+        const startingStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+        const ownedStarting = startingStates.filter(s => s.owner_player_id != null);
 
-      // Load capital designations
-      const allDevRecords = await base44.asServiceRole.entities.TerritoryDevelopment.filter({ campaign_id });
+        // Load capital designations (fresh query — includes STEP 2b records)
+        const allDevRecords = await base44.asServiceRole.entities.TerritoryDevelopment.filter({ campaign_id });
+        console.log('[STEP 8] Found', allDevRecords.length, 'TerritoryDevelopment records.',
+          'Capitals:', allDevRecords.filter(d => d.is_capital).map(d => `${d.territory_id}(${d.owner_player_id})`).join(', ') || 'NONE');
 
-      // Group owned territories by player and accumulate resources
-      const playerResources = {}; // playerId → { gold, iron, timber, stone, food }
-      for (const ts of ownedStarting) {
-        const primary = SC_RESOURCE_TYPES[ts.territory_id] ?? ts.resource_type ?? 'gold';
-        if (!playerResources[ts.owner_player_id]) playerResources[ts.owner_player_id] = emptyStorage();
-        playerResources[ts.owner_player_id][primary] = (playerResources[ts.owner_player_id][primary] ?? 0) + 1;
-      }
+        // Group owned territories by player and accumulate resources
+        const playerResources = {}; // playerId → { gold, iron, timber, stone, food }
+        for (const ts of ownedStarting) {
+          const primary = SC_RESOURCE_TYPES[ts.territory_id] ?? ts.resource_type ?? 'gold';
+          if (!playerResources[ts.owner_player_id]) playerResources[ts.owner_player_id] = emptyStorage();
+          playerResources[ts.owner_player_id][primary] = (playerResources[ts.owner_player_id][primary] ?? 0) + 1;
+        }
 
-      // Write all starting resources to each player's capital territory
-      const stateById = {};
-      for (const ts of startingStates) stateById[ts.territory_id] = ts;
+        // Index states for O(1) lookup
+        const step8StateById = {};
+        for (const ts of startingStates) step8StateById[ts.territory_id] = ts;
 
-      for (const [playerId, gained] of Object.entries(playerResources)) {
-        // Find capital for this player
-        const capitalDev = allDevRecords.find(d => d.owner_player_id === playerId && d.is_capital);
-        const capitalTid = capitalDev?.territory_id ?? null;
-        const capitalTs = capitalTid ? stateById[capitalTid] : null;
+        for (const [playerId, gained] of Object.entries(playerResources)) {
+          // Find capital for this player
+          const capitalDev = allDevRecords.find(d => d.owner_player_id === playerId && d.is_capital);
+          const capitalTid = capitalDev?.territory_id ?? null;
+          const capitalTs = capitalTid ? step8StateById[capitalTid] : null;
 
-        if (capitalTs) {
-          // Route all starting resources to capital
-          const before = { ...emptyStorage(), ...(capitalTs.resource_storage ?? {}) };
-          const after = { ...before };
-          for (const r of VALID_RESOURCES) after[r] = (after[r] || 0) + (gained[r] || 0);
-          await base44.asServiceRole.entities.TerritoryState.update(capitalTs.id, { resource_storage: after });
-        } else {
-          // Fallback: distribute to individual territories (shouldn't happen since capital is required)
-          for (const ts of ownedStarting.filter(s => s.owner_player_id === playerId)) {
-            const primary = SC_RESOURCE_TYPES[ts.territory_id] ?? ts.resource_type ?? 'gold';
-            const before = { ...emptyStorage(), ...(ts.resource_storage ?? {}) };
-            const after = { ...before, [primary]: (before[primary] ?? 0) + 1 };
-            await base44.asServiceRole.entities.TerritoryState.update(ts.id, { resource_storage: after });
+          console.log('[STEP 8] Player', playerId, '→ capital:', capitalTid, '→ capitalTs found:', !!capitalTs, '→ resources:', JSON.stringify(gained));
+
+          if (capitalTs) {
+            // Route ALL starting resources to capital territory
+            const before = { ...emptyStorage(), ...(capitalTs.resource_storage ?? {}) };
+            const after = { ...before };
+            for (const r of VALID_RESOURCES) after[r] = (after[r] || 0) + (gained[r] || 0);
+            await base44.asServiceRole.entities.TerritoryState.update(capitalTs.id, { resource_storage: after });
+            console.log('[STEP 8] Wrote resources to capital', capitalTid, ':', JSON.stringify(after));
+          } else {
+            console.warn('[STEP 8] NO CAPITAL FOUND for player', playerId, '— falling back to individual territories');
+            for (const ts of ownedStarting.filter(s => s.owner_player_id === playerId)) {
+              const primary = SC_RESOURCE_TYPES[ts.territory_id] ?? ts.resource_type ?? 'gold';
+              const before = { ...emptyStorage(), ...(ts.resource_storage ?? {}) };
+              const after = { ...before, [primary]: (before[primary] ?? 0) + 1 };
+              await base44.asServiceRole.entities.TerritoryState.update(ts.id, { resource_storage: after });
+            }
+          }
+
+          // Seed player resource ledger
+          const existing = await base44.asServiceRole.entities.PlayerResourceLedger.filter({ campaign_id, player_id: playerId });
+          const prev = existing[0];
+          const merged = { ...emptyStorage(), ...(prev ?? {}) };
+          for (const r of VALID_RESOURCES) merged[r] = (merged[r] ?? 0) + (gained[r] ?? 0);
+          if (prev) {
+            await base44.asServiceRole.entities.PlayerResourceLedger.update(prev.id, {
+              ...merged, updated_at_round: 1, updated_at_phase: 'initial_deploy',
+            });
+          } else {
+            await base44.asServiceRole.entities.PlayerResourceLedger.create({
+              campaign_id, player_id: playerId, ...merged,
+              updated_at_round: 1, updated_at_phase: 'initial_deploy',
+            });
           }
         }
 
-        // Seed player resource ledger
-        const existing = await base44.asServiceRole.entities.PlayerResourceLedger.filter({ campaign_id, player_id: playerId });
-        const prev = existing[0];
-        const merged = { ...emptyStorage(), ...(prev ?? {}) };
-        for (const r of VALID_RESOURCES) merged[r] = (merged[r] ?? 0) + (gained[r] ?? 0);
-        if (prev) {
-          await base44.asServiceRole.entities.PlayerResourceLedger.update(prev.id, {
-            ...merged, updated_at_round: 1, updated_at_phase: 'initial_deploy',
-          });
-        } else {
-          await base44.asServiceRole.entities.PlayerResourceLedger.create({
-            campaign_id, player_id: playerId, ...merged,
-            updated_at_round: 1, updated_at_phase: 'initial_deploy',
-          });
-        }
+        console.log('[processPhaseEnd] Starting resources seeded for', Object.keys(playerResources).length, 'players.');
+      } catch (resErr) {
+        console.error('[processPhaseEnd] Starting resources seed FAILED:', resErr?.message, resErr?.stack);
       }
-
-      console.log('[processPhaseEnd] Starting resources seeded (to capitals) for', Object.keys(playerResources).length, 'players.');
-    } catch (resErr) {
-      console.warn('[processPhaseEnd] Starting resources seed failed (non-fatal):', resErr?.message);
     }
 
     // ── STEP 9: Initialize territory development records ─────────────────
