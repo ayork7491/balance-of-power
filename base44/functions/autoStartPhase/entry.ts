@@ -42,9 +42,17 @@ Deno.serve(async (req) => {
     return Response.json({ skipped: true, reason: `Phase '${phase}' does not require auto-start` });
   }
 
+  if (!campaign_id) {
+    return Response.json({ skipped: true, reason: 'No campaign_id resolved' });
+  }
+
   console.log(`[autoStartPhase] Campaign ${campaign_id} entered '${phase}' phase (round ${round}). Auto-starting.`);
 
   try {
+    // Validate campaign is still active before acting
+    if (!['deploy', 'fortify', 'attack', 'battle'].includes(phase)) {
+      return Response.json({ skipped: true, reason: `Phase '${phase}' does not require auto-start` });
+    }
     if (phase === 'deploy') {
       // Check if already started (decisions exist AND phase_start snapshot exists).
       // Must check BOTH — decisions may exist but snapshot may be missing (repair needed).

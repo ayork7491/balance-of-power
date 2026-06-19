@@ -226,37 +226,67 @@ Deno.serve(async (req) => {
   }
 
   // ── ACTION: getInfluenceState ──────────────────────────────────────────────
+  // Privacy: permanent and spendable influence are hidden information.
+  // Non-admins only see their own influence values.
+  // All players can see that influence EXISTS on a territory (for map display),
+  // but amounts are masked unless the caller owns the record or is an admin.
   if (action === 'getInfluenceState') {
-    const [influenceRecords, regionalPools] = await Promise.all([
+    const [influenceRecords, regionalPools, intelReports] = await Promise.all([
       base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id }),
       base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id }),
+      // Fetch intelligence reports so revealed data can be shown
+      base44.asServiceRole.entities.IntelligenceReport.filter({
+        campaign_id, viewer_player_id: actingPlayer.id, report_type: 'investigate_influence',
+      }),
     ]);
 
+    // Build set of territories/regions revealed via intelligence reports
+    const revealedTerritories = new Set();
+    const revealedRegions = new Set();
+    for (const r of intelReports) {
+      if (r.target_territory_id) revealedTerritories.add(r.target_territory_id);
+      if (r.target_region_id) revealedRegions.add(r.target_region_id);
+    }
+
     // Group permanent influence by territory_id
+    // Amount visible only to: own player, admin, or via investigate_influence report
     const byTerritory = {};
     for (const r of influenceRecords) {
+      const isOwn = r.player_id === actingPlayer.id;
+      const isRevealed = revealedTerritories.has(r.territory_id);
+      const canSeeAmount = isAdmin || isOwn || isRevealed;
+
       if (!byTerritory[r.territory_id]) byTerritory[r.territory_id] = [];
       byTerritory[r.territory_id].push({
         player_id: r.player_id,
-        influence_amount: r.influence_amount,
+        influence_amount: canSeeAmount ? (r.influence_amount ?? 0) : null, // null = hidden
         last_updated_round: r.last_updated_round,
       });
     }
 
-    // Group spendable influence by region_id → player_id
+    // Group spendable influence by region_id → player_id (own + admin + revealed only)
     const byRegion = {};
     for (const r of regionalPools) {
+      const isOwn = r.player_id === actingPlayer.id;
+      const isRevealed = revealedRegions.has(r.region_id);
+      const canSeeAmount = isAdmin || isOwn || isRevealed;
+      if (!canSeeAmount) continue; // fully hide other players' spendable
+
       if (!byRegion[r.region_id]) byRegion[r.region_id] = [];
       byRegion[r.region_id].push({
         player_id: r.player_id,
-        spendable_influence: r.spendable_influence,
+        spendable_influence: r.spendable_influence ?? 0,
         last_updated_round: r.last_updated_round,
       });
     }
 
-    // Compute per-player totals
+    // Compute per-player totals — only own player's full totals; others are hidden
     const playerTotals = {};
     for (const r of influenceRecords) {
+      const isOwn = r.player_id === actingPlayer.id;
+      const isRevealed = revealedTerritories.has(r.territory_id);
+      if (!isAdmin && !isOwn && !isRevealed) continue;
+
       if (!playerTotals[r.player_id]) {
         playerTotals[r.player_id] = { permanent: 0, spendable: 0, by_region_permanent: {} };
       }
@@ -268,6 +298,10 @@ Deno.serve(async (req) => {
       }
     }
     for (const r of regionalPools) {
+      const isOwn = r.player_id === actingPlayer.id;
+      const isRevealed = revealedRegions.has(r.region_id);
+      if (!isAdmin && !isOwn && !isRevealed) continue;
+
       if (!playerTotals[r.player_id]) {
         playerTotals[r.player_id] = { permanent: 0, spendable: 0, by_region_permanent: {} };
       }

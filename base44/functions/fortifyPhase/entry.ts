@@ -899,48 +899,91 @@ Deno.serve(async (req) => {
     }
 
     // REVEAL: Process staged construction choices and create ConstructionProjects
+    // C2 fix: deduct costs from PlayerResourceLedger (actual territory storage), not DeployIncome.
     const constructionsToCreate = [];
     
     for (const dec of finalDecisions) {
       const construction = dec.data?.construction;
       if (!construction || !construction.territory_id || !construction.structure_type) continue;
       
-      // Validate resources at reveal time (V1: check current round income)
-      const incomeRecords = await base44.asServiceRole.entities.DeployIncome.filter({
-        campaign_id, player_id: dec.player_id, round,
-      });
-      const income = incomeRecords[0];
       const config = getBuildingConfig(construction.structure_type);
       if (!config) continue; // Unknown type — skip gracefully
-      const resourcesGenerated = income?.resources_generated ?? {};
-      
+
+      // C2 fix: validate resources against PlayerResourceLedger (actual player resources)
+      const playerLedgers = await base44.asServiceRole.entities.PlayerResourceLedger.filter({
+        campaign_id, player_id: dec.player_id,
+      });
+      const ledger = playerLedgers[0];
+      const ledgerResources = {
+        gold: ledger?.gold ?? 0,
+        iron: ledger?.iron ?? 0,
+        timber: ledger?.timber ?? 0,
+        stone: ledger?.stone ?? 0,
+        food: ledger?.food ?? 0,
+      };
+
+      // Also check capital territory storage as fallback (resources may be stored there)
+      const devRecs = await base44.asServiceRole.entities.TerritoryDevelopment.filter({
+        campaign_id, owner_player_id: dec.player_id,
+      });
+      const capitalDev = devRecs.find(d => d.is_capital) ?? devRecs[0] ?? null;
+      const capitalTs = capitalDev
+        ? allTerritoryStates.find(s => s.territory_id === capitalDev.territory_id)
+        : null;
+      const capitalStorage = capitalTs?.resource_storage ?? {};
+
+      // Combined resources: ledger + capital storage
+      const combined = {
+        gold:   (ledgerResources.gold   ?? 0) + (capitalStorage.gold   ?? 0),
+        iron:   (ledgerResources.iron   ?? 0) + (capitalStorage.iron   ?? 0),
+        timber: (ledgerResources.timber ?? 0) + (capitalStorage.timber ?? 0),
+        stone:  (ledgerResources.stone  ?? 0) + (capitalStorage.stone  ?? 0),
+        food:   (ledgerResources.food   ?? 0) + (capitalStorage.food   ?? 0),
+      };
+
       const canAfford = Object.entries(config.cost).every(([res, amount]) => {
         if (amount === 0) return true;
-        return (resourcesGenerated[res] ?? 0) >= amount;
+        return (combined[res] ?? 0) >= amount;
       });
       
       if (!canAfford) {
-        // Skip construction if insufficient resources (log for admin)
         await log(base44, campaign_id, round, phase, 'construction_failed', dec.player_id, {
           structure_type: construction.structure_type,
           territory_id: construction.territory_id,
           reason: 'insufficient_resources',
+          cost: config.cost,
+          available: combined,
         }, false);
         continue;
       }
-      
-      // Deduct resources exactly once
-      const updatedResources = { ...resourcesGenerated };
-      Object.entries(config.cost).forEach(([res, amount]) => {
-        if (amount > 0) {
-          updatedResources[res] = (updatedResources[res] ?? 0) - amount;
+
+      // C2 fix: deduct resources from capital storage first, then ledger
+      let remainingCost = { ...config.cost };
+      // Deduct from capital storage first
+      if (capitalTs) {
+        const newCapStorage = { ...capitalStorage };
+        for (const [res, amount] of Object.entries(remainingCost)) {
+          if (amount <= 0) continue;
+          const avail = newCapStorage[res] ?? 0;
+          const take = Math.min(avail, amount);
+          newCapStorage[res] = avail - take;
+          remainingCost[res] = amount - take;
         }
-      });
-      
-      // Update DeployIncome with deducted resources
-      if (income) {
-        await base44.asServiceRole.entities.DeployIncome.update(income.id, {
-          resources_generated: updatedResources,
+        await base44.asServiceRole.entities.TerritoryState.update(capitalTs.id, {
+          resource_storage: newCapStorage,
+        });
+      }
+      // Deduct remainder from ledger
+      if (ledger) {
+        const newLedger = { ...ledgerResources };
+        for (const [res, amount] of Object.entries(remainingCost)) {
+          if (amount <= 0) continue;
+          newLedger[res] = Math.max(0, (newLedger[res] ?? 0) - amount);
+        }
+        await base44.asServiceRole.entities.PlayerResourceLedger.update(ledger.id, {
+          gold: newLedger.gold, iron: newLedger.iron, timber: newLedger.timber,
+          stone: newLedger.stone, food: newLedger.food,
+          updated_at_round: round, updated_at_phase: 'fortify',
         });
       }
       
@@ -963,6 +1006,7 @@ Deno.serve(async (req) => {
       await log(base44, campaign_id, round, phase, 'construction_revealed', dec.player_id, {
         structure_type: construction.structure_type,
         territory_id: construction.territory_id,
+        cost_deducted: config.cost,
       }, false);
     }
     

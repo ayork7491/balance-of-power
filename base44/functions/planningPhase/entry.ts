@@ -164,13 +164,20 @@ async function upsertSpendableInfluence(base44, campaignId, playerId, regionId, 
 
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
-  const user = await base44.auth.me();
-  if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json();
   const { action, campaign_id } = body;
+  const isInternalCall = body._internal === true;
+
   if (!campaign_id || !action) {
     return Response.json({ error: 'campaign_id and action are required' }, { status: 400 });
+  }
+
+  // Internal system calls (e.g. from initialDeploy/deployPhase) skip user auth
+  let user = null;
+  if (!isInternalCall) {
+    user = await base44.auth.me();
+    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const [campaigns, players] = await Promise.all([
@@ -180,10 +187,10 @@ Deno.serve(async (req) => {
   const campaign = campaigns[0];
   if (!campaign) return Response.json({ error: 'Campaign not found' }, { status: 404 });
 
-  const myPlayer = players.find(p => p.user_id === user.id);
-  if (!myPlayer) return Response.json({ error: 'Not a player in this campaign' }, { status: 403 });
+  const myPlayer = user ? players.find(p => p.user_id === user.id) : null;
+  if (!isInternalCall && !myPlayer) return Response.json({ error: 'Not a player in this campaign' }, { status: 403 });
 
-  const isAdmin = campaign.admin_user_id === user.id || user.role === 'admin';
+  const isAdmin = isInternalCall || campaign.admin_user_id === user?.id || user?.role === 'admin';
   const round = campaign.current_round ?? 1;
 
   // Resolve acting player
@@ -193,7 +200,7 @@ Deno.serve(async (req) => {
     const target = players.find(p => p.id === acting_as_player_id);
     if (!target) return Response.json({ error: 'Invalid acting_as_player_id' }, { status: 400 });
     const isTestPlayer = target.is_test_player === true;
-    if (!isAdmin && !isTestPlayer && target.id !== myPlayer.id) {
+    if (!isAdmin && !isTestPlayer && target.id !== myPlayer?.id) {
       return Response.json({ error: 'Only admins can act as other players' }, { status: 403 });
     }
     actingPlayer = target;
@@ -269,13 +276,14 @@ Deno.serve(async (req) => {
     const troopsStaged = Object.values(stagedPlacements).reduce((s, n) => s + (n || 0), 0);
 
     // Economic status — activation limit from server
+    // B4 fix: Resource Hubs do NOT increase activation count.
+    // Activation limit = max(1, floor(territories / 3)), capped at territories owned.
     const ownedStates = await base44.asServiceRole.entities.TerritoryState.filter({
       campaign_id, owner_player_id: actingPlayer.id,
     });
-    const hubCount = ownedStates.filter(s => s.has_resource_hub).length;
     const ownedCount = ownedStates.length;
     const activationLimit = ownedCount === 0 ? 0 :
-      Math.min(Math.max(1, Math.floor(ownedCount / 3)) + hubCount, ownedCount);
+      Math.min(Math.max(1, Math.floor(ownedCount / 3)), ownedCount);
     const economicStaged = staging.economic_staged ?? [];
     const economicLocked = staging.economic_locked ?? false;
 
@@ -515,11 +523,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Activation limit
-    const hubCount = ownedStates.filter(s => s.has_resource_hub).length;
+    // Activation limit — B4 fix: Resource Hubs do NOT add extra activations.
     const ownedCount = ownedStates.length;
     const activationLimit = ownedCount === 0 ? 0 :
-      Math.min(Math.max(1, Math.floor(ownedCount / 3)) + hubCount, ownedCount);
+      Math.min(Math.max(1, Math.floor(ownedCount / 3)), ownedCount);
 
     if (territory_ids.length > activationLimit) {
       return Response.json({
@@ -624,6 +631,21 @@ Deno.serve(async (req) => {
         message: 'Planning phase already locked.',
         locked_at: stagingData.locked_at,
       });
+    }
+
+    // ── B3 Validation: enforce objective selection before lock ──────────────
+    // If the player has a pending draw, they must have staged a selection.
+    const preLockLedgers = await base44.asServiceRole.entities.PlayerInfluenceLedger.filter({
+      campaign_id, player_id: actingPlayer.id,
+    });
+    const preLockCards = preLockLedgers[0]?.objective_cards_json ?? {};
+    const hasPendingDraw = preLockCards.pending_draw && preLockCards.pending_draw.length > 0;
+
+    if (hasPendingDraw && !stagingData.diplomatic_staged && !localDiplomaticStaged) {
+      return Response.json({
+        error: 'You must select an objective card from your pending draw before locking the Planning Phase.',
+        validation_error: 'objective_not_selected',
+      }, { status: 400 });
     }
 
     const errors = [];

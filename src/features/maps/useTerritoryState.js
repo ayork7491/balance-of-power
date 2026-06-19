@@ -14,7 +14,8 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { base44 } from '@/api/base44Client';
 
 // Phases where sensitive data (troop counts, resource storage) is hidden for non-owners.
-const HIDDEN_INFO_PHASES = new Set(['attack', 'battle', 'fortify', 'deploy']);
+// 'initial_deploy' is included so troop counts never flash visible during game start.
+const HIDDEN_INFO_PHASES = new Set(['attack', 'battle', 'fortify', 'deploy', 'initial_deploy']);
 
 /**
  * Apply the privacy gate to a territory state record.
@@ -24,8 +25,9 @@ function applyPrivacyGate(record, myCampaignPlayerIds, phase) {
   if (!record) return record;
   // Always show own territories in full.
   if (record.owner_player_id && myCampaignPlayerIds.has(record.owner_player_id)) return record;
-  // Only mask during active gameplay phases.
-  if (!phase || !HIDDEN_INFO_PHASES.has(phase)) return record;
+  // Mask during all active gameplay phases — including null phase for safety during transitions.
+  // If phase is unknown/null but record has an owner, mask it defensively.
+  if (phase && !HIDDEN_INFO_PHASES.has(phase)) return record;
   return {
     ...record,
     troop_count: null,       // null = hidden (UI renders '???' )
