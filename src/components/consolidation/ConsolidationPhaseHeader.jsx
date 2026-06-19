@@ -47,16 +47,16 @@ export default function ConsolidationPhaseHeader({ campaign, myPlayer, actingAsP
     setError(null);
     if (!status) setLoading(true);
     try {
-      // Fetch acting player decision + all decisions in parallel
-      const [decisions, allDecisions] = await Promise.all([
-        base44.entities.PhaseDecision.filter({
+      // Use getFortifyLockStatus for all-player lock status (safe, service-role),
+      // and read own decision separately (user-scoped is fine for own records).
+      const [lockRes, decisions] = await Promise.all([
+        base44.functions.invoke('getFortifyLockStatus', {
           campaign_id: campaign.id,
-          player_id: actingId,
-          phase: 'fortify',
           round,
         }),
         base44.entities.PhaseDecision.filter({
           campaign_id: campaign.id,
+          player_id: actingId,
           phase: 'fortify',
           round,
         }),
@@ -67,7 +67,7 @@ export default function ConsolidationPhaseHeader({ campaign, myPlayer, actingAsP
         movements_staged: (decision?.data?.movements ?? []).length,
       };
       setStatus(s);
-      setAdminLocks(allDecisions ?? []);
+      setAdminLocks(lockRes.data?.lock_status ?? []);
       onStatusLoaded?.(s);
     } catch (e) {
       setError('Failed to load consolidation status.');
