@@ -163,6 +163,7 @@ async function upsertSpendableInfluence(base44, campaignId, playerId, regionId, 
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
+  try {
   const base44 = createClientFromRequest(req);
 
   const body = await req.json();
@@ -1150,4 +1151,8 @@ Deno.serve(async (req) => {
   }
 
   return Response.json({ error: `Unknown action: ${action}` }, { status: 400 });
+  } catch (err) {
+    console.error('[planningPhase] Unhandled error:', err?.message ?? err);
+    return Response.json({ error: err?.message ?? 'Internal server error' }, { status: 500 });
+  }
 });

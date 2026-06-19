@@ -79,7 +79,7 @@
  *   TT values are helpers only — never source of truth.
  *   Forfeit winner retains EXACTLY committed BOP troops (no TT round-trip).
  */
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // § PURE HELPERS
@@ -1058,6 +1058,7 @@ async function refreshLockedTerritories(base44, campaign_id) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 Deno.serve(async (req) => {
+  try {
   const base44 = createClientFromRequest(req);
   const user   = await base44.auth.me();
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
@@ -2345,6 +2346,10 @@ Deno.serve(async (req) => {
   }
 
   return Response.json({ error: `Unknown action: ${action}` }, { status: 400 });
+  } catch (err) {
+    console.error('[battlePhase] Unhandled error:', err?.message ?? err);
+    return Response.json({ error: err?.message ?? 'Internal server error' }, { status: 500 });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════

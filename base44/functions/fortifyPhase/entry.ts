@@ -27,7 +27,7 @@
  *   - V1 structures: castle, barracks, stables
  *   - All structures cost resources and may take multiple rounds
  */
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
 // Inline acting-as validation (services/permissions/actingAsPermissions.js logic)
 function resolveActingCampaignPlayer({ user, campaign_id, acting_as_player_id, campaignPlayers, requireActive = true }) {
@@ -314,6 +314,7 @@ async function log(base44, campaignId, round, phase, eventType, playerId, payloa
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
+  try {
   const base44 = createClientFromRequest(req);
   const user = await base44.auth.me();
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
@@ -1356,4 +1357,8 @@ Deno.serve(async (req) => {
   }
 
   return Response.json({ error: `Unknown action: ${action}` }, { status: 400 });
+  } catch (err) {
+    console.error('[fortifyPhase] Unhandled error:', err?.message ?? err);
+    return Response.json({ error: err?.message ?? 'Internal server error' }, { status: 500 });
+  }
 });
