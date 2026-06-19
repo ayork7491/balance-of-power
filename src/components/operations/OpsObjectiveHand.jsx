@@ -9,9 +9,11 @@ import { useState, useEffect, useCallback } from 'react';
 import { Loader2, RefreshCw, ScrollText } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { OBJECTIVE_BY_ID, OBJECTIVE_CATEGORY_CONFIG, TIER_LABELS, OBJECTIVE_TIER_REWARDS } from '@/config/objectiveDefinitions.js';
+import ObjectiveCardDisplay from '@/components/objectives/ObjectiveCardDisplay';
 
 export default function OpsObjectiveHand({ campaign, actingPlayerId }) {
   const [heldCards, setHeldCards] = useState([]);
+  const [cardDefs, setCardDefs] = useState({});
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
@@ -25,9 +27,9 @@ export default function OpsObjectiveHand({ campaign, actingPlayerId }) {
         acting_as_player_id: actingPlayerId,
       });
       const state = res.data ?? {};
-      // held cards are stored in objective_cards_json.held
       const held = state.held ?? state.objective_cards_json?.held ?? [];
       setHeldCards(held);
+      setCardDefs(state.card_definitions ?? {});
     } catch {
       // silently ignore — objectives are supplementary
     } finally {
@@ -68,35 +70,24 @@ export default function OpsObjectiveHand({ campaign, actingPlayerId }) {
           ) : heldCards.length === 0 ? (
             <p className="text-[10px] text-muted-foreground italic">No objectives in hand.</p>
           ) : (
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               {heldCards.map((cardId, i) => {
-                const def = OBJECTIVE_BY_ID[cardId];
-                if (!def) return (
+                // Prefer API-returned card_definitions, fall back to local static config
+                const apiDef = cardDefs[cardId];
+                const localDef = OBJECTIVE_BY_ID[cardId];
+                const cardDef = apiDef ?? localDef;
+                if (!cardDef) return (
                   <div key={i} className="px-2 py-1.5 rounded border border-border bg-muted/5 text-[10px] text-muted-foreground">
                     {cardId}
                   </div>
                 );
-                const catCfg = OBJECTIVE_CATEGORY_CONFIG[def.category] ?? {};
-                const reward = OBJECTIVE_TIER_REWARDS[def.tier] ?? 0;
-                const tierLabel = TIER_LABELS[def.tier] ?? def.tier;
                 return (
-                  <div key={i} className={`px-2 py-2 rounded border ${catCfg.border ?? 'border-border'} ${catCfg.bg ?? 'bg-muted/5'}`}>
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
-                          <span className="text-xs">{catCfg.icon}</span>
-                          <p className={`text-xs font-semibold ${catCfg.color ?? 'text-foreground'}`}>{def.title}</p>
-                        </div>
-                        <p className="text-[10px] text-muted-foreground leading-relaxed">{def.description}</p>
-                      </div>
-                      <div className="shrink-0 flex flex-col items-end gap-0.5">
-                        <span className={`text-[9px] px-1.5 py-0.5 rounded border ${catCfg.badgeClass ?? 'border-border'}`}>
-                          Tier {tierLabel}
-                        </span>
-                        <span className="text-[9px] text-purple-400 font-mono">+{reward} inf</span>
-                      </div>
-                    </div>
-                  </div>
+                  <ObjectiveCardDisplay
+                    key={cardId}
+                    cardDef={cardDef}
+                    variant="active"
+                    isOwner={true}
+                  />
                 );
               })}
             </div>
