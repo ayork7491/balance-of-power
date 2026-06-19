@@ -64,6 +64,8 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
 
   const load = useCallback(async (isRetry = false) => {
     if (!campaign?.id || !myPlayer?.id) return;
+    // Guard: only load when campaign is actually in attack (operations) phase
+    if (campaign.current_phase !== 'attack') return;
     if (!isRetry) setError(null);
     if (!status) setLoading(true);
 
@@ -87,14 +89,12 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
         setError(null);
         retryRef.current = null;
       } else {
-        // Schedule a silent retry after 3s instead of showing an error immediately
-        const msg = statusRes.reason?.response?.data?.error ?? statusRes.reason?.message ?? 'Failed to load operations status.';
-        if (!status) {
-          // Only show error if we have no cached data to fall back on
+        const msg = statusRes.reason?.response?.data?.error ?? statusRes.reason?.message ?? '';
+        // Suppress phase-mismatch errors (stale campaign state during transitions)
+        if (!msg.includes('attack') && !msg.includes('phase') && !status) {
           retryRef.current = setTimeout(() => load(true), 3000);
-          setError(msg);
+          setError(msg || 'Failed to load operations status.');
         }
-        // If we already have status data, keep showing it silently
       }
 
       if (adminRes.status === 'fulfilled') {
@@ -104,7 +104,7 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
     } finally {
       setLoading(false);
     }
-  }, [campaign?.id, myPlayer?.id, actingAsPlayerId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [campaign?.id, campaign?.current_phase, myPlayer?.id, actingAsPlayerId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     load();

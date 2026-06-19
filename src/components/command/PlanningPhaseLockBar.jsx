@@ -67,6 +67,8 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
 
   const load = useCallback(async () => {
     if (!campaign?.id || !myPlayer?.id) return;
+    // Guard: only load when campaign is actually in deploy phase
+    if (campaign.current_phase !== 'deploy') return;
     // Only show full loading spinner on first load; subsequent refreshes are silent
     setError(null);
     if (!status) setLoading(true);
@@ -86,15 +88,19 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
         setStatus(statusRes.value.data);
         onStatusLoaded?.(statusRes.value.data);
         setError(null);
-      } else if (!status) {
-        setError(statusRes.reason?.response?.data?.error ?? 'Failed to load planning status.');
+      } else {
+        // Ignore phase-mismatch errors (stale campaign state during transitions)
+        const errMsg = statusRes.reason?.response?.data?.error ?? '';
+        if (!errMsg.includes('deploy') && !errMsg.includes('phase') && !status) {
+          setError(errMsg || 'Failed to load planning status.');
+        }
       }
       // Keep stale admin status on failure — dot indicators stay as-is
       if (adminRes.status === 'fulfilled') setAdminStatus(adminRes.value.data);
     } finally {
       setLoading(false);
     }
-  }, [campaign?.id, myPlayer?.id, actingAsPlayerId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [campaign?.id, campaign?.current_phase, myPlayer?.id, actingAsPlayerId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load(); }, [load]);
 
