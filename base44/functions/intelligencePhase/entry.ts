@@ -285,7 +285,11 @@ Deno.serve(async (req) => {
     // Spend influence (skip if called from operationsLockPhase which already spent it)
     const skipInfluenceSpend = body._skip_influence_spend === true;
     if (!skipInfluenceSpend) {
-      await spendRegionalInfluence(base44, campaign_id, actingPlayer.id, region_id, costConfig.amount, round);
+      try {
+        await spendRegionalInfluence(base44, campaign_id, actingPlayer.id, region_id, costConfig.amount, round);
+      } catch (spendErr) {
+        return Response.json({ error: spendErr.message }, { status: 400 });
+      }
     }
 
     // Gather data via resolution handler

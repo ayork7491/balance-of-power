@@ -227,10 +227,14 @@ Deno.serve(async (req) => {
 
   // ── ACTION: getInfluenceState ──────────────────────────────────────────────
   // Privacy: permanent and spendable influence are hidden information.
-  // Non-admins only see their own influence values.
-  // All players can see that influence EXISTS on a territory (for map display),
-  // but amounts are masked unless the caller owns the record or is an admin.
+  // Players only see their own influence values; others' amounts are masked.
+  // When acting_as_player_id is provided, admin privileges do NOT bypass the
+  // privacy gate — the acting player's perspective is always respected.
   if (action === 'getInfluenceState') {
+    // Influence amounts are hidden information — players only see their own.
+    // Admin status does NOT bypass the privacy gate for this endpoint.
+    // Admins can use the audit export for full visibility.
+    const privacyIsAdmin = false;
     const [influenceRecords, regionalPools, intelReports] = await Promise.all([
       base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id }),
       base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id }),
@@ -254,7 +258,7 @@ Deno.serve(async (req) => {
     for (const r of influenceRecords) {
       const isOwn = r.player_id === actingPlayer.id;
       const isRevealed = revealedTerritories.has(r.territory_id);
-      const canSeeAmount = isAdmin || isOwn || isRevealed;
+      const canSeeAmount = privacyIsAdmin || isOwn || isRevealed;
 
       if (!byTerritory[r.territory_id]) byTerritory[r.territory_id] = [];
       byTerritory[r.territory_id].push({
@@ -269,7 +273,7 @@ Deno.serve(async (req) => {
     for (const r of regionalPools) {
       const isOwn = r.player_id === actingPlayer.id;
       const isRevealed = revealedRegions.has(r.region_id);
-      const canSeeAmount = isAdmin || isOwn || isRevealed;
+      const canSeeAmount = privacyIsAdmin || isOwn || isRevealed;
       if (!canSeeAmount) continue; // fully hide other players' spendable
 
       if (!byRegion[r.region_id]) byRegion[r.region_id] = [];
@@ -285,7 +289,7 @@ Deno.serve(async (req) => {
     for (const r of influenceRecords) {
       const isOwn = r.player_id === actingPlayer.id;
       const isRevealed = revealedTerritories.has(r.territory_id);
-      if (!isAdmin && !isOwn && !isRevealed) continue;
+      if (!privacyIsAdmin && !isOwn && !isRevealed) continue;
 
       if (!playerTotals[r.player_id]) {
         playerTotals[r.player_id] = { permanent: 0, spendable: 0, by_region_permanent: {} };
@@ -300,7 +304,7 @@ Deno.serve(async (req) => {
     for (const r of regionalPools) {
       const isOwn = r.player_id === actingPlayer.id;
       const isRevealed = revealedRegions.has(r.region_id);
-      if (!isAdmin && !isOwn && !isRevealed) continue;
+      if (!privacyIsAdmin && !isOwn && !isRevealed) continue;
 
       if (!playerTotals[r.player_id]) {
         playerTotals[r.player_id] = { permanent: 0, spendable: 0, by_region_permanent: {} };
