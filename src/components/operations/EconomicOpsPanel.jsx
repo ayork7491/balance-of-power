@@ -1,20 +1,15 @@
 /**
- * EconomicOpsPanel — Sprint 5B.6
+ * EconomicOpsPanel — Atomic Refactor (Phase 1).
  *
- * Economic tab content during Operations Phase.
- * Shows:
- *   - Resource summary (global + territory storage)
- *   - Construction project staging with cost preview and affordability validation
+ * All staging is LOCAL-FIRST — zero server writes during staging.
+ * Parent (CommandCenterPanel) owns localStaging state and passes it down.
+ * Lock is handled by OperationsPhaseHeader which sends the atomic payload.
  */
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Loader2, RefreshCw, HardHat, X, CheckCircle2, Hammer, AlertCircle } from 'lucide-react';
-import { base44 } from '@/api/base44Client';
+import { useState, useMemo } from 'react';
+import { HardHat, X, CheckCircle2, Hammer, AlertCircle } from 'lucide-react';
 import { ALL_BUILDING_DEFINITIONS } from '@/config/buildingDefinitions.ts';
-import { canPlaceBuilding } from '@/services/maps/structureSlots';
-import { getBuildingPillar } from '@/config/buildingDefinitions.ts';
-import { SC_TERRITORY_BY_ID, SC_ADJACENCY } from '@/shared/maps/shatteredCrownConfig';
+import { SC_ADJACENCY } from '@/shared/maps/shatteredCrownConfig';
 import ResourceSummaryPanel from './ResourceSummaryPanel';
-import { useOperationsStagingStore } from '@/features/campaigns/operations/useOperationsStagingStore';
 
 const PILLAR_COLORS = {
   military:   { text: 'text-red-400',    border: 'border-red-500/30',    bg: 'bg-red-500/10' },
@@ -23,17 +18,10 @@ const PILLAR_COLORS = {
 };
 
 const RESOURCE_ICONS = { gold: '🟡', iron: '⚙️', timber: '🪵', stone: '🪨', food: '🌾' };
-// Food is a special resource (territory development only) — never shown as spendable for construction
 const SPENDABLE_RESOURCE_KEYS = ['gold', 'iron', 'timber', 'stone'];
 
-// Building options matching the definitions from buildingDefinitions.ts
 const BUILDING_OPTIONS = ALL_BUILDING_DEFINITIONS.map(b => ({
-  type: b.type,
-  label: b.label,
-  pillar: b.pillar,
-  cost: b.cost,
-  rounds: b.rounds,
-  effect: b.effect,
+  type: b.type, label: b.label, pillar: b.pillar, cost: b.cost, rounds: b.rounds, effect: b.effect,
   icon: {
     barracks: '🏰', war_council: '⚔️', logistics_corps: '🚩',
     embassy: '🏛️', council_chamber: '🏛', foreign_office: '🏢', monument: '🗿',
@@ -43,18 +31,16 @@ const BUILDING_OPTIONS = ALL_BUILDING_DEFINITIONS.map(b => ({
 }));
 
 function CostDisplay({ cost, resources }) {
-  const entries = Object.entries(cost).filter(([, v]) => v > 0);
-  if (entries.length === 0) return null;
   return (
     <div className="flex flex-wrap gap-1.5">
-      {entries.map(([resource, needed]) => {
-        const have = resources[resource] ?? 0;
+      {Object.entries(cost).filter(([, v]) => v > 0).map(([r, needed]) => {
+        const have = resources[r] ?? 0;
         const ok = have >= needed;
         return (
-          <span key={resource} className={`flex items-center gap-0.5 text-[10px] font-mono px-1.5 py-0.5 rounded border ${
+          <span key={r} className={`flex items-center gap-0.5 text-[10px] font-mono px-1.5 py-0.5 rounded border ${
             ok ? 'border-green-500/30 bg-green-500/10 text-green-400' : 'border-destructive/40 bg-destructive/10 text-destructive'
           }`}>
-            {RESOURCE_ICONS[resource] ?? resource} {needed}
+            {RESOURCE_ICONS[r] ?? r} {needed}
             {!ok && <span className="ml-0.5 opacity-70">(have {have})</span>}
           </span>
         );
@@ -63,489 +49,290 @@ function CostDisplay({ cost, resources }) {
   );
 }
 
-function canAffordBuilding(cost, resources) {
-  return Object.entries(cost)
-    .filter(([r]) => SPENDABLE_RESOURCE_KEYS.includes(r))
-    .every(([r, needed]) => (resources[r] ?? 0) >= needed);
+function buildAdjMap(scAdj) {
+  const adj = {};
+  for (const { from, to } of scAdj) {
+    if (!adj[from]) adj[from] = [];
+    if (!adj[to])   adj[to]   = [];
+    adj[from].push(to);
+    adj[to].push(from);
+  }
+  return adj;
 }
 
-function MissingResources({ cost, resources }) {
-  const missing = Object.entries(cost)
-    .filter(([r, needed]) => (resources[r] ?? 0) < needed)
-    .map(([r, needed]) => ({ resource: r, needed, have: resources[r] ?? 0 }));
-  if (missing.length === 0) return null;
-  return (
-    <div className="rounded border border-destructive/30 bg-destructive/5 px-2 py-1.5 space-y-1">
-      <p className="text-[10px] text-destructive flex items-center gap-1.5">
-        <AlertCircle className="w-3 h-3 shrink-0" /> Not enough resources to build this structure.
-      </p>
-      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px]">
-        <div>
-          <p className="text-muted-foreground mb-0.5">Need:</p>
-          {Object.entries(cost).filter(([, v]) => v > 0).map(([r, v]) => (
-            <p key={r}><span className="text-muted-foreground">{r}</span> <span className="font-mono text-foreground">{v}</span></p>
-          ))}
-        </div>
-        <div>
-          <p className="text-muted-foreground mb-0.5">Available:</p>
-          {Object.entries(cost).filter(([, v]) => v > 0).map(([r]) => (
-            <p key={r}><span className="text-muted-foreground">{r}</span> <span className={`font-mono ${(resources[r] ?? 0) >= cost[r] ? 'text-green-400' : 'text-destructive'}`}>{resources[r] ?? 0}</span></p>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-export default function EconomicOpsPanel({ campaign, myPlayer, actingAsPlayerId, players, mapDef, stateById, operationsStatus, onStaged }) {
-  const actingPlayerId = actingAsPlayerId ?? myPlayer?.id;
-  const round = campaign?.current_round ?? 1;
-
-  const stagingStore = useOperationsStagingStore({ campaignId: campaign?.id, playerId: actingPlayerId, round });
-
-  const [staging, setStaging] = useState(null);
-  const [resources, setResources] = useState({});
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [selectedBuilding, setSelectedBuilding] = useState(null);
-  const [selectedTerritory, setSelectedTerritory] = useState('');
-  const [selectedSourceTerritory, setSelectedSourceTerritory] = useState(''); // supply_route: source territory
-  const [submitting, setSubmitting] = useState(false);
-  const [removeError, setRemoveError] = useState(null);
-
-  const isLocked = operationsStatus?.economic?.is_locked || operationsStatus?.operations_locked;
-
-  const load = useCallback(async () => {
-    if (!campaign?.id || !actingPlayerId) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await base44.functions.invoke('operationsLockPhase', {
-        action: 'getOperationsStatus',
-        campaign_id: campaign.id,
-        acting_as_player_id: actingPlayerId,
-      });
-      setStaging(res.data?.economic ?? null);
-      setResources(res.data?.economic?.resources ?? {});
-    } catch (e) {
-      // Silently ignore load errors (e.g. during phase transitions)
-      console.warn('[EconomicOpsPanel] load error:', e?.response?.data?.error ?? e?.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [campaign?.id, actingPlayerId]);
-
-  useEffect(() => { load(); }, [load]);
-
-  useEffect(() => {
-    if (operationsStatus?.economic) {
-      setStaging(operationsStatus.economic);
-      if (operationsStatus.economic.resources) setResources(operationsStatus.economic.resources);
-    }
-  }, [operationsStatus?.economic]);
-
-  const myTerritories = Object.values(stateById).filter(s => s.owner_player_id === actingPlayerId);
-  const stagedProjects = staging?.staged ?? [];
-  const atLimit = stagedProjects.length >= (staging?.projects_limit ?? 1);
-
-  const selectedBuildingDef = BUILDING_OPTIONS.find(b => b.type === selectedBuilding);
-  const isSupplyRoute = selectedBuilding === 'supply_route';
-
-  // Territories with an active Resource Hub (has_resource_hub flag)
-  const hubTerritories = myTerritories.filter(ts => ts.has_resource_hub);
-
-  // Build adjacency from SC_ADJACENCY (bidirectional)
-  const scAdjMap = useMemo(() => {
-    const adj = {};
-    for (const { from, to } of SC_ADJACENCY) {
-      if (!adj[from]) adj[from] = [];
-      if (!adj[to]) adj[to] = [];
-      adj[from].push(to);
-      adj[to].push(from);
-    }
-    return adj;
-  }, []);
-
-  // BFS within range 2 of a given territory across ALL territories (including enemy/unoccupied)
-  function getTerritoriesInRange2(hubTerritoryId) {
-    if (!hubTerritoryId) return [];
-    const inRange = [];
-    const visited = new Set([hubTerritoryId]);
-    const queue = [[hubTerritoryId, 0]];
-    while (queue.length > 0) {
-      const [cur, dist] = queue.shift();
-      if (dist > 0) inRange.push(cur);
-      if (dist < 2) {
-        for (const nb of (scAdjMap[cur] ?? [])) {
-          if (!visited.has(nb)) { visited.add(nb); queue.push([nb, dist + 1]); }
-        }
+function getTerritoriesInRange2(hubId, adjMap) {
+  if (!hubId) return [];
+  const inRange = [];
+  const visited = new Set([hubId]);
+  const queue = [[hubId, 0]];
+  while (queue.length > 0) {
+    const [cur, dist] = queue.shift();
+    if (dist > 0) inRange.push(cur);
+    if (dist < 2) {
+      for (const nb of (adjMap[cur] ?? [])) {
+        if (!visited.has(nb)) { visited.add(nb); queue.push([nb, dist + 1]); }
       }
     }
-    return inRange;
   }
+  return inRange;
+}
 
-  // Valid source territories for supply_route: within range 2 of selected hub, not the hub itself
+export default function EconomicOpsPanel({
+  campaign, myPlayer, actingAsPlayerId, players, mapDef, stateById,
+  operationsStatus, localStaging, onLocalChange, isLocked,
+}) {
+  const actingPlayerId = actingAsPlayerId ?? myPlayer?.id;
+  const resources = operationsStatus?.economic?.resources ?? {};
+  const projectsLimit = operationsStatus?.economic?.projects_limit ?? 1;
+
+  const [selectedBuilding, setSelectedBuilding] = useState(null);
+  const [selectedTerritory, setSelectedTerritory] = useState('');
+  const [selectedSourceTerritory, setSelectedSourceTerritory] = useState('');
+  const [stageError, setStageError] = useState(null);
+
+  const stagedProjects = localStaging ?? [];
+  const atLimit = stagedProjects.length >= projectsLimit;
+  const isSupplyRoute = selectedBuilding === 'supply_route';
+  const selectedBuildingDef = BUILDING_OPTIONS.find(b => b.type === selectedBuilding);
+
+  const myTerritories = Object.values(stateById).filter(s => s.owner_player_id === actingPlayerId);
+  const hubTerritories = myTerritories.filter(ts => ts.has_resource_hub);
+
+  const scAdjMap = useMemo(() => buildAdjMap(SC_ADJACENCY), []);
+
   const supplyRouteSourceTerritories = useMemo(() => {
     if (!isSupplyRoute || !selectedTerritory) return [];
-    const inRange = getTerritoriesInRange2(selectedTerritory);
-    return inRange
+    return getTerritoriesInRange2(selectedTerritory, scAdjMap)
+      .filter(tid => tid !== selectedTerritory)
       .map(tid => {
-        const ts = Object.values(stateById).find(s => s.territory_id === tid) ?? { territory_id: tid };
-        const def = mapDef?.territories.find(t => t.territory_id === tid);
+        const ts = stateById[tid] ?? { territory_id: tid };
+        const def = mapDef?.territories?.find(t => t.territory_id === tid);
         return { territory_id: tid, name: def?.name ?? tid, state: ts };
-      })
-      .filter(t => t.territory_id !== selectedTerritory);
-  }, [isSupplyRoute, selectedTerritory, stateById, mapDef]);
+      });
+  }, [isSupplyRoute, selectedTerritory, scAdjMap, stateById, mapDef]);
 
-  // For supply_route: hub territories that can afford the cost
-  function hubCanAffordSupplyRoute(ts, buildingDef) {
-    if (!buildingDef) return false;
-    const storage = ts.resource_storage ?? {};
-    return Object.entries(buildingDef.cost)
-      .filter(([r]) => SPENDABLE_RESOURCE_KEYS.includes(r))
-      .every(([r, needed]) => (storage[r] ?? 0) >= needed);
-  }
+  // Available storage accounting for staged costs
+  const availableStorage = useMemo(() => {
+    const avail = {};
+    for (const ts of myTerritories) avail[ts.territory_id] = { ...(ts.resource_storage ?? {}) };
+    for (const proj of stagedProjects) {
+      const costTid = proj.territory_id;
+      if (!avail[costTid]) continue;
+      for (const [r, amt] of Object.entries(proj.cost_paid ?? {})) {
+        avail[costTid][r] = Math.max(0, (avail[costTid][r] ?? 0) - amt);
+      }
+    }
+    return avail;
+  }, [myTerritories, stagedProjects]);
 
-  // For regular buildings: territory must have all resources in its own storage
-  function territoryCanAffordBuilding(ts, buildingDef) {
-    if (!buildingDef) return false;
-    const storage = ts.resource_storage ?? {};
-    return Object.entries(buildingDef.cost)
-      .filter(([r]) => SPENDABLE_RESOURCE_KEYS.includes(r))
-      .every(([r, needed]) => (storage[r] ?? 0) >= needed);
-  }
+  const canAffordAtTerritory = (tid, cost) => {
+    const storage = availableStorage[tid] ?? {};
+    return SPENDABLE_RESOURCE_KEYS.every(r => (storage[r] ?? 0) >= (cost[r] ?? 0));
+  };
 
-  const validTerritories = selectedBuildingDef
-    ? isSupplyRoute
-      ? hubTerritories.filter(ts => hubCanAffordSupplyRoute(ts, selectedBuildingDef))
-      : myTerritories.filter(ts => territoryCanAffordBuilding(ts, selectedBuildingDef))
-    : [];
+  const validTerritories = useMemo(() => {
+    if (!selectedBuildingDef) return [];
+    if (isSupplyRoute) return hubTerritories.filter(ts => canAffordAtTerritory(ts.territory_id, selectedBuildingDef.cost));
+    return myTerritories.filter(ts => canAffordAtTerritory(ts.territory_id, selectedBuildingDef.cost));
+  }, [selectedBuildingDef, isSupplyRoute, hubTerritories, myTerritories, availableStorage]);
 
-  // Affordability: at least one valid territory
-  const canAfford = isSupplyRoute
-    ? validTerritories.length > 0  // source territory checked separately
-    : validTerritories.length > 0;
+  const getTerritoryName = (tid) => mapDef?.territories?.find(t => t.territory_id === tid)?.name ?? tid;
 
-  const handleStage = async () => {
-    if (!selectedBuilding || !selectedTerritory || !canAfford) return;
+  const handleStage = () => {
+    if (!selectedBuilding || !selectedTerritory) return;
     if (isSupplyRoute && !selectedSourceTerritory) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      await base44.functions.invoke('operationsLockPhase', {
-        action: 'stageEconomic',
-        campaign_id: campaign.id,
-        acting_as_player_id: actingPlayerId,
-        building_type: selectedBuilding,
-        territory_id: selectedTerritory,
-        ...(isSupplyRoute ? { source_territory_id: selectedSourceTerritory } : {}),
-      });
-      setSelectedBuilding(null);
-      setSelectedTerritory('');
-      setSelectedSourceTerritory('');
-      // Mirror to localStorage for reactive header
-      const res = await base44.functions.invoke('operationsLockPhase', {
-        action: 'getOperationsStatus',
-        campaign_id: campaign.id,
-        acting_as_player_id: actingPlayerId,
-      });
-      const serverStaged = res.data?.economic?.staged ?? [];
-      stagingStore.setEconomicStaging(serverStaged);
-      window.dispatchEvent(new Event('storage'));
-      setStaging(res.data?.economic ?? null);
-      if (res.data?.economic?.resources) setResources(res.data.economic.resources);
-      onStaged?.();
-    } catch (e) {
-      setError(e?.response?.data?.error ?? 'Failed to stage project');
-    } finally {
-      setSubmitting(false);
+    setStageError(null);
+    const def = selectedBuildingDef;
+    if (!def) return;
+    if (!canAffordAtTerritory(selectedTerritory, def.cost)) {
+      setStageError(`Not enough resources in ${getTerritoryName(selectedTerritory)}.`);
+      return;
     }
+    onLocalChange([...stagedProjects, {
+      building_type: selectedBuilding,
+      territory_id: selectedTerritory,
+      source_territory_id: isSupplyRoute ? selectedSourceTerritory : null,
+      cost_paid: { ...def.cost },
+      staged_at: new Date().toISOString(),
+    }]);
+    setSelectedBuilding(null);
+    setSelectedTerritory('');
+    setSelectedSourceTerritory('');
   };
 
-  const handleRemove = async (index) => {
-    setRemoveError(null);
-    try {
-      await base44.functions.invoke('operationsLockPhase', {
-        action: 'removeStaged',
-        campaign_id: campaign.id,
-        acting_as_player_id: actingPlayerId,
-        pillar: 'economic',
-        index,
-      });
-      // Mirror to localStorage for reactive header
-      const res = await base44.functions.invoke('operationsLockPhase', {
-        action: 'getOperationsStatus',
-        campaign_id: campaign.id,
-        acting_as_player_id: actingPlayerId,
-      });
-      const serverStaged = res.data?.economic?.staged ?? [];
-      stagingStore.setEconomicStaging(serverStaged);
-      window.dispatchEvent(new Event('storage'));
-      setStaging(res.data?.economic ?? null);
-      onStaged?.();
-    } catch (e) {
-      setRemoveError(e?.response?.data?.error ?? 'Failed to remove project');
-    }
-  };
-
-  const getTerritoryName = (tid) =>
-    mapDef?.territories?.find(t => t.territory_id === tid)?.name ?? tid;
+  const handleRemove = (index) => onLocalChange(stagedProjects.filter((_, i) => i !== index));
 
   return (
     <div className="p-3 space-y-3">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <p className="font-display text-[10px] tracking-widest uppercase text-amber-400 flex items-center gap-1.5">
           <HardHat className="w-3.5 h-3.5" /> Construction Projects
           {isLocked && <span className="ml-1 text-green-400">(locked)</span>}
         </p>
-        <button onClick={load} disabled={loading} className="text-muted-foreground hover:text-foreground transition-colors">
-          <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
-        </button>
       </div>
 
-      {/* Resource summary — always visible, uses acting player context */}
-      <ResourceSummaryPanel
-        resources={resources}
-        stateById={stateById}
-        actingPlayerId={actingPlayerId}
-      />
+      <ResourceSummaryPanel resources={resources} stateById={stateById} actingPlayerId={actingPlayerId} />
 
-      {error && <p className="text-xs text-destructive">{error}</p>}
-      {removeError && <p className="text-xs text-destructive">{removeError}</p>}
+      {stageError && <p className="text-xs text-destructive">{stageError}</p>}
 
-      {loading && !staging ? (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
-          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-muted-foreground font-display tracking-wide uppercase">Capacity</span>
+        <span className={`font-mono font-bold ${atLimit ? 'text-amber-400' : 'text-muted-foreground'}`}>
+          {stagedProjects.length} / {projectsLimit}
+        </span>
+      </div>
+
+      {stagedProjects.length > 0 && (
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-display tracking-wider uppercase text-muted-foreground">Staged Projects</p>
+          {stagedProjects.map((proj, i) => {
+            const def = BUILDING_OPTIONS.find(b => b.type === proj.building_type);
+            const colors = PILLAR_COLORS[def?.pillar ?? 'economic'];
+            return (
+              <div key={i} className={`flex items-center gap-2 px-2 py-2 rounded border ${colors.border} ${colors.bg}`}>
+                <span className="text-base">{def?.icon ?? '🏗️'}</span>
+                <div className="flex-1 min-w-0">
+                  <p className={`text-xs font-semibold ${colors.text}`}>{def?.label ?? proj.building_type}</p>
+                  <p className="text-[10px] text-muted-foreground truncate">{getTerritoryName(proj.territory_id)}</p>
+                  {proj.source_territory_id && <p className="text-[10px] text-muted-foreground truncate">→ {getTerritoryName(proj.source_territory_id)}</p>}
+                </div>
+                {!isLocked && (
+                  <button onClick={() => handleRemove(i)} className="text-muted-foreground hover:text-destructive transition-colors shrink-0">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                {isLocked && <CheckCircle2 className="w-3.5 h-3.5 text-green-400 shrink-0" />}
+              </div>
+            );
+          })}
         </div>
-      ) : (
-        <>
-          {/* Capacity */}
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-muted-foreground font-display tracking-wide uppercase">Capacity</span>
-            <span className={`font-mono font-bold ${atLimit ? 'text-amber-400' : 'text-muted-foreground'}`}>
-              {stagedProjects.length} / {staging?.projects_limit ?? 1}
-            </span>
+      )}
+
+      {isLocked && (
+        <div className="flex items-center gap-1.5 text-[10px] text-green-400">
+          <CheckCircle2 className="w-3 h-3" /> Construction committed.
+        </div>
+      )}
+
+      {!isLocked && !atLimit && (
+        <div className="space-y-2 pt-1 border-t border-border">
+          <p className="text-[10px] font-display tracking-wider uppercase text-muted-foreground">Stage a Construction Project</p>
+
+          {myTerritories.length === 0 && (
+            <div className="flex items-center gap-2 px-2 py-2 rounded border border-amber-500/30 bg-amber-500/10 text-[10px] text-amber-400">
+              <AlertCircle className="w-3 h-3 shrink-0" /> You must own at least one territory to construct a building.
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            {BUILDING_OPTIONS.map(b => {
+              const colors = PILLAR_COLORS[b.pillar];
+              const isSelected = selectedBuilding === b.type;
+              const noHub = b.type === 'supply_route' && hubTerritories.length === 0;
+              const affordable = b.type === 'supply_route'
+                ? hubTerritories.some(ts => canAffordAtTerritory(ts.territory_id, b.cost))
+                : myTerritories.some(ts => canAffordAtTerritory(ts.territory_id, b.cost));
+              return (
+                <button key={b.type}
+                  onClick={() => { setSelectedBuilding(isSelected ? null : b.type); setSelectedTerritory(''); setSelectedSourceTerritory(''); }}
+                  disabled={myTerritories.length === 0 || noHub}
+                  className={`w-full flex items-start gap-2 px-2 py-2 rounded border text-left transition-all ${
+                    isSelected ? `${colors.border} ${colors.bg}`
+                    : affordable && !noHub ? 'border-border bg-muted/10 hover:border-muted-foreground/30'
+                    : 'border-border bg-muted/5 opacity-60'
+                  }`}
+                >
+                  <span className="text-sm shrink-0 mt-0.5">{b.icon}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <p className={`text-[10px] font-semibold ${isSelected ? colors.text : affordable ? 'text-foreground' : 'text-muted-foreground'} truncate`}>{b.label}</p>
+                      <span className={`text-[9px] capitalize px-1 py-0.5 rounded border ${colors.border} ${colors.text}`}>{b.pillar}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-0.5">
+                      {Object.entries(b.cost).filter(([, v]) => v > 0).map(([r, needed]) => (
+                        <span key={r} className="text-[9px] font-mono text-muted-foreground">{RESOURCE_ICONS[r]}{needed}</span>
+                      ))}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
           </div>
 
-          {/* Staged projects */}
-          {stagedProjects.length > 0 && (
+          {selectedBuildingDef && (
             <div className="space-y-1.5">
-              <p className="text-[10px] font-display tracking-wider uppercase text-muted-foreground">Staged Projects</p>
-              {stagedProjects.map((proj, i) => {
-                const def = BUILDING_OPTIONS.find(b => b.type === proj.building_type);
-                const colors = PILLAR_COLORS[def?.pillar ?? 'economic'];
-                const tname = getTerritoryName(proj.territory_id);
-                return (
-                  <div key={i} className={`flex items-center gap-2 px-2 py-2 rounded border ${colors.border} ${colors.bg}`}>
-                    <span className="text-base">{def?.icon ?? '🏗️'}</span>
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-xs font-semibold ${colors.text}`}>{def?.label ?? proj.building_type}</p>
-                      <p className="text-[10px] text-muted-foreground truncate">{tname}</p>
-                    </div>
-                    {!isLocked && (
-                      <button onClick={() => handleRemove(i)} className="text-muted-foreground hover:text-destructive transition-colors shrink-0">
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                    {isLocked && <CheckCircle2 className="w-3.5 h-3.5 text-green-400 shrink-0" />}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {isLocked && (
-            <div className="flex items-center gap-1.5 text-[10px] text-green-400">
-              <CheckCircle2 className="w-3 h-3" />
-              Construction committed. Buildings enter 'planned' status.
-            </div>
-          )}
-
-          {/* Building selector */}
-          {!isLocked && !atLimit && (
-            <div className="space-y-2 pt-1 border-t border-border">
-              <p className="text-[10px] font-display tracking-wider uppercase text-muted-foreground">Stage a Construction Project</p>
-
-              {/* No territories warning */}
-              {myTerritories.length === 0 && (
-                <div className="flex items-center gap-2 px-2 py-2 rounded border border-amber-500/30 bg-amber-500/10 text-[10px] text-amber-400">
-                  <AlertCircle className="w-3 h-3 shrink-0" />
-                  You must own at least one territory to construct a building.
-                </div>
-              )}
-
-              {/* Building type grid with cost preview */}
+              <p className="text-[10px] text-muted-foreground italic">{selectedBuildingDef.effect}</p>
               <div className="space-y-1.5">
-                {BUILDING_OPTIONS.map(b => {
-                  const colors = PILLAR_COLORS[b.pillar];
-                  const isSelected = selectedBuilding === b.type;
-                  const noTerritories = myTerritories.length === 0;
-                  // Supply route: requires a resource hub territory with sufficient resources
-                  const affordable = b.type === 'supply_route'
-                    ? hubTerritories.some(ts => hubCanAffordSupplyRoute(ts, b))
-                    : myTerritories.some(ts => territoryCanAffordBuilding(ts, b));
-                  // Supply route needs a hub first
-                  const noHub = b.type === 'supply_route' && hubTerritories.length === 0;
-
-                  return (
-                    <button
-                      key={b.type}
-                      onClick={() => { setSelectedBuilding(isSelected ? null : b.type); setSelectedTerritory(''); }}
-                      disabled={noTerritories || noHub}
-                      className={`w-full flex items-start gap-2 px-2 py-2 rounded border text-left transition-all ${
-                        isSelected
-                          ? `${colors.border} ${colors.bg}`
-                          : affordable && !noTerritories && !noHub
-                          ? 'border-border bg-muted/10 hover:border-muted-foreground/30'
-                          : 'border-border bg-muted/5 opacity-60'
-                      }`}
-                    >
-                      <span className="text-sm shrink-0 mt-0.5">{b.icon}</span>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <p className={`text-[10px] font-semibold ${isSelected ? colors.text : affordable ? 'text-foreground' : 'text-muted-foreground'} truncate`}>
-                            {b.label}
-                          </p>
-                          <span className={`text-[9px] capitalize px-1 py-0.5 rounded border ${colors.border} ${colors.text}`}>{b.pillar}</span>
-                        </div>
-                        <div className="flex flex-wrap gap-1 mt-0.5">
-                          {Object.entries(b.cost).filter(([, v]) => v > 0).map(([r, needed]) => (
-                            <span key={r} className="text-[9px] font-mono text-muted-foreground">
-                              {RESOURCE_ICONS[r]}{needed}
-                            </span>
-                          ))}
-                        </div>
-                        {noHub && isSelected && (
-                          <p className="text-[9px] text-destructive mt-0.5">Requires a Resource Hub in one of your territories.</p>
-                        )}
-                        {!affordable && !noHub && !noTerritories && isSelected && (
-                          <p className="text-[9px] text-destructive mt-0.5">
-                            {b.type === 'supply_route'
-                              ? 'No Resource Hub territory has sufficient resources.'
-                              : 'No single territory has all required resources stored.'}
-                          </p>
-                        )}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {selectedBuildingDef && (
-                <div className="space-y-1.5">
-                  <p className="text-[10px] text-muted-foreground italic">{selectedBuildingDef.effect}</p>
-
-                  {/* Cost preview — uses selected territory's storage if one is selected, else global */}
-                  <div className="panel p-2 space-y-1.5">
-                    <p className="text-[10px] text-muted-foreground">Cost: <span className="text-foreground">{selectedBuildingDef.label}</span></p>
-                    {(() => {
-                      const ts = selectedTerritory ? myTerritories.find(t => t.territory_id === selectedTerritory) : null;
-                      const storageToCheck = ts ? (ts.resource_storage ?? {}) : resources;
-                      return (
-                        <>
-                          <CostDisplay cost={selectedBuildingDef.cost} resources={storageToCheck} />
-                          {ts && !canAffordBuilding(selectedBuildingDef.cost, storageToCheck) && (
-                            <MissingResources cost={selectedBuildingDef.cost} resources={storageToCheck} />
-                          )}
-                        </>
-                      );
-                    })()}
+                <p className="text-[10px] text-muted-foreground">{isSupplyRoute ? 'Step 1: Select Resource Hub territory:' : 'Select territory:'}</p>
+                {isSupplyRoute && hubTerritories.length === 0 ? (
+                  <div className="flex items-center gap-2 px-2 py-2 rounded border border-destructive/30 bg-destructive/5 text-[10px] text-destructive">
+                    <AlertCircle className="w-3 h-3 shrink-0" /> You need an active Resource Hub building first.
                   </div>
+                ) : validTerritories.length === 0 && !isSupplyRoute ? (
+                  <div className="flex items-center gap-2 px-2 py-2 rounded border border-destructive/30 bg-destructive/5 text-[10px] text-destructive">
+                    <AlertCircle className="w-3 h-3 shrink-0" /> No territory has all required resources stored.
+                  </div>
+                ) : (
+                  <select value={selectedTerritory}
+                    onChange={e => { setSelectedTerritory(e.target.value); setSelectedSourceTerritory(''); }}
+                    className="w-full bg-muted/20 border border-border rounded px-2 py-1.5 text-xs text-foreground">
+                    <option value="">— choose territory —</option>
+                    {validTerritories.map(t => (
+                      <option key={t.territory_id} value={t.territory_id}>{getTerritoryName(t.territory_id)}</option>
+                    ))}
+                  </select>
+                )}
 
-                  {/* Territory selector */}
-                  <div className="space-y-1.5">
-                    <p className="text-[10px] text-muted-foreground">
-                      {isSupplyRoute ? 'Step 1: Select Resource Hub territory:' : 'Select territory:'}
-                    </p>
-                    {isSupplyRoute && hubTerritories.length === 0 ? (
+                {selectedTerritory && selectedBuildingDef && (
+                  <CostDisplay cost={selectedBuildingDef.cost} resources={availableStorage[selectedTerritory] ?? {}} />
+                )}
+
+                {isSupplyRoute && selectedTerritory && (
+                  <div className="space-y-1">
+                    <p className="text-[10px] text-muted-foreground">Step 2: Select source territory (within range 2):</p>
+                    {supplyRouteSourceTerritories.length === 0 ? (
                       <div className="flex items-center gap-2 px-2 py-2 rounded border border-destructive/30 bg-destructive/5 text-[10px] text-destructive">
-                        <AlertCircle className="w-3 h-3 shrink-0" />
-                        You need an active Resource Hub building before establishing a supply route.
-                      </div>
-                    ) : validTerritories.length === 0 && !isSupplyRoute ? (
-                      <div className="flex items-center gap-2 px-2 py-2 rounded border border-destructive/30 bg-destructive/5 text-[10px] text-destructive">
-                        <AlertCircle className="w-3 h-3 shrink-0" />
-                        No single territory has all required resources stored in it.
+                        <AlertCircle className="w-3 h-3 shrink-0" /> No territories within range 2.
                       </div>
                     ) : (
-                      <select
-                        value={selectedTerritory}
-                        onChange={e => { setSelectedTerritory(e.target.value); setSelectedSourceTerritory(''); }}
-                        className="w-full bg-muted/20 border border-border rounded px-2 py-1.5 text-xs text-foreground"
-                      >
-                        <option value="">— choose territory —</option>
-                        {validTerritories.map(t => {
-                          const name = getTerritoryName(t.territory_id);
-                          return <option key={t.territory_id} value={t.territory_id}>{name}</option>;
+                      <select value={selectedSourceTerritory} onChange={e => setSelectedSourceTerritory(e.target.value)}
+                        className="w-full bg-muted/20 border border-border rounded px-2 py-1.5 text-xs text-foreground">
+                        <option value="">— choose source territory —</option>
+                        {supplyRouteSourceTerritories.map(t => {
+                          const ownerPlayer = players?.find(p => p.id === t.state?.owner_player_id);
+                          const isEnemy = t.state?.owner_player_id && t.state.owner_player_id !== actingPlayerId;
+                          return (
+                            <option key={t.territory_id} value={t.territory_id}>
+                              {t.name}{ownerPlayer ? ` (${ownerPlayer.display_name}${isEnemy ? ' — enemy ⚔' : ''})` : ' (unoccupied)'}
+                            </option>
+                          );
                         })}
                       </select>
                     )}
-
-                    {/* Step 2: Supply route source territory */}
-                    {isSupplyRoute && selectedTerritory && (
-                      <div className="space-y-1">
-                        <p className="text-[10px] text-muted-foreground">Step 2: Select source territory (within range 2):</p>
-                        {supplyRouteSourceTerritories.length === 0 ? (
-                          <div className="flex items-center gap-2 px-2 py-2 rounded border border-destructive/30 bg-destructive/5 text-[10px] text-destructive">
-                            <AlertCircle className="w-3 h-3 shrink-0" /> No territories within range 2 of this hub.
-                          </div>
-                        ) : (
-                          <select
-                            value={selectedSourceTerritory}
-                            onChange={e => setSelectedSourceTerritory(e.target.value)}
-                            className="w-full bg-muted/20 border border-border rounded px-2 py-1.5 text-xs text-foreground"
-                          >
-                            <option value="">— choose source territory —</option>
-                            {supplyRouteSourceTerritories.map(t => {
-                              const ownerState = t.state;
-                              const ownerPlayer = players?.find(p => p.id === ownerState?.owner_player_id);
-                              const isEnemy = ownerState?.owner_player_id && ownerState.owner_player_id !== actingPlayerId;
-                              const label = `${t.name}${ownerPlayer ? ` (${ownerPlayer.display_name}${isEnemy ? ' — enemy ⚔' : ''})` : ' (unoccupied)'}`;
-                              return <option key={t.territory_id} value={t.territory_id}>{label}</option>;
-                            })}
-                          </select>
-                        )}
-                        {selectedSourceTerritory && (() => {
-                          const sourceState = Object.values(stateById).find(s => s.territory_id === selectedSourceTerritory);
-                          const isEnemy = sourceState?.owner_player_id && sourceState.owner_player_id !== actingPlayerId;
-                          return isEnemy ? (
-                            <p className="text-[9px] text-amber-400 italic">
-                              ⚔ Enemy territory — a Supply Route Establishment battle card will be generated.
-                            </p>
-                          ) : (
-                            <p className="text-[9px] text-green-400 italic">
-                              ✓ Friendly/unoccupied — supply route will be established immediately.
-                            </p>
-                          );
-                        })()}
-                      </div>
-                    )}
+                    {selectedSourceTerritory && (() => {
+                      const isEnemy = stateById[selectedSourceTerritory]?.owner_player_id && stateById[selectedSourceTerritory].owner_player_id !== actingPlayerId;
+                      return isEnemy
+                        ? <p className="text-[9px] text-amber-400 italic">⚔ Enemy — battle card generated on lock.</p>
+                        : <p className="text-[9px] text-green-400 italic">✓ Friendly — supply route established on lock.</p>;
+                    })()}
                   </div>
-                </div>
-              )}
+                )}
+              </div>
 
-              <button
-                onClick={handleStage}
-                disabled={!selectedBuilding || !selectedTerritory || submitting || !canAfford || (isSupplyRoute && !selectedSourceTerritory)}
-                className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded border border-amber-400/40 bg-amber-400/10 text-amber-400 text-xs font-display tracking-widest uppercase hover:brightness-110 transition-all disabled:opacity-40"
-              >
-                {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Hammer className="w-3.5 h-3.5" />}
-                Stage Project
+              <button onClick={handleStage}
+                disabled={!selectedBuilding || !selectedTerritory || (isSupplyRoute && !selectedSourceTerritory)}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded border border-amber-400/40 bg-amber-400/10 text-amber-400 text-xs font-display tracking-widest uppercase hover:brightness-110 transition-all disabled:opacity-40">
+                <Hammer className="w-3.5 h-3.5" /> Stage Project
               </button>
             </div>
           )}
+        </div>
+      )}
 
-          {!isLocked && atLimit && (
-            <p className="text-[10px] text-muted-foreground text-center italic">
-              Construction capacity reached for this round. Remove a project to change selection.
-            </p>
-          )}
-
-          {myTerritories.length === 0 && (
-            <p className="text-xs text-muted-foreground">You own no territories.</p>
-          )}
-        </>
+      {!isLocked && atLimit && (
+        <p className="text-[10px] text-muted-foreground text-center italic">
+          Construction capacity reached. Remove a project to change.
+        </p>
       )}
     </div>
   );

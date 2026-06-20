@@ -95,6 +95,10 @@ export default function CommandCenterPanel({
   const [planningRefreshTick, setPlanningRefreshTick] = useState(0);
   const triggerPlanningRefresh = () => setPlanningRefreshTick(t => t + 1);
 
+  // Local-first staging state owned at this level, passed down to panels
+  const [localEconomicStaging, setLocalEconomicStaging] = useState([]);
+  const [localDiplomaticStaging, setLocalDiplomaticStaging] = useState([]);
+
   // Reset status caches when actingAsPlayerId changes
   const prevActingRef = useRef(actingAsPlayerId);
   useEffect(() => {
@@ -250,6 +254,10 @@ export default function CommandCenterPanel({
           players={players}
           onLocked={onPhaseChanged}
           onStatusLoaded={setOperationsStatus}
+          localEconomicStaging={localEconomicStaging}
+          localDiplomaticStaging={localDiplomaticStaging}
+          onEconomicLocalChange={setLocalEconomicStaging}
+          onDiplomaticLocalChange={setLocalDiplomaticStaging}
         />
       )}
 
@@ -277,12 +285,16 @@ export default function CommandCenterPanel({
           actingAsPlayerId={actingAsPlayerId} isAdmin={isAdmin}
           planningStatus={planningStatus} operationsStatus={operationsStatus}
           onStagingChanged={triggerPlanningRefresh}
+          localEconomicStaging={localEconomicStaging}
+          onEconomicLocalChange={setLocalEconomicStaging}
         />}
         {pillarTab === 'diplomatic' && <DiplomaticContent
           campaign={campaign} players={players} myPlayer={myPlayer}
           mapDef={mapDef} stateById={stateById} onPhaseChanged={onPhaseChanged}
           actingAsPlayerId={actingAsPlayerId} isAdmin={isAdmin}
           planningStatus={planningStatus} operationsStatus={operationsStatus}
+          localDiplomaticStaging={localDiplomaticStaging}
+          onDiplomaticLocalChange={setLocalDiplomaticStaging}
         />}
         {pillarTab === 'admin' && isAdmin && <AdminContent
           campaign={campaign} players={players} myPlayer={myPlayer}
@@ -395,10 +407,11 @@ function AdminContent({ campaign, players, myPlayer, onPhaseChanged, isDeploy, i
   );
 }
 
-function EconomicContent({ campaign, players, myPlayer, stateById, mapDef, onPhaseChanged, actingAsPlayerId, isAdmin, planningStatus, operationsStatus, onStagingChanged }) {
+function EconomicContent({ campaign, players, myPlayer, stateById, mapDef, onPhaseChanged, actingAsPlayerId, isAdmin, planningStatus, operationsStatus, onStagingChanged, localEconomicStaging, onEconomicLocalChange }) {
   const phase = campaign?.current_phase;
   const isDeploy = phase === 'deploy';
   const isAttack = phase === 'attack';
+  const isLocked = operationsStatus?.operations_locked ?? false;
 
   return (
     <div className="space-y-0">
@@ -413,7 +426,7 @@ function EconomicContent({ campaign, players, myPlayer, stateById, mapDef, onPha
           onStaged={onStagingChanged}
         />
       )}
-      {/* Operations Phase: construction projects */}
+      {/* Operations Phase: construction projects — local-first */}
       {isAttack && (
         <EconomicOpsPanel
           campaign={campaign}
@@ -423,6 +436,9 @@ function EconomicContent({ campaign, players, myPlayer, stateById, mapDef, onPha
           mapDef={mapDef}
           stateById={stateById}
           operationsStatus={operationsStatus}
+          localStaging={localEconomicStaging}
+          onLocalChange={onEconomicLocalChange}
+          isLocked={isLocked}
         />
       )}
       {/* Other phases: full resource panel + logistics + development */}
@@ -444,12 +460,13 @@ function EconomicContent({ campaign, players, myPlayer, stateById, mapDef, onPha
   );
 }
 
-function DiplomaticContent({ campaign, players, myPlayer, mapDef, stateById, onPhaseChanged, actingAsPlayerId, isAdmin, planningStatus, operationsStatus }) {
+function DiplomaticContent({ campaign, players, myPlayer, mapDef, stateById, onPhaseChanged, actingAsPlayerId, isAdmin, planningStatus, operationsStatus, localDiplomaticStaging, onDiplomaticLocalChange }) {
   const phase = campaign?.current_phase;
   const isDeploy = phase === 'deploy';
   const isAttack = phase === 'attack';
+  const isLocked = operationsStatus?.operations_locked ?? false;
 
-  // Operations Phase: unified influence actions only (no objectives)
+  // Operations Phase: unified influence actions only (no objectives) — local-first
   if (isAttack) {
     return (
       <DiplomaticOpsPanel
@@ -460,6 +477,9 @@ function DiplomaticContent({ campaign, players, myPlayer, mapDef, stateById, onP
         mapDef={mapDef}
         stateById={stateById ?? {}}
         operationsStatus={operationsStatus}
+        localStaging={localDiplomaticStaging}
+        onLocalChange={onDiplomaticLocalChange}
+        isLocked={isLocked}
       />
     );
   }

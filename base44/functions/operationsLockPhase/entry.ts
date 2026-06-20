@@ -483,6 +483,8 @@ Deno.serve(async (req) => {
   }
 
   // ── ACTION: lockOperationsPhase ────────────────────────────────────────────
+  // Accepts local-first staged arrays from the client — no prior server writes needed.
+  // _local_economic_staged and _local_diplomatic_staged override server-staged data.
   if (action === 'lockOperationsPhase') {
     const staging = await getStagingDecision(base44, campaign_id, actingPlayer.id, round);
     const stagingData = staging?.data ?? emptyStaging();
@@ -494,6 +496,14 @@ Deno.serve(async (req) => {
         message: 'Operations phase already locked.',
         locked_at: stagingData.locked_at,
       });
+    }
+
+    // Accept client-submitted local staging (atomic local-first model)
+    if (Array.isArray(body._local_economic_staged)) {
+      stagingData.economic_staged = body._local_economic_staged;
+    }
+    if (Array.isArray(body._local_diplomatic_staged)) {
+      stagingData.diplomatic_staged_list = body._local_diplomatic_staged;
     }
 
     const results = {};
@@ -627,7 +637,8 @@ Deno.serve(async (req) => {
     }
 
     // ── 3. Diplomatic: commit influence actions ──────────────────────────────
-    const diplomaticStaged = stagingData.diplomatic_staged ?? [];
+    // Use local-first list if submitted by client, otherwise fall back to server-staged list
+    const diplomaticStaged = stagingData.diplomatic_staged_list ?? stagingData.diplomatic_staged ?? [];
     const dipResults = [];
 
     for (const staged of diplomaticStaged) {

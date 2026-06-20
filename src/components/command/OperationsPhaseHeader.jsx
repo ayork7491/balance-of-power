@@ -1,16 +1,20 @@
 /**
- * OperationsPhaseHeader — Sprint 5B.5
+ * OperationsPhaseHeader — Atomic Refactor (Phase 1).
  *
- * Phase header for the Operations Phase (attack phase).
- * Shows per-pillar staging progress and a single "Lock In Operations Phase" button.
+ * Single source of truth for Operations Phase local staging.
+ * Owns localStorage state for economic + diplomatic pillars.
+ * Passes localStaging down to child panels via onStatusLoaded callback.
  *
- * Props:
- *   campaign
- *   myPlayer
- *   actingAsPlayerId
- *   players
- *   onLocked          — called after successful lock-in
- *   onStatusLoaded    — called with status object after load
+ * Data flow:
+ *   1. Load once on mount: server operationsStatus → hydrate state
+ *   2. Child panels (Economic, Diplomatic) call onEconomicChange / onDiplomaticChange
+ *      to update local staging — no server writes.
+ *   3. Lock: send one atomic payload { economic_projects, diplomatic_actions } + attacks
+ *      to operationsLockPhase/lockOperationsPhase.
+ *   4. Clear local storage after successful lock.
+ *
+ * Mid-phase polling: only lightweight admin lock-status dot indicators,
+ * NOT full territory/influence/resource state.
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Lock, Loader2, Shield, Coins, Feather, CheckCircle2, RefreshCw, Users } from 'lucide-react';
@@ -18,7 +22,6 @@ import { base44 } from '@/api/base44Client';
 import { useOperationsStagingStore } from '@/features/campaigns/operations/useOperationsStagingStore';
 
 function PillarProgress({ icon: Icon, label, staged, total, isLocked, color, note }) {
-  const done = isLocked;
   return (
     <div className="flex items-center gap-2 py-1.5">
       <Icon className={`w-3.5 h-3.5 shrink-0 ${isLocked ? 'text-green-400' : color}`} />
@@ -35,11 +38,11 @@ function PillarProgress({ icon: Icon, label, staged, total, isLocked, color, not
         <div className="w-full bg-muted/20 rounded-full h-1 overflow-hidden">
           <div
             className={`h-1 rounded-full transition-all duration-300 ${
-              done ? 'bg-green-500' :
+              isLocked ? 'bg-green-500' :
               color === 'text-red-400' ? 'bg-red-500' :
               color === 'text-amber-400' ? 'bg-amber-500' : 'bg-purple-500'
             }`}
-            style={{ width: done ? '100%' : (total > 0 ? `${Math.min(100, Math.round((staged / total) * 100))}%` : '0%') }}
+            style={{ width: isLocked ? '100%' : (total > 0 ? `${Math.min(100, Math.round((staged / total) * 100))}%` : '0%') }}
           />
         </div>
       </div>
@@ -47,10 +50,16 @@ function PillarProgress({ icon: Icon, label, staged, total, isLocked, color, not
   );
 }
 
-export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlayerId, players, onLocked, onStatusLoaded }) {
+export default function OperationsPhaseHeader({
+  campaign, myPlayer, actingAsPlayerId, players,
+  onLocked, onStatusLoaded,
+  onEconomicLocalChange,
+  onDiplomaticLocalChange,
+  localEconomicStaging,
+  localDiplomaticStaging,
+}) {
   const actingId = actingAsPlayerId ?? myPlayer?.id;
   const round = campaign?.current_round ?? 1;
-
   const stagingStore = useOperationsStagingStore({ campaignId: campaign?.id, playerId: actingId, round });
 
   const [status, setStatus] = useState(null);
@@ -58,19 +67,16 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
   const [loading, setLoading] = useState(true);
   const [locking, setLocking] = useState(false);
   const [error, setError] = useState(null);
-  const [localTick, setLocalTick] = useState(0);
-  const retryRef = useRef(null);
   const lockInFlightRef = useRef(false);
+  const retryRef = useRef(null);
 
   const load = useCallback(async (isRetry = false) => {
     if (!campaign?.id || !myPlayer?.id) return;
-    // Guard: only load when campaign is actually in attack (operations) phase
     if (campaign.current_phase !== 'attack') return;
     if (!isRetry) setError(null);
     if (!status) setLoading(true);
 
     try {
-      // Fetch both in parallel; allow admin status to fail silently
       const [statusRes, adminRes] = await Promise.allSettled([
         base44.functions.invoke('operationsLockPhase', {
           action: 'getOperationsStatus',
@@ -84,24 +90,30 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
       ]);
 
       if (statusRes.status === 'fulfilled') {
-        setStatus(statusRes.value.data);
-        onStatusLoaded?.(statusRes.value.data);
+        const serverStatus = statusRes.value.data;
+        setStatus(serverStatus);
+        onStatusLoaded?.(serverStatus);
         setError(null);
         retryRef.current = null;
+
+        if (serverStatus?.operations_locked) {
+          stagingStore.clearAll();
+        } else {
+          // Restore from localStorage or seed from server (only on initial load)
+          const localEcon = stagingStore.getEconomicStaging();
+          const localDiplo = stagingStore.getDiplomaticStaging();
+          onEconomicLocalChange?.(localEcon ?? (serverStatus?.economic?.staged ?? []));
+          onDiplomaticLocalChange?.(localDiplo ?? (serverStatus?.diplomatic?.staged ?? []));
+        }
       } else {
-        // Silently ignore load errors (phase transitions, transient 500s)
         const msg = statusRes.reason?.response?.data?.error ?? statusRes.reason?.message ?? '';
         console.warn('[OperationsPhaseHeader] load error (suppressed):', msg);
-        // Retry once after a short delay
         if (!retryRef.current) {
           retryRef.current = setTimeout(() => { retryRef.current = null; load(true); }, 3000);
         }
       }
 
-      if (adminRes.status === 'fulfilled') {
-        setAdminStatus(adminRes.value.data);
-      }
-      // adminRes failure is silent — admin dot indicators just stay stale
+      if (adminRes.status === 'fulfilled') setAdminStatus(adminRes.value.data);
     } finally {
       setLoading(false);
     }
@@ -112,12 +124,18 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
     return () => { if (retryRef.current) clearTimeout(retryRef.current); };
   }, [load]);
 
-  // Listen for localStorage changes from DiplomaticOpsPanel / EconomicOpsPanel
+  // Persist local staging to localStorage whenever it changes
   useEffect(() => {
-    const onStorage = () => setLocalTick(t => t + 1);
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
-  }, []);
+    if (localEconomicStaging !== null && localEconomicStaging !== undefined) {
+      stagingStore.setEconomicStaging(localEconomicStaging);
+    }
+  }, [localEconomicStaging]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (localDiplomaticStaging !== null && localDiplomaticStaging !== undefined) {
+      stagingStore.setDiplomaticStaging(localDiplomaticStaging);
+    }
+  }, [localDiplomaticStaging]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleLock = async () => {
     if (!campaign?.id || lockInFlightRef.current) return;
@@ -129,8 +147,12 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
         action: 'lockOperationsPhase',
         campaign_id: campaign.id,
         acting_as_player_id: actingAsPlayerId ?? undefined,
+        _local_economic_staged: localEconomicStaging ?? [],
+        _local_diplomatic_staged: localDiplomaticStaging ?? [],
       });
       stagingStore.clearAll();
+      onEconomicLocalChange?.([]);
+      onDiplomaticLocalChange?.([]);
       await load();
       onLocked?.();
     } catch (e) {
@@ -175,17 +197,8 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
   const lockedCount = playerLocks.filter(p => p.operations_locked).length;
   const totalPlayers = playerLocks.length;
 
-  // Local-first overrides: use localStorage counts for immediate reactivity
-  const localDiplo = stagingStore.getDiplomaticStaging();
-  const localEcon  = stagingStore.getEconomicStaging();
-
-  const diploCount = localDiplo != null ? localDiplo.length : (diplomatic?.actions_staged ?? 0);
-  const econCount  = localEcon  != null ? localEcon.length  : (economic?.projects_staged ?? 0);
-
-  const militaryReady   = military?.is_locked || military?.ready;
-  const economicReady   = economic?.is_locked || econCount >= 0; // always ready (optional)
-  const diplomaticReady = diplomatic?.is_locked || diploCount >= 0; // always ready (optional)
-  const allReady = militaryReady && economicReady && diplomaticReady;
+  const econCount  = (localEconomicStaging ?? []).length;
+  const diploCount = (localDiplomaticStaging ?? []).length;
 
   return (
     <div className="border-b border-border bg-panel-header px-3 py-2 space-y-1">
@@ -218,8 +231,7 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
               Operations Phase Locked
             </div>
             <button
-              onClick={handleUnlock}
-              disabled={locking}
+              onClick={handleUnlock} disabled={locking}
               className="px-2 py-2 rounded border border-border text-xs text-muted-foreground hover:text-foreground hover:border-destructive/40 transition-colors disabled:opacity-40 shrink-0"
               title="Unlock to edit staged choices"
             >
@@ -229,8 +241,7 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
         ) : (
           <>
             <button
-              onClick={handleLock}
-              disabled={locking}
+              onClick={handleLock} disabled={locking}
               className="flex items-center justify-center gap-2 px-3 py-2 rounded text-xs font-display tracking-wider uppercase transition-all bg-primary text-primary-foreground hover:brightness-110 glow-primary disabled:opacity-50"
             >
               {locking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
@@ -264,7 +275,7 @@ export default function OperationsPhaseHeader({ campaign, myPlayer, actingAsPlay
         )}
       </div>
 
-      {!allReady && !operations_locked && (
+      {!operations_locked && (
         <p className="text-[10px] text-muted-foreground">
           Stage actions in each pillar tab, then lock in Operations Phase.
         </p>

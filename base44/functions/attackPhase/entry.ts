@@ -497,41 +497,84 @@ Deno.serve(async (req) => {
   }
 
   // ── ACTION: lockAttack ────────────────────────────────────────────────────────
+  // Atomic lock: client sends full attacks array in one payload.
+  // Server validates each attack, then persists and locks atomically.
   if (action === 'lockAttack') {
     if (campaign.current_phase !== 'attack') {
       return Response.json({ error: 'Not in attack phase' }, { status: 400 });
     }
 
-    const decisions = await base44.entities.PhaseDecision.filter({
+    const decisions = await base44.asServiceRole.entities.PhaseDecision.filter({
       campaign_id, player_id: actingPlayer.id, phase: 'attack', round,
     });
     let decision = decisions[0];
 
     if (decision?.is_locked) {
-      return Response.json({ error: 'Already locked' }, { status: 400 });
+      // Idempotent — already locked
+      return Response.json({ success: true, idempotent: true });
     }
 
+    // Client submits atomic attacks array (local-first model)
+    const clientAttacks = Array.isArray(body.attacks) ? body.attacks : null;
+    let attacksToCommit = decision?.data?.attacks ?? [];
+
+    if (clientAttacks !== null) {
+      // Validate each client attack before committing
+      const adj = buildAdjacency(campaign.map_id ?? 'map_v1_standard');
+      const allStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+      const stateMap = {};
+      for (const ts of allStates) stateMap[ts.territory_id] = ts;
+      const lockedIds = new Set(campaign.locked_territory_ids ?? []);
+      const committedPerOrigin = {};
+      const maxAttacks = await getEffectiveMaxAttacksForPlayer(actingPlayer.id);
+      const validatedClientAttacks = [];
+
+      for (const atk of clientAttacks) {
+        const { origin_territory_id, target_territory_id, committed_troops } = atk;
+        if (!origin_territory_id || !target_territory_id || !committed_troops) continue;
+        if (committed_troops < 1) continue;
+        if (lockedIds.has(origin_territory_id) || lockedIds.has(target_territory_id)) continue;
+        if (!areAdjacent(origin_territory_id, target_territory_id, adj)) continue;
+        const originState = stateMap[origin_territory_id];
+        if (!originState || originState.owner_player_id !== actingPlayer.id) continue;
+        if (stateMap[target_territory_id]?.owner_player_id === actingPlayer.id) continue;
+        const alreadyCommitted = committedPerOrigin[origin_territory_id] ?? 0;
+        if (committed_troops > (originState.troop_count ?? 0) - alreadyCommitted) continue;
+        if (validatedClientAttacks.length >= maxAttacks) break;
+        committedPerOrigin[origin_territory_id] = alreadyCommitted + committed_troops;
+        validatedClientAttacks.push({
+          id: atk.id?.startsWith('local_') ? `atk_${Date.now()}_${Math.random().toString(36).slice(2)}` : (atk.id ?? `atk_${Date.now()}_${Math.random().toString(36).slice(2)}`),
+          origin_territory_id,
+          target_territory_id,
+          committed_troops,
+        });
+      }
+      attacksToCommit = validatedClientAttacks;
+    }
+
+    const lockedAt = new Date().toISOString();
     if (decision) {
-      await base44.entities.PhaseDecision.update(decision.id, {
+      await base44.asServiceRole.entities.PhaseDecision.update(decision.id, {
         is_locked: true,
-        locked_at: new Date().toISOString(),
+        locked_at: lockedAt,
+        data: { attacks: attacksToCommit },
       });
     } else {
-      // Player skipping — create a locked empty decision
-      await base44.entities.PhaseDecision.create({
+      await base44.asServiceRole.entities.PhaseDecision.create({
         campaign_id, player_id: actingPlayer.id, phase: 'attack', round,
         is_locked: true,
-        locked_at: new Date().toISOString(),
-        data: { attacks: [] },
+        locked_at: lockedAt,
+        data: { attacks: attacksToCommit },
       });
     }
 
     // Public lock log (no attack data revealed)
     await log(base44, campaign_id, round, phase, 'player_locked', actingPlayer.id, {
       display_name: actingPlayer.display_name,
+      attack_count: attacksToCommit.length,
     }, true);
 
-    return Response.json({ success: true });
+    return Response.json({ success: true, committed_attacks: attacksToCommit.length });
   }
 
   // ── ACTION: processPhaseEnd ───────────────────────────────────────────────────
