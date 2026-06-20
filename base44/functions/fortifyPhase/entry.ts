@@ -734,33 +734,120 @@ Deno.serve(async (req) => {
   }
 
   // ── ACTION: lockFortify ───────────────────────────────────────────────────────
+  // Accepts optional _local_movements and _local_caravans from local-first staging.
+  // These are validated and written to the PhaseDecision before locking.
   if (action === 'lockFortify') {
     if (campaign.current_phase !== 'fortify') {
       return Response.json({ error: 'Not in fortify phase' }, { status: 400 });
     }
+
+    const localMovements = Array.isArray(body._local_movements) ? body._local_movements : null;
+    const localCaravans  = Array.isArray(body._local_caravans)  ? body._local_caravans  : null;
 
     const decisions = await base44.asServiceRole.entities.PhaseDecision.filter({
       campaign_id, player_id: actingPlayer.id, phase: 'fortify', round,
     });
     let decision = decisions[0];
 
+    // If local staging was provided, validate movements and build the decision data
+    let finalMovements = decision?.data?.movements ?? [];
+    let finalCaravans  = decision?.data?.caravans  ?? [];
+
+    if (localMovements !== null && localMovements.length > 0) {
+      // Validate each movement server-side (ownership, troop count)
+      const allStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+      const ownedIds = new Set(allStates.filter(s => s.owner_player_id === actingPlayer.id).map(s => s.territory_id));
+      const validated = [];
+      for (const mov of localMovements) {
+        if (!mov.origin_territory_id || !mov.destination_territory_id || !mov.committed_troops) continue;
+        if (!ownedIds.has(mov.origin_territory_id) || !ownedIds.has(mov.destination_territory_id)) continue;
+        if (mov.committed_troops < 1) continue;
+        validated.push({
+          id: mov.id ?? `mov_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+          origin_territory_id: mov.origin_territory_id,
+          destination_territory_id: mov.destination_territory_id,
+          committed_troops: Math.floor(mov.committed_troops),
+        });
+      }
+      finalMovements = validated;
+    }
+
+    if (localCaravans !== null && localCaravans.length > 0) {
+      // Validate caravan ownership and resources
+      const allStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+      const ownedIds = new Set(allStates.filter(s => s.owner_player_id === actingPlayer.id).map(s => s.territory_id));
+      // Route safety: compute inline BFS
+      const adj = buildAdjacency(campaign.map_id ?? 'shattered_crown_v1');
+      function findAnyPathLocal(startId, endId) {
+        if (startId === endId) return [startId];
+        const visited = new Set([startId]);
+        const queue = [[startId, [startId]]];
+        while (queue.length > 0) {
+          const [current, path] = queue.shift();
+          const neighbors = adj[current] || new Set();
+          for (const neighbor of neighbors) {
+            if (!visited.has(neighbor)) {
+              const newPath = [...path, neighbor];
+              if (neighbor === endId) return newPath;
+              visited.add(neighbor);
+              queue.push([neighbor, newPath]);
+            }
+          }
+        }
+        return null;
+      }
+      const validated = [];
+      for (const c of localCaravans) {
+        if (!c.origin || !c.destination || !c.contents) continue;
+        if (!ownedIds.has(c.origin) || !ownedIds.has(c.destination)) continue;
+        const hasContents = Object.values(c.contents).some(v => v > 0);
+        if (!hasContents) continue;
+        // Re-compute route safety server-side
+        const path = findAnyPathLocal(c.origin, c.destination);
+        const traversed = path ? path.slice(1, -1) : [];
+        const enemyTs = traversed.filter(tid => {
+          const ts = allStates.find(s => s.territory_id === tid);
+          return ts?.owner_player_id && ts.owner_player_id !== actingPlayer.id;
+        });
+        validated.push({
+          id: c.id ?? `caravan_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+          origin: c.origin,
+          destination: c.destination,
+          contents: c.contents,
+          path: path ?? [],
+          safe: enemyTs.length === 0,
+          enemy_territories: enemyTs,
+          staged_at: c.staged_at ?? new Date().toISOString(),
+        });
+      }
+      finalCaravans = validated;
+    }
+
+    const decisionData = {
+      movements: finalMovements,
+      construction: decision?.data?.construction ?? null,
+      caravans: finalCaravans,
+    };
+
     if (!decision) {
-      // Create empty locked decision
       await base44.asServiceRole.entities.PhaseDecision.create({
         campaign_id, player_id: actingPlayer.id, phase: 'fortify', round,
         is_locked: true,
         locked_at: new Date().toISOString(),
-        data: { movements: [], construction: null },
+        data: decisionData,
       });
     } else if (!decision.is_locked) {
       await base44.asServiceRole.entities.PhaseDecision.update(decision.id, {
         is_locked: true,
         locked_at: new Date().toISOString(),
+        data: decisionData,
       });
     }
 
     await log(base44, campaign_id, round, phase, 'player_locked', actingPlayer.id, {
       display_name: actingPlayer.display_name,
+      movements_count: finalMovements.length,
+      caravans_count: finalCaravans.length,
     }, true);
 
     return Response.json({ success: true });

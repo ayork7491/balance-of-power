@@ -18,7 +18,7 @@
  *   planningStatus     — from PlanningPhaseLockBar (optional)
  *   autoDealt          — true if autoDealObjectives has already been called
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Check, AlertCircle, Loader2, Clock } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import ObjectiveCardDisplay from './ObjectiveCardDisplay';
@@ -46,6 +46,7 @@ export default function ObjectiveOpportunity({
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const dealAttemptedRef = useRef(false);
 
   // Initialize selectedCard/replaceCard from localStorage or server state
   const localDiplo = stagingStore.getDiplomaticStaging();
@@ -66,11 +67,14 @@ export default function ObjectiveOpportunity({
     }
   }, [diplomaticStaged?.kept_card_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-deal on mount if not dealt yet
+  // Auto-deal on mount if not dealt yet — guarded by ref so it only fires ONCE per component instance
+  // even if dependencies change (e.g. player switch). This prevents remount spam.
   useEffect(() => {
     if (!campaignId || !actingPlayer?.id) return;
     if (autoDealt || hasPending) return; // already dealt
     if (diplomaticLocked) return; // already committed
+    if (dealAttemptedRef.current) return; // already attempted this mount
+    dealAttemptedRef.current = true;
 
     const deal = async () => {
       setLoading(true);
@@ -82,14 +86,13 @@ export default function ObjectiveOpportunity({
         });
         onResolved?.();
       } catch (err) {
-        // Non-fatal — no cards may be defined yet
         console.warn('[autoDealObjectives]', err?.response?.data?.error ?? err?.message);
       } finally {
         setLoading(false);
       }
     };
     deal();
-  }, [campaignId, actingPlayer?.id, autoDealt, hasPending, diplomaticLocked]);
+  }, [campaignId, actingPlayer?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-stage to localStorage whenever selectedCard changes — mirrors economic pillar behaviour
   const handleSelectCard = (cid) => {

@@ -46,7 +46,7 @@ function PillarProgress({ icon: IconComp, label, staged, total, isLocked, color,
   );
 }
 
-export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlayerId, players, onLocked, onStatusLoaded, refreshTrigger }) {
+export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlayerId, players, onLocked, onStatusLoaded }) {
   const [status, setStatus] = useState(null);
   const [adminStatus, setAdminStatus] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -155,11 +155,6 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
       lockInFlightRef.current = false;
     }
   };
-
-  // Re-trigger load when refreshTrigger changes (after staging changes)
-  useEffect(() => {
-    if (refreshTrigger > 0) load();
-  }, [refreshTrigger]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Listen for localStorage changes (other tabs or within-page writes via storage event)
   // Also re-render when localTick increments (triggered by in-page writes)

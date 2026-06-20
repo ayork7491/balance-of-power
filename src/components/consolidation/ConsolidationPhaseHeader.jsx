@@ -84,10 +84,15 @@ export default function ConsolidationPhaseHeader({ campaign, myPlayer, actingAsP
     setLocking(true);
     setError(null);
     try {
+      // Atomic: pass all locally-staged data in a single lock payload
+      const localMovements = stagingStore.getMilitaryStaging();
+      const localCaravans  = stagingStore.getEconomicStaging();
       await base44.functions.invoke('fortifyPhase', {
         action: 'lockFortify',
         campaign_id: campaign.id,
         acting_as_player_id: actingAsPlayerId ?? undefined,
+        _local_movements: localMovements ?? [],
+        _local_caravans: localCaravans ?? [],
       });
       stagingStore.clearAll();
       await load();

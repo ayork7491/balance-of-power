@@ -92,8 +92,7 @@ export default function CommandCenterPanel({
   const [pillarTab, setPillarTab] = useState('military');
   const [planningStatus, setPlanningStatus] = useState(null);
   const [operationsStatus, setOperationsStatus] = useState(null);
-  const [planningRefreshTick, setPlanningRefreshTick] = useState(0);
-  const triggerPlanningRefresh = () => setPlanningRefreshTick(t => t + 1);
+
 
   // Local-first staging state owned at this level, passed down to panels
   const [localEconomicStaging, setLocalEconomicStaging] = useState([]);
@@ -199,6 +198,7 @@ export default function CommandCenterPanel({
               stateById={stateById} mapDef={mapDef} adjacencyMap={adjacencyMap}
               selectedTerritoryId={selectedTerritoryId}
               onClearSelection={onClearSelection}
+              isLocked={false}
             />
           )}
           {pillarTab === 'economic' && (
@@ -241,7 +241,6 @@ export default function CommandCenterPanel({
           players={players}
           onLocked={onPhaseChanged}
           onStatusLoaded={setPlanningStatus}
-          refreshTrigger={planningRefreshTick}
         />
       )}
 
@@ -277,14 +276,12 @@ export default function CommandCenterPanel({
           attackPreselectedTargetId={attackPreselectedTargetId}
           onClearSelection={onClearSelection} onPhaseChanged={onPhaseChanged}
           actingAsPlayerId={actingAsPlayerId} isAdmin={isAdmin}
-          onStagingChanged={triggerPlanningRefresh}
         />}
         {pillarTab === 'economic' && <EconomicContent
           campaign={campaign} players={players} myPlayer={myPlayer}
           stateById={stateById} mapDef={mapDef} onPhaseChanged={onPhaseChanged}
           actingAsPlayerId={actingAsPlayerId} isAdmin={isAdmin}
           planningStatus={planningStatus} operationsStatus={operationsStatus}
-          onStagingChanged={triggerPlanningRefresh}
           localEconomicStaging={localEconomicStaging}
           onEconomicLocalChange={setLocalEconomicStaging}
         />}
@@ -309,12 +306,12 @@ export default function CommandCenterPanel({
 // ── Pillar content components ─────────────────────────────────────────────────
 
 function MilitaryContent({ campaign, players, myPlayer, actionPlayer, stateById, mapDef, adjacencyMap,
-  selectedTerritoryId, attackPreselectedTargetId, onClearSelection, onPhaseChanged, actingAsPlayerId, isAdmin, onStagingChanged }) {
+  selectedTerritoryId, attackPreselectedTargetId, onClearSelection, onPhaseChanged, actingAsPlayerId, isAdmin }) {
   const phase = campaign?.current_phase;
 
   if (phase === 'deploy') {
     return <DeployPanel campaign={campaign} players={players} myPlayer={myPlayer}
-      stateById={stateById} mapDef={mapDef} onPhaseChanged={onPhaseChanged} onStagingChanged={onStagingChanged} />;
+      stateById={stateById} mapDef={mapDef} onPhaseChanged={onPhaseChanged} />;
   }
   if (phase === 'attack') {
     // Operations Phase: MilitaryOpsPanel — attacks only, no lock status, no admin controls
@@ -407,7 +404,7 @@ function AdminContent({ campaign, players, myPlayer, onPhaseChanged, isDeploy, i
   );
 }
 
-function EconomicContent({ campaign, players, myPlayer, stateById, mapDef, onPhaseChanged, actingAsPlayerId, isAdmin, planningStatus, operationsStatus, onStagingChanged, localEconomicStaging, onEconomicLocalChange }) {
+function EconomicContent({ campaign, players, myPlayer, stateById, mapDef, onPhaseChanged, actingAsPlayerId, isAdmin, planningStatus, operationsStatus, localEconomicStaging, onEconomicLocalChange }) {
   const phase = campaign?.current_phase;
   const isDeploy = phase === 'deploy';
   const isAttack = phase === 'attack';
@@ -423,7 +420,7 @@ function EconomicContent({ campaign, players, myPlayer, stateById, mapDef, onPha
           mapDef={mapDef}
           actingAsPlayerId={actingAsPlayerId}
           planningStatus={planningStatus}
-          onStaged={onStagingChanged}
+          onStaged={undefined}
         />
       )}
       {/* Operations Phase: construction projects — local-first */}

@@ -1,8 +1,8 @@
 /**
  * useConsolidationStagingStore — local-first staging state for the Consolidation Phase.
  *
- * Mirrors the server-side fortify PhaseDecision in localStorage so
- * ConsolidationPhaseHeader can reflect local changes instantly without server round-trips.
+ * All staging is LOCAL ONLY — zero server writes until lock-in.
+ * ConsolidationPhaseHeader submits an atomic payload on lock that includes all staged data.
  *
  * Storage keys (per campaign + player + round):
  *   consol_military_staging_{campaignId}_{playerId}_{round}  — fortification movements array
@@ -10,9 +10,9 @@
  *
  * Usage:
  *   const store = useConsolidationStagingStore({ campaignId, playerId, round });
- *   store.getMilitaryStaging()   → [{ origin_territory_id, destination_territory_id, committed_troops }]
+ *   store.getMilitaryStaging()   → [{ id, origin_territory_id, destination_territory_id, committed_troops }]
  *   store.setMilitaryStaging(arr)
- *   store.getEconomicStaging()   → [{ origin, destination, contents }]
+ *   store.getEconomicStaging()   → [{ id, origin, destination, contents, safe, path }]
  *   store.setEconomicStaging(arr)
  *   store.clearAll()             — called after successful lock-in
  */
@@ -25,23 +25,23 @@ export function useConsolidationStagingStore({ campaignId, playerId, round }) {
   const getMilitaryStaging = useCallback(() => {
     try {
       const raw = localStorage.getItem(militaryKey);
-      return raw ? JSON.parse(raw) : null;
-    } catch { return null; }
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
   }, [militaryKey]);
 
   const setMilitaryStaging = useCallback((arr) => {
-    localStorage.setItem(militaryKey, JSON.stringify(arr));
+    localStorage.setItem(militaryKey, JSON.stringify(arr ?? []));
   }, [militaryKey]);
 
   const getEconomicStaging = useCallback(() => {
     try {
       const raw = localStorage.getItem(econKey);
-      return raw ? JSON.parse(raw) : null;
-    } catch { return null; }
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
   }, [econKey]);
 
   const setEconomicStaging = useCallback((arr) => {
-    localStorage.setItem(econKey, JSON.stringify(arr));
+    localStorage.setItem(econKey, JSON.stringify(arr ?? []));
   }, [econKey]);
 
   const clearAll = useCallback(() => {

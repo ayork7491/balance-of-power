@@ -32,7 +32,6 @@ export default function DeployPanel({
   stateById,
   mapDef,
   onPhaseChanged,
-  onStagingChanged,
 }) {
   const round         = campaign?.current_round ?? 1;
   const isAdmin       = myPlayer?.is_admin;
