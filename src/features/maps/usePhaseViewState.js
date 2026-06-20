@@ -43,6 +43,8 @@ export function usePhaseViewState({
     if (!campaignId || !enabled) return;
     setLoading(true);
     setError(null);
+    const loadStart = performance.now();
+    console.log('[usePhaseViewState] fetch triggered', { campaignId, actingAsPlayerId, phase, round });
     try {
       const res = await base44.functions.invoke('getPhaseViewState', {
         campaign_id: campaignId,
@@ -63,6 +65,9 @@ export function usePhaseViewState({
       setDevRecordsByTerritoryId(data.dev_records ?? {});
       setTerritoryBuildingsById(data.buildings_by_territory ?? {});
       setAllSupplyRoutes(data.supply_routes ?? []);
+      const elapsed = Math.round(performance.now() - loadStart);
+      const territoryCount = (data.territories ?? []).length;
+      console.log(`[usePhaseViewState] loaded in ${elapsed}ms — ${territoryCount} territories`);
     } catch (err) {
       console.error('[usePhaseViewState] load failed:', err?.message);
       setError('Failed to load phase view state.');

@@ -308,6 +308,29 @@ Deno.serve(async (req) => {
     // Overall planning locked
     const planningLocked = staging.locked_at != null;
 
+    // Optionally include admin lock status in the same response (saves a round-trip)
+    let adminLockStatus = null;
+    if (body.include_admin_status) {
+      const activePl = players.filter(p => !p.is_eliminated);
+      const [stagingRecs, deployDecs] = await Promise.all([
+        base44.asServiceRole.entities.PhaseDecision.filter({ campaign_id, phase: 'planning_stage', round }),
+        base44.asServiceRole.entities.PhaseDecision.filter({ campaign_id, phase: 'deploy', round }),
+      ]);
+      adminLockStatus = {
+        players: activePl.map(p => {
+          const s = stagingRecs.find(r => r.player_id === p.id);
+          const d = deployDecs.find(r => r.player_id === p.id);
+          return {
+            player_id: p.id,
+            display_name: p.display_name,
+            planning_locked: !!(s?.data?.locked_at),
+            locked_at: s?.data?.locked_at ?? null,
+            military_locked: d?.is_locked ?? false,
+          };
+        }),
+      };
+    }
+
     return Response.json({
       success: true,
       player_id: actingPlayer.id,
@@ -315,6 +338,7 @@ Deno.serve(async (req) => {
       phase_started: !!deployIncome,
       planning_locked: planningLocked,
       locked_at: staging.locked_at ?? null,
+      admin_lock_status: adminLockStatus,
 
       military: {
         troops_total: totalTroops,
@@ -606,11 +630,10 @@ Deno.serve(async (req) => {
     }
 
     // Accept local-first payloads from the UI staging store.
-    // These are used when the player changed state locally but didn't make a separate
-    // stageActivations / stageObjectiveKeep server call before locking.
-    const localEconomicStaged  = body._local_economic_staged  ?? null;
-    const localDiplomaticStaged = body._local_diplomatic_staged ?? null;
-    const localMilitaryPlacements = body._local_military_placements ?? null;
+    const localEconomicStaged      = body._local_economic_staged       ?? null;
+    const localDiplomaticStaged    = body._local_diplomatic_staged     ?? null;
+    const localMilitaryPlacements  = body._local_military_placements   ?? null;
+    const localCapitalTerritoryId  = body._local_capital_territory_id  ?? null;
 
     const staging = await getStagingDecision(base44, campaign_id, actingPlayer.id, round);
     const stagingData = staging?.data ?? emptyStaging();
@@ -911,6 +934,41 @@ Deno.serve(async (req) => {
       }
     } else {
       results.economic = { locked: true, already_locked: true };
+    }
+
+    // ── 2b. Capital: apply staged capital selection ─────────────────────────
+    if (localCapitalTerritoryId) {
+      const devRecordsForCapital = await base44.asServiceRole.entities.TerritoryDevelopment.filter({
+        campaign_id, owner_player_id: actingPlayer.id,
+      });
+      // Unset any existing capital
+      for (const rec of devRecordsForCapital) {
+        if (rec.is_capital && rec.territory_id !== localCapitalTerritoryId) {
+          await base44.asServiceRole.entities.TerritoryDevelopment.update(rec.id, {
+            is_capital: false,
+          });
+        }
+      }
+      // Set new capital (create record if missing)
+      const existingCapDev = devRecordsForCapital.find(d => d.territory_id === localCapitalTerritoryId);
+      if (existingCapDev) {
+        await base44.asServiceRole.entities.TerritoryDevelopment.update(existingCapDev.id, {
+          is_capital: true, capital_set_round: round,
+        });
+      } else {
+        await base44.asServiceRole.entities.TerritoryDevelopment.create({
+          campaign_id, territory_id: localCapitalTerritoryId,
+          owner_player_id: actingPlayer.id,
+          development_level: 1, development_progress: 0,
+          food_to_next_level: 3, total_food_invested: 0,
+          is_capital: true, capital_set_round: round,
+          unlocked_resources: ['primary'], unlocked_slot_count: 1,
+          last_updated_round: round,
+        });
+      }
+      results.capital = { set: true, territory_id: localCapitalTerritoryId };
+    } else {
+      results.capital = { set: false, skipped: true };
     }
 
     // ── 3. Diplomatic: commit objective selection ───────────────────────────

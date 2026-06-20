@@ -69,34 +69,27 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
     if (!campaign?.id || !myPlayer?.id) return;
     // Guard: only load when campaign is actually in deploy phase
     if (campaign.current_phase !== 'deploy') return;
-    // Only show full loading spinner on first load; subsequent refreshes are silent
     setError(null);
     if (!status) setLoading(true);
     try {
-      const [statusRes, adminRes] = await Promise.allSettled([
-        base44.functions.invoke('planningPhase', {
-          action: 'getPlanningStatus',
-          campaign_id: campaign.id,
-          acting_as_player_id: actingAsPlayerId ?? undefined,
-        }),
-        base44.functions.invoke('planningPhase', {
-          action: 'getAdminLockStatus',
-          campaign_id: campaign.id,
-        }),
-      ]);
-      if (statusRes.status === 'fulfilled') {
-        setStatus(statusRes.value.data);
-        onStatusLoaded?.(statusRes.value.data);
+      // Single merged call — getPlanningStatus now returns admin_lock_status inline
+      const res = await base44.functions.invoke('planningPhase', {
+        action: 'getPlanningStatus',
+        campaign_id: campaign.id,
+        acting_as_player_id: actingAsPlayerId ?? undefined,
+        include_admin_status: true,
+      });
+      if (res.data) {
+        setStatus(res.data);
+        onStatusLoaded?.(res.data);
+        if (res.data.admin_lock_status) setAdminStatus(res.data.admin_lock_status);
         setError(null);
-      } else {
-        // Ignore phase-mismatch errors (stale campaign state during transitions)
-        const errMsg = statusRes.reason?.response?.data?.error ?? '';
-        if (!errMsg.includes('deploy') && !errMsg.includes('phase') && !status) {
-          setError(errMsg || 'Failed to load planning status.');
-        }
       }
-      // Keep stale admin status on failure — dot indicators stay as-is
-      if (adminRes.status === 'fulfilled') setAdminStatus(adminRes.value.data);
+    } catch (err) {
+      const errMsg = err?.response?.data?.error ?? '';
+      if (!errMsg.includes('deploy') && !errMsg.includes('phase') && !status) {
+        setError(errMsg || 'Failed to load planning status.');
+      }
     } finally {
       setLoading(false);
     }
@@ -131,19 +124,19 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
     setLocking(true);
     setError(null);
     try {
-      // Build payload from local staging store so the server gets the latest state
       const localPlacements = stagingStore.getMilitaryPlacements();
       const localEcon = stagingStore.getEconomicSelections();
       const localDiplo = stagingStore.getDiplomaticStaging();
+      const localCapital = stagingStore.getCapitalStaging();
 
       await base44.functions.invoke('planningPhase', {
         action: 'lockPlanningPhase',
         campaign_id: campaign.id,
         acting_as_player_id: actingAsPlayerId ?? undefined,
-        // Pass local staging data so server has latest values even if stageActivations wasn't called
         _local_economic_staged: localEcon ?? undefined,
         _local_diplomatic_staged: localDiplo ?? undefined,
         _local_military_placements: localPlacements ?? undefined,
+        _local_capital_territory_id: localCapital ?? undefined,
       });
       stagingStore.clearAll();
       await load();
@@ -168,7 +161,7 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
   if (loading && !status) {
     return (
       <div className="border-b border-border bg-panel-header px-3 py-2 flex items-center gap-2 text-xs text-muted-foreground">
-        <Loader2 className="w-3 h-3 animate-spin" /> Loading planning status…
+        <Loader2 className="w-3 h-3 animate-spin" /> Loading Planning Phase status…
       </div>
     );
   }

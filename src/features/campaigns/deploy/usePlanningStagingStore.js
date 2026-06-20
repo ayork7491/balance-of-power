@@ -17,14 +17,17 @@
  *   store.setEconomicSelections(ids)
  *   store.getDiplomaticStaging()    → { kept_card_id, replace_card_id } | null
  *   store.setDiplomaticStaging(obj)
+ *   store.getCapitalStaging()       → string | null   (territory_id)
+ *   store.setCapitalStaging(tid)
  *   store.clearAll()                — called after successful lock-in
  */
 import { useCallback } from 'react';
 
 export function usePlanningStagingStore({ campaignId, playerId, round }) {
-  const militaryKey  = `deploy_staging_${campaignId}_${playerId}`;
-  const economicKey  = `planning_econ_staging_${campaignId}_${playerId}_${round}`;
+  const militaryKey   = `deploy_staging_${campaignId}_${playerId}`;
+  const economicKey   = `planning_econ_staging_${campaignId}_${playerId}_${round}`;
   const diplomaticKey = `planning_diplo_staging_${campaignId}_${playerId}_${round}`;
+  const capitalKey    = `planning_capital_staging_${campaignId}_${playerId}_${round}`;
 
   const getMilitaryPlacements = useCallback(() => {
     try {
@@ -55,21 +58,37 @@ export function usePlanningStagingStore({ campaignId, playerId, round }) {
     localStorage.setItem(diplomaticKey, JSON.stringify(obj));
   }, [diplomaticKey]);
 
+  const getCapitalStaging = useCallback(() => {
+    try {
+      const raw = localStorage.getItem(capitalKey);
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  }, [capitalKey]);
+
+  const setCapitalStaging = useCallback((territoryId) => {
+    localStorage.setItem(capitalKey, JSON.stringify(territoryId));
+    window.dispatchEvent(new Event('storage'));
+  }, [capitalKey]);
+
   const clearAll = useCallback(() => {
     localStorage.removeItem(militaryKey);
     localStorage.removeItem(economicKey);
     localStorage.removeItem(diplomaticKey);
-  }, [militaryKey, economicKey, diplomaticKey]);
+    localStorage.removeItem(capitalKey);
+  }, [militaryKey, economicKey, diplomaticKey, capitalKey]);
 
   return {
     militaryKey,
     economicKey,
     diplomaticKey,
+    capitalKey,
     getMilitaryPlacements,
     getEconomicSelections,
     setEconomicSelections,
     getDiplomaticStaging,
     setDiplomaticStaging,
+    getCapitalStaging,
+    setCapitalStaging,
     clearAll,
   };
 }

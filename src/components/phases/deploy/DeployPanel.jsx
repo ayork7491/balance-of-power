@@ -21,6 +21,7 @@ import { Loader2, Lock, ChevronDown, ChevronUp, TestTube } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { useDeployPhase, useDeployPhaseLockStatus, useDeployIncome } from '@/features/campaigns/deploy';
 import { useActingAsPayload } from '@/features/adminTestMode/useActingAsPayload';
+import { usePlanningStagingStore } from '@/features/campaigns/deploy/usePlanningStagingStore';
 import DeployIncomeCard from './DeployIncomeCard';
 import DeployLockStatusRow from './DeployLockStatusRow';
 import DeployPlacementList from './DeployPlacementList';
@@ -40,6 +41,8 @@ export default function DeployPanel({
 
   const { actingPlayer, actingAsId } = useActingAsPayload(myPlayer);
   const actingPlayerId = actingAsId ?? myPlayer?.id;
+
+  const stagingStore = usePlanningStagingStore({ campaignId: campaign?.id, playerId: actingPlayerId, round });
 
   // CRITICAL: derive territories from actingPlayer (not myPlayer) so that
   // admins acting as test players get the correct territory list.
@@ -96,7 +99,7 @@ export default function DeployPanel({
   if (loading) {
     return (
       <div className="p-4 flex items-center justify-center py-12 text-muted-foreground text-xs gap-2">
-        <Loader2 className="w-4 h-4 animate-spin" /> Loading deploy phase…
+        <Loader2 className="w-4 h-4 animate-spin" /> Loading Planning Phase…
       </div>
     );
   }
@@ -109,7 +112,7 @@ export default function DeployPanel({
           Round {round} — Planning Phase
         </p>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Stage troop placements. Decisions are hidden until reveal.
+          Stage troop placements. Decisions are hidden until all players lock in.
         </p>
       </div>
 
@@ -117,7 +120,7 @@ export default function DeployPanel({
       {!deployStarted && (
         <div className="flex items-center gap-2 px-3 py-2 rounded border border-border bg-muted/20 text-xs text-muted-foreground">
           <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-          <span>Waiting for admin to start the deploy phase…</span>
+          <span>Waiting for Planning Phase to start…</span>
         </div>
       )}
 
@@ -189,30 +192,26 @@ export default function DeployPanel({
         <div className="px-3 py-2 rounded border border-status-locked/40 bg-status-locked/10 text-xs">
           <div className="flex items-center gap-2 text-status-locked">
             <Lock className="w-3.5 h-3.5" />
-            <span className="font-display tracking-wide">Deployment Locked</span>
+            <span className="font-display tracking-wide">Planning Phase Locked</span>
           </div>
-          <p className="text-muted-foreground mt-1">Hidden until all players reveal.</p>
+          <p className="text-muted-foreground mt-1">Hidden until all players lock in.</p>
         </div>
       )}
 
       {error && <p className="text-xs text-destructive">{error}</p>}
 
-      {/* Capital change — available during Planning Phase (once per round) */}
+      {/* Capital change — staged locally, committed on Planning Phase lock */}
       {deployStarted && myTerritories.length > 0 && (
         <div className="space-y-1.5 pt-2 border-t border-border">
           <p className="text-xs font-display tracking-wider uppercase text-amber-400">Capital</p>
           <p className="text-[10px] text-muted-foreground">
-            Change once per round. Food generated each round auto-invests into your capital.
+            Food auto-invests into your capital each round.
           </p>
           <CapitalSelector
-            campaign={campaign}
-            myPlayer={myPlayer}
-            actingAsPlayerId={actingAsId}
             territories={capitalTerritories}
             currentCapitalId={capitalData?.capital_territory_id ?? null}
-            lastSetRound={capitalData?.capital_set_round ?? null}
-            onCapitalSet={(tid) => setCapitalData(prev => ({ ...(prev ?? {}), capital_territory_id: tid, capital_set_round: round ?? 1 }))}
-            allowChangeLabel="Change Capital"
+            stagedCapitalId={stagingStore.getCapitalStaging()}
+            onCapitalSelected={(tid) => stagingStore.setCapitalStaging(tid)}
           />
         </div>
       )}
@@ -227,7 +226,7 @@ export default function DeployPanel({
       )}
       {deployStarted && !isLocked && (
         <p className="text-[10px] text-muted-foreground italic text-center">
-          Lock deployment using the Planning Phase button above.
+          Use the Planning Phase lock button above to commit all decisions.
         </p>
       )}
 
