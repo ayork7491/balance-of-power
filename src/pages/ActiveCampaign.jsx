@@ -28,11 +28,10 @@ import { useAttackReveals, useAttackPhase } from '@/features/campaigns/attack';
 import { useBattleCards } from '@/features/campaigns/battle';
 import { useAttackArrows } from '@/features/campaigns/attack/useAttackArrows.js';
 import { useCampaign } from '@/features/campaigns';
-import { useTerritoryState, getMap, buildAdjacencyMap, buildTypedAdjacencyMap } from '@/features/maps';
+import { getMap, buildAdjacencyMap, buildTypedAdjacencyMap } from '@/features/maps';
+import { usePhaseViewState } from '@/features/maps/usePhaseViewState';
 import { CampaignTestModeProvider, useCampaignTestContext } from '@/features/adminTestMode/CampaignTestContext';
 import { usePlayerLogistics } from '@/features/campaigns/logistics/usePlayerLogistics';
-import { useInfluenceState } from '@/features/campaigns/influence/useInfluenceState';
-import { useIntelReports } from '@/features/campaigns/intelligence/useIntelReports';
 import { base44 } from '@/api/base44Client';
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
@@ -75,39 +74,26 @@ function ActiveCampaignContent() {
 
   const mapId = campaign?.map_id ?? 'map_v1_standard';
 
-  // TerritoryBuilding records — fetched once per campaign, re-fetched on phase change.
-  const [territoryBuildingsById, setTerritoryBuildingsById] = useState({});
-  // TerritoryDevelopment records — indexed by territory_id for O(1) lookup
-  const [devRecordsByTerritoryId, setDevRecordsByTerritoryId] = useState({});
-  // Supply routes — all routes for this campaign
-  const [allSupplyRoutes, setAllSupplyRoutes] = useState([]);
-
-  const loadTerritoryBuildings = useCallback(async () => {
-    if (!id) return;
-    try {
-      const [buildings, devRecords, routes] = await Promise.all([
-        base44.entities.TerritoryBuilding.filter({ campaign_id: id }),
-        base44.entities.TerritoryDevelopment.filter({ campaign_id: id }),
-        base44.entities.SupplyRoute.filter({ campaign_id: id }),
-      ]);
-      const byId = {};
-      for (const b of buildings) {
-        if (!byId[b.territory_id]) byId[b.territory_id] = [];
-        byId[b.territory_id].push(b);
-      }
-      setTerritoryBuildingsById(byId);
-      const devById = {};
-      for (const d of devRecords) devById[d.territory_id] = d;
-      setDevRecordsByTerritoryId(devById);
-      setAllSupplyRoutes(routes);
-    } catch {
-      setTerritoryBuildingsById({});
-      setDevRecordsByTerritoryId({});
-      setAllSupplyRoutes([]);
-    }
-  }, [id]);
-
-  useEffect(() => { loadTerritoryBuildings(); }, [loadTerritoryBuildings]);
+  // Unified phase view — single server-filtered call. No live subscription.
+  // Reloads when phase, round, or acting-as player changes.
+  const {
+    stateById,
+    influenceByTerritory,
+    influenceByRegion,
+    spreadThreshold,
+    intelReportByTerritory,
+    devRecordsByTerritoryId,
+    territoryBuildingsById,
+    allSupplyRoutes,
+    loading: loadingState,
+    reload: reloadState,
+  } = usePhaseViewState({
+    campaignId: id,
+    actingAsPlayerId: actingAsCampaignPlayerId ?? null,
+    phase: campaign?.current_phase ?? null,
+    round: campaign?.current_round ?? 0,
+    enabled: !!id,
+  });
 
   // Static map definition
   const mapDef = useMemo(() => getMap(mapId), [mapId]);
@@ -152,14 +138,6 @@ function ActiveCampaignContent() {
   // Effective acting player — resolves from context (self for normal players)
   const actionPlayer = effectiveActingPlayer ?? myPlayer;
 
-  // Territory state (real-time) — uses actionPlayer.id so the privacy gate respects
-  // the acting-as perspective in test mode, falling back to the real player.
-  const { stateById, loading: loadingState, reload: reloadState } = useTerritoryState(
-    id,
-    actionPlayer?.id ?? myPlayer?.id ?? null,
-    campaign?.current_phase ?? null,
-  );
-
   // Selected territory details (using centralized selectedTerritoryId)
   const selectedTerritory   = useMemo(
     () => mapDef?.territories.find(t => t.territory_id === selectedTerritoryId) ?? null,
@@ -199,33 +177,12 @@ function ActiveCampaignContent() {
     playerId: myPlayer?.id,
   });
 
-  // Intel reports — indexed by territory for display in TerritoryDetailPanel
-  const { latestByTerritory: intelReportByTerritory, reload: reloadIntelReports } = useIntelReports({
-    campaignId: id,
-    actingAsPlayerId: actionPlayer?.id ?? null,
-    enabled: !!id,
-  });
-
-  // Influence state — scoped to the acting-as player for correct privacy gating
-  const {
-    influenceByTerritory,
-    influenceByRegion,
-    playerTotals: influencePlayerTotals,
-    spreadThreshold,
-  } = useInfluenceState({
-    campaignId: id,
-    actingAsPlayerId: actionPlayer?.id ?? null,
-    enabled: !!id,
-  });
-
-  // Re-fetch campaign + territory state when a setup action completes
+  // Re-fetch campaign + full phase view when a phase action completes
   const handlePhaseChanged = useCallback(() => {
     reloadCampaign();
     reloadState();
-    loadTerritoryBuildings();
     reloadLogistics();
-    reloadIntelReports();
-  }, [reloadCampaign, reloadState, loadTerritoryBuildings, reloadLogistics, reloadIntelReports]);
+  }, [reloadCampaign, reloadState, reloadLogistics]);
 
   // Attack reveals — loaded after attack phase ends (post-reveal)
   const { reveals: attackReveals } = useAttackReveals({
