@@ -299,7 +299,7 @@ Deno.serve(async (req) => {
       territory_storage_totals: aggregated,
       territories_count: ownedCount,
       activation_limit: activationLimit,
-      hub_count: hubCount,
+      hub_count: territories.filter(t => t.has_resource_hub).length,
     });
   }
 
