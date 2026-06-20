@@ -54,7 +54,6 @@ export default function ResourceStagingPanel({ campaign, myPlayer, mapDef, actin
 
   const [state, setState] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
   const [selected, setSelected] = useState(() => {
     // Initialize from localStorage on mount
     const local = stagingStore.getEconomicSelections();
@@ -67,7 +66,6 @@ export default function ResourceStagingPanel({ campaign, myPlayer, mapDef, actin
   const load = useCallback(async () => {
     if (!campaign?.id || !actingPlayerId) return;
     setLoading(true);
-    setError(null);
     try {
       const res = await base44.functions.invoke('resourcePhase', {
         action: 'getResourceState',
@@ -76,7 +74,7 @@ export default function ResourceStagingPanel({ campaign, myPlayer, mapDef, actin
       });
       setState(res.data);
     } catch (e) {
-      setError(e?.response?.data?.error ?? 'Failed to load resource state');
+      console.warn('[ResourceStagingPanel] load error:', e?.response?.data?.error ?? e?.message);
     } finally {
       setLoading(false);
     }
@@ -159,7 +157,7 @@ export default function ResourceStagingPanel({ campaign, myPlayer, mapDef, actin
         </div>
       )}
 
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {/* load errors suppressed — transient during phase transitions */}
 
       {state && (
         <>
