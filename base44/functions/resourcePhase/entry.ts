@@ -281,11 +281,11 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Compute activation limit so frontend doesn't need to duplicate the formula
-    const hubCount = territories.filter(t => t.has_resource_hub).length;
+    // Compute activation limit: base = max(1, floor(owned/3)), capped at owned.
+    // Resource Hubs do NOT add extra activations (they amplify hub territory output instead).
     const ownedCount = territories.length;
     const activationLimit = ownedCount === 0 ? 0 :
-      Math.min(Math.max(1, Math.floor(ownedCount / 3)) + hubCount, ownedCount);
+      Math.min(Math.max(1, Math.floor(ownedCount / 3)), ownedCount);
 
     return Response.json({
       territories,
@@ -325,12 +325,12 @@ Deno.serve(async (req) => {
     // Load all territory states for this player to validate and compute limit
     const allStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
     const myStates = allStates.filter(s => s.owner_player_id === actingPlayer.id);
-    const hubCount = myStates.filter(s => s.has_resource_hub).length;
 
-    // Activation limit: base = max(1, floor(owned / 3)), +1 per hub, capped at owned count
+    // Activation limit: base = max(1, floor(owned / 3)), capped at owned count.
+    // Resource Hubs do NOT add extra activations — they amplify hub territory generation instead.
     const ownedCount = myStates.length;
     const activationLimit = ownedCount === 0 ? 0 :
-      Math.min(Math.max(1, Math.floor(ownedCount / 3)) + hubCount, ownedCount);
+      Math.min(Math.max(1, Math.floor(ownedCount / 3)), ownedCount);
 
     if (territory_ids.length > activationLimit) {
       return Response.json({

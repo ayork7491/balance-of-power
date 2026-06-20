@@ -6,7 +6,7 @@
  * During territory_draft phase, shows a Claim Territory button if the territory
  * is unclaimed and it is the current player's turn.
  */
-import { X, Shield, Swords, MapPin, Check, Loader2, Lock, TrendingUp, Eye } from 'lucide-react';
+import { X, Shield, Swords, MapPin, Check, Loader2, Lock, TrendingUp, Eye, GitBranch } from 'lucide-react';
 import { PLAYER_COLORS } from '@/config/theme';
 import { getResourceConfig } from '@/config/resourceConfig';
 import { SC_TERRITORY_BY_ID } from '@/shared/maps/shatteredCrownConfig';
@@ -41,6 +41,7 @@ export default function TerritoryDetailPanel({
   influenceRecords,     // { player_id, influence_amount }[] for this territory — Sprint 4G
   spreadThreshold,      // number — permanent influence threshold for spread — Sprint 4G
   intelReport,          // Most recent IntelligenceReport for this territory (own player's reports only)
+  supplyRoutes,         // SupplyRoute[] — all campaign supply routes for context display
   onClose,
   // ── Lock state ──
   isLocked,             // boolean — territory is locked by a delayed battle
@@ -70,6 +71,13 @@ export default function TerritoryDetailPanel({
   const secondaryCfg = secondaryResource ? getResourceConfig(secondaryResource) : null;
   const tertiaryResource = scConfig?.tertiary_resource ?? null;
   const tertiaryCfg = tertiaryResource ? getResourceConfig(tertiaryResource) : null;
+
+  // Supply route info for this territory
+  const allRoutes = supplyRoutes ?? [];
+  // Routes where this territory is the hub (outbound routes)
+  const hubRoutes = allRoutes.filter(r => r.hub_territory_id === territory?.territory_id && r.route_status === 'active');
+  // Routes where this territory is the source (someone's route extracts from here)
+  const sourceRoutes = allRoutes.filter(r => r.source_territory_id === territory?.territory_id && r.route_status === 'active');
 
   const isDraftPhase = phase === 'territory_draft';
   const isClaimed    = !!tState?.owner_player_id;
@@ -306,22 +314,75 @@ export default function TerritoryDetailPanel({
             </div>
           )}
 
-          {/* Buildings — Sprint 4D: show buildings with effects */}
-          {(territoryBuildings?.length > 0 || tState?.structures?.length > 0) && (
-            <div className="space-y-1">
-              <span className="text-xs text-muted-foreground">Buildings</span>
-              <TerritoryBuildingsDisplay
-                territoryBuildings={territoryBuildings ?? []}
-                legacyStructures={tState?.structures ?? []}
-              />
+          {/* Buildings — hide supply_route since it's shown inline under the hub */}
+          {(() => {
+            const filteredBuildings = (territoryBuildings ?? []).filter(b => b.building_type !== 'supply_route');
+            const legacyStructures = tState?.structures ?? [];
+            if (filteredBuildings.length === 0 && legacyStructures.length === 0) return null;
+            return (
+              <div className="space-y-1">
+                <span className="text-xs text-muted-foreground">Buildings</span>
+                <TerritoryBuildingsDisplay
+                  territoryBuildings={filteredBuildings}
+                  legacyStructures={legacyStructures}
+                />
+              </div>
+            );
+          })()}
+
+          {/* Resource Hub — with connected supply routes embedded */}
+          {(hubData || hubRoutes.length > 0) && (
+            <div className="space-y-1.5 pt-1 border-t border-border">
+              <span className="text-xs text-amber-400 font-display tracking-wider uppercase flex items-center gap-1.5">
+                🏭 Resource Hub
+              </span>
+              {hubData && <TerritoryHubInfo hubData={hubData} mapDef={mapDef} />}
+              {hubRoutes.length > 0 && (
+                <div className="space-y-1">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Supply Routes</p>
+                  {hubRoutes.map((r, i) => {
+                    const sourceName = mapDef?.territories?.find(t => t.territory_id === r.source_territory_id)?.name ?? r.source_territory_id;
+                    const sourceState = r._sourceOwner ?? null;
+                    const RESOURCE_ICONS = { gold: '💰', iron: '⚙️', timber: '🪵', stone: '🪨', food: '🌾' };
+                    return (
+                      <div key={r.id ?? i} className="flex items-center gap-1.5 text-[10px] px-2 py-1.5 rounded border border-amber-500/30 bg-amber-500/5">
+                        <GitBranch className="w-3 h-3 text-amber-400 shrink-0" />
+                        <span className="text-amber-300 font-medium truncate">{sourceName}</span>
+                        {r.resource_type && <span>{RESOURCE_ICONS[r.resource_type] ?? r.resource_type}</span>}
+                        <span className="ml-auto text-green-400 shrink-0">● active</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 
-          {/* Resource Hub logistics info — Sprint 4E */}
-          {hubData && (
-            <div className="space-y-1 pt-1 border-t border-border">
-              <span className="text-xs text-muted-foreground">Resource Hub</span>
-              <TerritoryHubInfo hubData={hubData} mapDef={mapDef} />
+          {/* Source territory: show who has a supply route extracting from here */}
+          {sourceRoutes.length > 0 && (
+            <div className="space-y-1.5 pt-1 border-t border-border">
+              <span className="text-xs text-cyan-400 font-display tracking-wider uppercase flex items-center gap-1.5">
+                🛤 Supply Route Target
+              </span>
+              {sourceRoutes.map((r, i) => {
+                const hubName = mapDef?.territories?.find(t => t.territory_id === r.hub_territory_id)?.name ?? r.hub_territory_id;
+                const routeOwner = players?.find(p => p.id === r.owner_player_id);
+                const RESOURCE_ICONS = { gold: '💰', iron: '⚙️', timber: '🪵', stone: '🪨', food: '🌾' };
+                return (
+                  <div key={r.id ?? i} className="px-2 py-1.5 rounded border border-cyan-500/30 bg-cyan-500/5 space-y-0.5">
+                    <div className="flex items-center gap-1.5 text-[10px]">
+                      <GitBranch className="w-3 h-3 text-cyan-400 shrink-0" />
+                      <span className="text-cyan-300 font-medium">
+                        {routeOwner?.display_name ?? 'Unknown'} extracts from here
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground pl-4">
+                      <span>Hub: <span className="text-foreground">{hubName}</span></span>
+                      {r.resource_type && <span>{RESOURCE_ICONS[r.resource_type]} {r.resource_type}</span>}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
 

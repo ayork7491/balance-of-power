@@ -719,23 +719,45 @@ async function applyNonMilitaryConsequences(base44, campaign_id, round, card, re
   // ── SUPPLY ROUTE ESTABLISHMENT ─────────────────────────────────────────────
   if (card.battle_type === 'supply_route_establishment') {
     if (attackerWon) {
-      // Activate supply route — create or update SupplyRoute record
-      const existing = await base44.asServiceRole.entities.SupplyRoute.filter({
-        campaign_id, owner_player_id: sourcePlayerId,
-        hub_territory_id: card.target_territory_id,
-        source_territory_id: card.target_territory_id,
-      });
-      if (existing.length === 0) {
+      // meta.hub_territory_id = the player's Resource Hub territory
+      // card.target_territory_id = the enemy source territory that was fought over
+      const hubTerritoryId = meta.hub_territory_id ?? card.attackers?.[0]?.origin_territory_id ?? null;
+      const sourceTerritoryId = meta.route_target_territory ?? card.target_territory_id;
+
+      // Check for existing route between this hub and source
+      const allRoutes = await base44.asServiceRole.entities.SupplyRoute.filter({ campaign_id, owner_player_id: sourcePlayerId });
+      const alreadyExists = allRoutes.some(r => r.hub_territory_id === hubTerritoryId && r.source_territory_id === sourceTerritoryId);
+
+      if (!alreadyExists && hubTerritoryId) {
+        // Get source territory resource type
+        const sourceStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id, territory_id: sourceTerritoryId });
+        const sourceResourceType = sourceStates[0]?.resource_type ?? meta.declared_resource_type ?? null;
+
         await base44.asServiceRole.entities.SupplyRoute.create({
           campaign_id,
           owner_player_id: sourcePlayerId,
-          hub_territory_id: meta.route_target_territory ?? card.target_territory_id,
-          source_territory_id: meta.route_target_territory ?? card.target_territory_id,
+          hub_territory_id: hubTerritoryId,
+          source_territory_id: sourceTerritoryId,
           route_status: 'active',
-          range_distance: 1,
-          resource_type: 'gold',
+          range_distance: 2,
+          resource_type: sourceResourceType,
           created_round: round,
+          metadata_json: {},
         });
+
+        // Also create a TerritoryBuilding record for the supply route on the hub
+        const existingBld = await base44.asServiceRole.entities.TerritoryBuilding.filter({
+          campaign_id, territory_id: hubTerritoryId, building_type: 'supply_route', player_id: sourcePlayerId,
+        });
+        const alreadyHasRouteBld = existingBld.some(b => b.metadata_json?.source_territory_id === sourceTerritoryId);
+        if (!alreadyHasRouteBld) {
+          await base44.asServiceRole.entities.TerritoryBuilding.create({
+            campaign_id, territory_id: hubTerritoryId, player_id: sourcePlayerId,
+            building_type: 'supply_route', pillar_type: 'economic',
+            status: 'active', started_round: round, completed_round: round,
+            construction_progress: 1, metadata_json: { source_territory_id: sourceTerritoryId },
+          });
+        }
       }
       summary.push('supply_route_activated');
     } else {
