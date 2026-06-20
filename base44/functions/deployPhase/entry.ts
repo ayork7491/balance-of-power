@@ -633,14 +633,15 @@ Deno.serve(async (req) => {
       const region_bonus      = regionResult.bonus;
       const continent_bonus   = continentResult.bonus;
 
-      // Sprint 4D: Barracks bonus — +1 troop per active Barracks owned by this player
+      // Sprint 4D: Barracks bonus — 0.5 × avgBattleSize per active Barracks (rounded down)
       // Counts both Sprint 3B+ TerritoryBuilding records AND legacy TerritoryState.structures
       const playerBuildings = allTerritoryBuildings.filter(b => b.player_id === p.id && b.status === 'active');
       const newBarracksCount = playerBuildings.filter(b => b.building_type === 'barracks').length;
       const legacyBarracksCount = ownedStates.reduce((sum, ts) => {
         return sum + (ts.structures ?? []).filter(s => s === 'barracks').length;
       }, 0);
-      const building_bonus = newBarracksCount + legacyBarracksCount;
+      const totalBarracks = newBarracksCount + legacyBarracksCount;
+      const building_bonus = Math.floor(totalBarracks * 0.5 * avgBattleSize);
 
       const total = territory_bonus + troop_bonus + region_bonus + continent_bonus + building_bonus;
 

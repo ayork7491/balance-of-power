@@ -12,6 +12,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
 Deno.serve(async (req) => {
+  try {
   const base44 = createClientFromRequest(req);
 
   const body = await req.json();
@@ -121,4 +122,8 @@ Deno.serve(async (req) => {
   }
 
   return Response.json({ skipped: true });
+  } catch (err) {
+    console.error('[autoStartPhase] Unhandled error:', err?.message ?? err);
+    return Response.json({ success: false, error: err?.message ?? 'Internal server error' }, { status: 500 });
+  }
 });

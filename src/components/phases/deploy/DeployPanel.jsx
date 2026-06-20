@@ -107,7 +107,7 @@ export default function DeployPanel({
       {/* Phase header */}
       <div className="panel-header -mx-4 -mt-4 px-4 pt-3 pb-2 mb-1">
         <p className="font-display text-xs tracking-widest uppercase text-status-pending">
-          Round {round} — Deploy Phase
+          Round {round} — Planning Phase
         </p>
         <p className="text-xs text-muted-foreground mt-0.5">
           Stage troop placements. Decisions are hidden until reveal.

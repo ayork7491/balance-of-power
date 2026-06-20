@@ -85,9 +85,9 @@ export default function TerritoryDetailPanel({
 
   return (
     <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 w-full max-w-sm px-2 pointer-events-none">
-      <div className="panel pointer-events-auto shadow-2xl animate-fade-in">
-        {/* Header */}
-        <div className="panel-header flex items-center justify-between gap-2">
+      <div className="panel pointer-events-auto shadow-2xl animate-fade-in flex flex-col" style={{ maxHeight: 'calc(100vh - 8rem)' }}>
+        {/* Header — always visible, never scrolls away */}
+        <div className="panel-header flex items-center justify-between gap-2 shrink-0">
           <div className="flex items-center gap-2 min-w-0">
             <MapPin className="w-3.5 h-3.5 text-primary shrink-0" />
             <span className="font-display text-sm font-bold tracking-wider text-foreground truncate">
@@ -104,7 +104,7 @@ export default function TerritoryDetailPanel({
           </button>
         </div>
 
-        <div className="p-3 space-y-3">
+        <div className="p-3 space-y-3 overflow-y-auto dock-scroll">
           {/* Locked territory warning */}
           {isLocked && (
             <div className="flex items-center gap-2 px-2 py-1.5 rounded border border-orange-500/40 bg-orange-500/10 text-xs text-orange-400">

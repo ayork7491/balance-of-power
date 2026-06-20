@@ -499,11 +499,14 @@ Deno.serve(async (req) => {
     }
 
     // Accept client-submitted local staging (atomic local-first model)
-    if (Array.isArray(body._local_economic_staged)) {
+    // For economic: client already shows deducted resources in UI but server must deduct now.
+    // For diplomatic: influence is spent below during processing.
+    const isLocalFirstEconomic = Array.isArray(body._local_economic_staged);
+    if (isLocalFirstEconomic) {
       stagingData.economic_staged = body._local_economic_staged;
     }
     if (Array.isArray(body._local_diplomatic_staged)) {
-      stagingData.diplomatic_staged_list = body._local_diplomatic_staged;
+      stagingData.diplomatic_staged = body._local_diplomatic_staged;
     }
 
     const results = {};
@@ -525,6 +528,29 @@ Deno.serve(async (req) => {
     if (economicStaged.length > 0) {
       const constructionResults = [];
       const allTerritoryStatesForLock = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+
+      // Local-first model: resources were NOT deducted server-side during staging.
+      // Deduct them now at lock time.
+      if (isLocalFirstEconomic) {
+        for (const project of economicStaged) {
+          const cost = project.cost_paid;
+          if (!cost || !project.territory_id) continue;
+          const costTs = allTerritoryStatesForLock.find(s => s.territory_id === project.territory_id);
+          if (!costTs) continue;
+          const storage = { ...(costTs.resource_storage ?? {}) };
+          let canAfford = true;
+          for (const [res, needed] of Object.entries(cost)) {
+            if (needed > 0 && (storage[res] ?? 0) < needed) { canAfford = false; break; }
+          }
+          if (!canAfford) continue; // skip — insufficient resources
+          for (const [res, needed] of Object.entries(cost)) {
+            if (needed > 0) storage[res] = Math.max(0, (storage[res] ?? 0) - needed);
+          }
+          await base44.asServiceRole.entities.TerritoryState.update(costTs.id, { resource_storage: storage });
+          // Update our in-memory list so subsequent projects see the updated storage
+          costTs.resource_storage = storage;
+        }
+      }
 
       for (const project of economicStaged) {
         const pillarMap = {
@@ -637,8 +663,7 @@ Deno.serve(async (req) => {
     }
 
     // ── 3. Diplomatic: commit influence actions ──────────────────────────────
-    // Use local-first list if submitted by client, otherwise fall back to server-staged list
-    const diplomaticStaged = stagingData.diplomatic_staged_list ?? stagingData.diplomatic_staged ?? [];
+    const diplomaticStaged = stagingData.diplomatic_staged ?? [];
     const dipResults = [];
 
     for (const staged of diplomaticStaged) {

@@ -23,27 +23,33 @@ export default function DeployIncomeCard({ income, player, isMe }) {
       </div>
       <div className="space-y-0.5 text-muted-foreground">
         <div className="flex justify-between">
-          <span>Territory</span>
+          <span>Territory Income</span>
           <span className="text-foreground">+{income.territory_bonus ?? 0}</span>
         </div>
-        {(income.troop_bonus ?? 0) > 0 && (
-          <div className="flex justify-between">
-            <span>Troops</span>
-            <span className="text-foreground">+{income.troop_bonus}</span>
-          </div>
-        )}
-        {(income.region_bonus ?? 0) > 0 && (
-          <div className="flex justify-between">
-            <span>Region Bonus</span>
-            <span className="text-foreground">+{income.region_bonus}</span>
-          </div>
-        )}
-        {(income.continent_bonus ?? 0) > 0 && (
-          <div className="flex justify-between">
-            <span>Continent Bonus</span>
-            <span className="text-foreground">+{income.continent_bonus}</span>
-          </div>
-        )}
+        <div className="flex justify-between">
+          <span>Troop Bonus</span>
+          <span className={income.troop_bonus > 0 ? 'text-foreground' : 'text-muted-foreground/50'}>
+            +{income.troop_bonus ?? 0}
+          </span>
+        </div>
+        <div className="flex justify-between">
+          <span>Region Bonus</span>
+          <span className={income.region_bonus > 0 ? 'text-foreground' : 'text-muted-foreground/50'}>
+            +{income.region_bonus ?? 0}
+          </span>
+        </div>
+        <div className="flex justify-between">
+          <span>Continent Bonus</span>
+          <span className={income.continent_bonus > 0 ? 'text-foreground' : 'text-muted-foreground/50'}>
+            +{income.continent_bonus ?? 0}
+          </span>
+        </div>
+        <div className="flex justify-between">
+          <span>Structure Bonus <span className="text-[10px] opacity-60">(Barracks)</span></span>
+          <span className={income.building_bonus > 0 ? 'text-green-400' : 'text-muted-foreground/50'}>
+            +{income.building_bonus ?? 0}
+          </span>
+        </div>
       </div>
     </div>
   );

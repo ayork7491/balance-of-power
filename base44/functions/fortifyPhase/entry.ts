@@ -887,6 +887,29 @@ Deno.serve(async (req) => {
       }
     }
 
+    // REVEAL: Process safe caravans — move resources between territories
+    const RESOURCES = ['gold','iron','timber','stone','food'];
+    const resourceChanges = {}; // territory_id -> { gold, iron, ... } delta
+    for (const dec of finalDecisions) {
+      const caravans = dec.data?.caravans ?? [];
+      for (const caravan of caravans) {
+        if (!caravan.safe) continue; // unsafe caravans only move after battle resolution
+        const { origin, destination, contents } = caravan;
+        if (!origin || !destination || !contents) continue;
+        if (!resourceChanges[origin])      resourceChanges[origin]      = {};
+        if (!resourceChanges[destination]) resourceChanges[destination] = {};
+        for (const r of RESOURCES) {
+          const amt = contents[r] ?? 0;
+          if (amt <= 0) continue;
+          resourceChanges[origin][r]      = (resourceChanges[origin][r] ?? 0) - amt;
+          resourceChanges[destination][r] = (resourceChanges[destination][r] ?? 0) + amt;
+        }
+        await log(base44, campaign_id, round, phase, 'caravan_delivered', dec.player_id, {
+          origin, destination, contents, caravan_id: caravan.id,
+        }, false);
+      }
+    }
+
     // Apply troop changes
     const allTerritoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
     for (const [tid, change] of Object.entries(troopChanges)) {
@@ -896,6 +919,21 @@ Deno.serve(async (req) => {
         await base44.asServiceRole.entities.TerritoryState.update(existing.id, {
           troop_count: Math.max(0, (existing.troop_count || 0) + change),
         });
+      }
+    }
+
+    // Apply caravan resource changes
+    if (Object.keys(resourceChanges).length > 0) {
+      // Re-fetch states after troop updates to get fresh storage values
+      const statesAfterTroops = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+      for (const [tid, delta] of Object.entries(resourceChanges)) {
+        const ts = statesAfterTroops.find(s => s.territory_id === tid);
+        if (!ts) continue;
+        const storage = { gold:0, iron:0, timber:0, stone:0, food:0, ...(ts.resource_storage ?? {}) };
+        for (const r of RESOURCES) {
+          storage[r] = Math.max(0, (storage[r] ?? 0) + (delta[r] ?? 0));
+        }
+        await base44.asServiceRole.entities.TerritoryState.update(ts.id, { resource_storage: storage });
       }
     }
 
