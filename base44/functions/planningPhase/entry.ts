@@ -201,10 +201,15 @@ Deno.serve(async (req) => {
     const target = players.find(p => p.id === acting_as_player_id);
     if (!target) return Response.json({ error: 'Invalid acting_as_player_id' }, { status: 400 });
     const isTestPlayer = target.is_test_player === true;
-    if (!isAdmin && !isTestPlayer && target.id !== myPlayer?.id) {
+    if (!isAdmin && !isInternalCall && !isTestPlayer && target.id !== myPlayer?.id) {
       return Response.json({ error: 'Only admins can act as other players' }, { status: 403 });
     }
     actingPlayer = target;
+  }
+  // For internal calls with acting_as_player_id, actingPlayer must be set
+  if (isInternalCall && !actingPlayer && acting_as_player_id) {
+    const target = players.find(p => p.id === acting_as_player_id);
+    actingPlayer = target ?? null;
   }
 
   // ── ACTION: seedStartingInfluence ─────────────────────────────────────────
@@ -375,13 +380,26 @@ Deno.serve(async (req) => {
     if (campaign.current_phase !== 'deploy') {
       return Response.json({ error: 'Not in deploy phase' }, { status: 400 });
     }
+    if (!actingPlayer) {
+      return Response.json({ error: 'actingPlayer could not be resolved. Pass acting_as_player_id.' }, { status: 400 });
+    }
 
     const staging = await getStagingDecision(base44, campaign_id, actingPlayer.id, round);
     const stagingData = staging?.data ?? emptyStaging();
 
     // Idempotency: already dealt this round
     if (stagingData.objective_dealt && stagingData.objective_dealt_round === round) {
-      return Response.json({ success: true, idempotent: true, message: 'Objectives already dealt this round.' });
+      // Still return existing pending draw so UI can show cards
+      const ledgerRecordsIdem = await base44.asServiceRole.entities.PlayerInfluenceLedger.filter({
+        campaign_id, player_id: actingPlayer.id,
+      });
+      const ledgerIdem = ledgerRecordsIdem[0];
+      const cardsIdem = ledgerIdem?.objective_cards_json ?? {};
+      const allCardDefsIdem = await base44.asServiceRole.entities.SecretObjectiveCard.list();
+      const cardMapIdem = {};
+      for (const c of allCardDefsIdem) cardMapIdem[c.card_id] = c;
+      return Response.json({ success: true, idempotent: true, message: 'Objectives already dealt this round.',
+        drawn: cardsIdem.pending_draw ?? [], card_definitions: cardMapIdem });
     }
 
     // Check if player already has a pending draw (from a previous attempt)
@@ -789,6 +807,37 @@ Deno.serve(async (req) => {
           });
         }
 
+        // ── Supply route bonus: if any activated territory is a Resource Hub,
+        // also collect resources from each active supply route's source territory.
+        const activeSupplyRoutes = await base44.asServiceRole.entities.SupplyRoute.filter({
+          campaign_id, owner_player_id: actingPlayer.id,
+        });
+        const activatedHubIds = new Set(economicStaged.filter(tid => {
+          const ts = stateMap[tid];
+          return ts?.has_resource_hub;
+        }));
+        for (const route of activeSupplyRoutes) {
+          if (route.route_status !== 'active') continue;
+          if (!activatedHubIds.has(route.hub_territory_id)) continue;
+          // Collect resource from source territory
+          const sourcePrimary = route.resource_type ?? null;
+          if (sourcePrimary && sourcePrimary !== 'food') {
+            capitalAccum[sourcePrimary] = (capitalAccum[sourcePrimary] ?? 0) + 1;
+          } else if (sourcePrimary === 'food') {
+            foodAccum += 1;
+          }
+          activationResults.push({
+            territory_id: route.source_territory_id,
+            player_id: actingPlayer.id,
+            resource_type: sourcePrimary ?? 'unknown',
+            amount_generated: 1,
+            generated: { [sourcePrimary ?? 'food']: 1 },
+            destination: sourcePrimary === 'food' ? 'ledger_food' : (capitalTerritoryId ?? route.hub_territory_id),
+            via_supply_route: route.id,
+            hub_territory_id: route.hub_territory_id,
+          });
+        }
+
         // Write non-food resources to capital territory storage (or split to individual territories if no capital)
         if (capitalTs && (capitalAccum.gold + capitalAccum.iron + capitalAccum.timber + capitalAccum.stone) > 0) {
           const capBefore = { gold: 0, iron: 0, timber: 0, stone: 0, food: 0, ...(capitalTs.resource_storage ?? {}) };
@@ -936,6 +985,51 @@ Deno.serve(async (req) => {
       results.economic = { locked: true, already_locked: true };
     }
 
+    // ── 2b. Round-limited objective expiration ──────────────────────────────
+    // At lock time, expire any held objectives that contain "this round" in their description
+    // and were not completed this round.
+    try {
+      const expireLedgers = await base44.asServiceRole.entities.PlayerInfluenceLedger.filter({
+        campaign_id, player_id: actingPlayer.id,
+      });
+      const expireLedger = expireLedgers[0];
+      if (expireLedger?.objective_cards_json) {
+        const expireCards = { ...expireLedger.objective_cards_json };
+        const heldNow = expireCards.held ?? [];
+        if (heldNow.length > 0) {
+          const expireAllDefs = await base44.asServiceRole.entities.SecretObjectiveCard.list();
+          const expireDefMap = {};
+          for (const c of expireAllDefs) expireDefMap[c.card_id] = c;
+          const completedIds = new Set((expireCards.completed ?? []).map(e => e.card_id));
+          const toExpire = heldNow.filter(cid => {
+            if (completedIds.has(cid)) return false;
+            const def = expireDefMap[cid];
+            if (!def) return false;
+            return (def.description ?? '').toLowerCase().includes('this round');
+          });
+          if (toExpire.length > 0) {
+            const deckRecsExp = await base44.asServiceRole.entities.CampaignObjectiveDeck.filter({ campaign_id });
+            const deckExp = deckRecsExp[0];
+            if (deckExp) {
+              await base44.asServiceRole.entities.CampaignObjectiveDeck.update(deckExp.id, {
+                discard_pile: [...(deckExp.discard_pile ?? []), ...toExpire],
+              });
+            }
+            expireCards.held = heldNow.filter(cid => !toExpire.includes(cid));
+            expireCards.discarded = [
+              ...(expireCards.discarded ?? []),
+              ...toExpire.map(cid => ({ card_id: cid, discarded_round: round, reason: 'round_expired' })),
+            ];
+            await base44.asServiceRole.entities.PlayerInfluenceLedger.update(expireLedger.id, {
+              objective_cards_json: expireCards, updated_at_round: round,
+            });
+          }
+        }
+      }
+    } catch (expErr) {
+      console.warn('[lockPlanningPhase] Round-limited objective expiration failed (non-fatal):', expErr?.message);
+    }
+
     // ── 2b. Capital: apply staged capital selection ─────────────────────────
     if (localCapitalTerritoryId) {
       const devRecordsForCapital = await base44.asServiceRole.entities.TerritoryDevelopment.filter({
@@ -995,8 +1089,12 @@ Deno.serve(async (req) => {
             discardCardIds.push(replace_card_id);
             discardedEntries.push({ card_id: replace_card_id, discarded_round: round });
           } else {
-            // At cap but no replace — just add (cap enforcement by UI; backend is lenient at lock time)
-            newHeld = [...currentHeld, kept_card_id];
+            // At cap but no replace_card_id — force discard the first held card to maintain ≤3 limit.
+            // This prevents the 3+1=4 bug where the backend was lenient and allowed overflows.
+            const forcedDiscard = currentHeld[0];
+            newHeld = currentHeld.slice(1).concat(kept_card_id);
+            discardCardIds.push(forcedDiscard);
+            discardedEntries.push({ card_id: forcedDiscard, discarded_round: round });
           }
         } else {
           newHeld = [...currentHeld, kept_card_id];

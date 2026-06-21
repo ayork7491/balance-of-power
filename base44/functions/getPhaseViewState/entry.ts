@@ -122,12 +122,13 @@ Deno.serve(async (req) => {
     // ── Apply visibility filtering to territory states ────────────────────────
     const filteredTerritories = territoryStates.map(ts => {
       const isOwn = ts.owner_player_id === actingPlayerId;
-      // Admin-test mode only expands visibility for own (acting-as) player's territories;
-      // enemy territories are still masked from the acting player's perspective.
-      // This ensures switching acting-as properly scopes the view.
-      const isAdminVisible = false; // removed: isAdminTestMode — acting-as must respect actingPlayerId
+      // In admin/test mode with acting_as_player_id set, load ALL territory data (admin needs
+      // complete visibility to manage the game), but resource_storage and troops are only
+      // shown in full for own (acting-as) territories — enemy territories still show masked troops.
+      // When no acting_as_player_id, admin sees all data (spectator mode).
+      const isFullAdminView = isAdmin && !acting_as_player_id;
 
-      if (isOwn || isAdminVisible || !shouldMaskEnemies) {
+      if (isOwn || isFullAdminView || !shouldMaskEnemies) {
         // Full data — own territory or non-masked phase
         return { ...ts, _hidden: false, _revealed_by: null };
       }
@@ -227,6 +228,20 @@ Deno.serve(async (req) => {
     // ── Spread threshold (static for now) ─────────────────────────────────────
     const SPREAD_THRESHOLD = 10;
 
+    // ── Filter supply routes: own routes + routes targeting own territories ───
+    // (so TerritoryDetailPanel can show "someone has a route targeting this territory")
+    const ownTerritoryIds = new Set(
+      territoryStates.filter(ts => ts.owner_player_id === actingPlayerId).map(ts => ts.territory_id)
+    );
+    const isFullAdminViewForRoutes = isAdmin && !acting_as_player_id;
+    const visibleSupplyRoutes = isFullAdminViewForRoutes
+      ? supplyRoutes
+      : supplyRoutes.filter(r =>
+          r.owner_player_id === actingPlayerId ||
+          ownTerritoryIds.has(r.source_territory_id) ||
+          ownTerritoryIds.has(r.hub_territory_id)
+        );
+
     return Response.json({
       success: true,
       territories: filteredTerritories,
@@ -235,7 +250,7 @@ Deno.serve(async (req) => {
       intel_reports: intelLatestByTerritory,
       dev_records: devRecordsByTerritory,
       buildings_by_territory: buildingsByTerritory,
-      supply_routes: supplyRoutes,
+      supply_routes: visibleSupplyRoutes,
       spread_threshold: SPREAD_THRESHOLD,
       is_admin_payload: isAdminTestMode,
       acting_player_id: actingPlayerId,

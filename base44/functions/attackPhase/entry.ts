@@ -950,7 +950,7 @@ Deno.serve(async (req) => {
         }
 
         console.log(`[skirmish PROOF] battle_type=skirmish card_id=inline player=${attacker.player_id}`);
-        console.log(`[skirmish PROOF]   origin=${attacker.origin_territory_id} before=${originStateBefore?.troop_count ?? 0} committed=${attacker.committed_troops} after=${originAfter}`);
+        console.log(`[skirmish PROOF]   origin=${attacker.origin_territory_id} committed=${attacker.committed_troops} after=${originAfter}`);
         console.log(`[skirmish PROOF]   target=${targetId} owner_before=${targetOwnerBefore} troops_before=${targetBefore} owner_after=${attacker.player_id} troops_after=${attacker.committed_troops}`);
 
         skirmishResults.push({

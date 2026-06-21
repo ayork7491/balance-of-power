@@ -65,6 +65,17 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
     round,
   });
 
+  // Reset server status when acting-as player changes — forces re-fetch for the new player
+  const prevActingIdRef = useRef(actingId);
+  useEffect(() => {
+    if (prevActingIdRef.current !== actingId) {
+      prevActingIdRef.current = actingId;
+      setStatus(null);
+      setAdminStatus(null);
+      setLoading(true);
+    }
+  }, [actingId]);
+
   const load = useCallback(async () => {
     if (!campaign?.id || !myPlayer?.id) return;
     // Guard: only load when campaign is actually in deploy phase

@@ -1176,6 +1176,71 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── Monument influence generation ─────────────────────────────────────────
+    // Active Monuments generate +1 permanent influence + +1 spendable per round.
+    // Called here (Consolidation phase end) so influence is ready for next Operations phase.
+    const SC_TERRITORY_REGION_FORT = {
+      I8:'outer_passes', I4:'outer_passes', I6:'outer_passes', I7:'outer_passes',
+      I1:'high_crown', I2:'high_crown', I3:'high_crown', I5:'high_crown',
+      W1:'northern_wilds',W2:'northern_wilds',W3:'northern_wilds',W4:'northern_wilds',W5:'northern_wilds',
+      W6:'deepwoods', W7:'deepwoods', W8:'deepwoods', W9:'deepwoods',
+      B1:'northern_ruins',B3:'northern_ruins',B2:'northern_ruins',B4:'northern_ruins',
+      B5:'central_crossroads',B6:'central_crossroads',B7:'central_crossroads',
+      B8:'southern_ruins',B9:'southern_ruins',B10:'southern_ruins',
+      S1:'western_plains',S4:'western_plains',S7:'western_plains',S2:'western_plains',
+      S5:'eastern_granaries',S8:'eastern_granaries',S3:'eastern_granaries',
+      S6:'eastern_granaries',S9:'eastern_granaries',
+      C1:'northern_isles',C2:'northern_isles',C3:'northern_isles',C4:'northern_isles',
+      C5:'southern_fractures',C6:'southern_fractures',C7:'southern_fractures',C8:'southern_fractures',
+    };
+    try {
+      const monumentBuildings = allTerritoryBuildings.filter(b => b.building_type === 'monument' && b.status === 'active');
+      if (monumentBuildings.length > 0) {
+        for (const mon of monumentBuildings) {
+          const regionId = SC_TERRITORY_REGION_FORT[mon.territory_id];
+          // +1 permanent influence on the monument territory
+          const existingPermInfluence = await base44.asServiceRole.entities.TerritoryInfluence.filter({
+            campaign_id, territory_id: mon.territory_id, player_id: mon.player_id,
+          });
+          const permRec = existingPermInfluence[0];
+          if (permRec) {
+            await base44.asServiceRole.entities.TerritoryInfluence.update(permRec.id, {
+              influence_amount: (permRec.influence_amount ?? 0) + 1,
+              last_updated_round: round, source: 'monument',
+            });
+          } else {
+            await base44.asServiceRole.entities.TerritoryInfluence.create({
+              campaign_id, territory_id: mon.territory_id, player_id: mon.player_id,
+              influence_amount: 1, last_updated_round: round, source: 'monument',
+            });
+          }
+          // +1 spendable influence in the territory's region
+          if (regionId) {
+            const existingPool = await base44.asServiceRole.entities.RegionalInfluencePool.filter({
+              campaign_id, region_id: regionId, player_id: mon.player_id,
+            });
+            const poolRec = existingPool[0];
+            if (poolRec) {
+              await base44.asServiceRole.entities.RegionalInfluencePool.update(poolRec.id, {
+                spendable_influence: (poolRec.spendable_influence ?? 0) + 1,
+                last_updated_round: round,
+              });
+            } else {
+              await base44.asServiceRole.entities.RegionalInfluencePool.create({
+                campaign_id, region_id: regionId, player_id: mon.player_id,
+                spendable_influence: 1, last_updated_round: round,
+              });
+            }
+          }
+          await log(base44, campaign_id, round, phase, 'monument_influence_generated', mon.player_id, {
+            territory_id: mon.territory_id, region_id: regionId ?? null,
+          }, false);
+        }
+      }
+    } catch (monErr) {
+      console.warn('[fortifyPhase] Monument influence generation error (non-fatal):', monErr?.message);
+    }
+
     // ── TerritoryBuilding lifecycle: planned → under_construction → active ──────
     // Buildings created during Operations lock-in start as 'planned'.
     // At end of first Consolidation they become 'under_construction'.
