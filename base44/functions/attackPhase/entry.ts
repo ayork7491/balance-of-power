@@ -917,8 +917,8 @@ Deno.serve(async (req) => {
         // The DB update in Step 3 already persisted origin deduction.
         // Here we only need to set target territory ownership + troop count.
         const attacker    = attacksOnTarget[0];
-        const targetState = allTerritoryStates.find(s => s.territory_id === targetId);
-        const originStateBefore = allTerritoryStates.find(s => s.territory_id === attacker.origin_territory_id);
+        // Use persistedStateMap (re-fetched after deductions) as authoritative source
+        const targetState = persistedStateMap[targetId] ?? allTerritoryStates.find(s => s.territory_id === targetId);
         const originAfter = postCommitStateById[attacker.origin_territory_id]?.troop_count ?? 0;
         const targetBefore = targetState?.troop_count ?? 0;
         const targetOwnerBefore = targetState?.owner_player_id ?? 'null';
@@ -931,13 +931,22 @@ Deno.serve(async (req) => {
           });
         } else {
           // Territory has never been owned — no TerritoryState record exists yet. Create one.
-          await base44.asServiceRole.entities.TerritoryState.create({
-            campaign_id,
-            map_id:          campaign.map_id ?? '',
-            territory_id:    targetId,
-            owner_player_id: attacker.player_id,
-            troop_count:     attacker.committed_troops,
-          });
+          // Also handles case where persistedStateMap has it — use update if we find it there
+          const freshState = persistedStateMap[targetId];
+          if (freshState) {
+            await base44.asServiceRole.entities.TerritoryState.update(freshState.id, {
+              owner_player_id: attacker.player_id,
+              troop_count:     attacker.committed_troops,
+            });
+          } else {
+            await base44.asServiceRole.entities.TerritoryState.create({
+              campaign_id,
+              map_id:          campaign.map_id ?? '',
+              territory_id:    targetId,
+              owner_player_id: attacker.player_id,
+              troop_count:     attacker.committed_troops,
+            });
+          }
         }
 
         console.log(`[skirmish PROOF] battle_type=skirmish card_id=inline player=${attacker.player_id}`);

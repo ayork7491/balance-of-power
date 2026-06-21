@@ -122,11 +122,13 @@ Deno.serve(async (req) => {
     // ── Apply visibility filtering to territory states ────────────────────────
     const filteredTerritories = territoryStates.map(ts => {
       const isOwn = ts.owner_player_id === actingPlayerId;
-      // In admin/test mode, load all test-player data (UI will filter by actingPlayerId)
-      const isAdminVisible = isAdminTestMode;
+      // Admin-test mode only expands visibility for own (acting-as) player's territories;
+      // enemy territories are still masked from the acting player's perspective.
+      // This ensures switching acting-as properly scopes the view.
+      const isAdminVisible = false; // removed: isAdminTestMode — acting-as must respect actingPlayerId
 
       if (isOwn || isAdminVisible || !shouldMaskEnemies) {
-        // Full data — own territory, admin mode, or non-masked phase
+        // Full data — own territory or non-masked phase
         return { ...ts, _hidden: false, _revealed_by: null };
       }
 
@@ -167,7 +169,10 @@ Deno.serve(async (req) => {
       if (!influenceByTerritory[tid]) influenceByTerritory[tid] = [];
       const isOwn = rec.player_id === actingPlayerId;
       const intelRec = intelByTerritory[tid];
-      const influenceRevealed = isAdminTestMode || !shouldMaskEnemies
+      // Influence amounts are private — only own player's amounts visible
+      // unless revealed by an investigate_influence intel report.
+      // Admin-test mode respects the acting player's perspective (no bypass).
+      const influenceRevealed = !shouldMaskEnemies
         || (intelRec && REVEAL_MAP[intelRec.report_type] === 'influence');
 
       if (isOwn || influenceRevealed) {
@@ -193,7 +198,7 @@ Deno.serve(async (req) => {
       const rid = pool.region_id;
       if (!influenceByRegion[rid]) influenceByRegion[rid] = [];
       const isOwn = pool.player_id === actingPlayerId;
-      if (isOwn || isAdminTestMode || !shouldMaskEnemies) {
+      if (isOwn || !shouldMaskEnemies) {
         influenceByRegion[rid].push({
           player_id: pool.player_id,
           spendable_influence: pool.spendable_influence,

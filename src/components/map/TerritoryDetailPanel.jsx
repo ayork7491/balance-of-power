@@ -84,8 +84,8 @@ export default function TerritoryDetailPanel({
   const canClaim     = isDraftPhase && isMyDraftTurn && !isClaimed && !!onClaim;
 
   return (
-    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 w-full max-w-sm px-2 pointer-events-none">
-      <div className="panel pointer-events-auto shadow-2xl animate-fade-in flex flex-col" style={{ maxHeight: 'calc(100vh - 8rem)' }}>
+    <div className="absolute bottom-2 left-1/2 -translate-x-1/2 z-20 w-full max-w-sm px-2 pointer-events-none">
+      <div className="panel pointer-events-auto shadow-2xl animate-fade-in flex flex-col overflow-hidden" style={{ maxHeight: 'min(calc(100vh - 6rem), 520px)' }}>
         {/* Header — always visible, never scrolls away */}
         <div className="panel-header flex items-center justify-between gap-2 shrink-0">
           <div className="flex items-center gap-2 min-w-0">
@@ -290,27 +290,31 @@ export default function TerritoryDetailPanel({
             </div>
           )}
 
-          {/* Territory storage (if any resources are stored here) */}
-          {tState?._hidden && tState?.owner_player_id && (
+          {/* Territory storage */}
+          {tState?.owner_player_id && tState?._hidden && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground italic">
-              <span>Resource storage hidden</span>
+              <span>🔒 Resource storage hidden</span>
             </div>
           )}
-          {!tState?._hidden && tState?.resource_storage && Object.values(tState.resource_storage).some(v => v > 0) && (
+          {tState?.owner_player_id && !tState?._hidden && (
             <div className="flex items-start justify-between text-xs gap-2">
               <span className="text-muted-foreground shrink-0">Stored</span>
-              <div className="flex flex-wrap gap-1 justify-end">
-                {Object.entries(tState.resource_storage)
-                  .filter(([, v]) => v > 0)
-                  .map(([type, amount]) => {
-                    const cfg = getResourceConfig(type);
-                    return (
-                      <span key={type} className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border ${cfg.bg} ${cfg.border} ${cfg.color}`}>
-                        {cfg.icon} {amount}
-                      </span>
-                    );
-                  })}
-              </div>
+              {tState?.resource_storage && Object.values(tState.resource_storage).some(v => v > 0) ? (
+                <div className="flex flex-wrap gap-1 justify-end">
+                  {Object.entries(tState.resource_storage)
+                    .filter(([, v]) => v > 0)
+                    .map(([type, amount]) => {
+                      const cfg = getResourceConfig(type);
+                      return (
+                        <span key={type} className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border ${cfg.bg} ${cfg.border} ${cfg.color}`}>
+                          {cfg.icon} {amount}
+                        </span>
+                      );
+                    })}
+                </div>
+              ) : (
+                <span className="text-muted-foreground italic text-[10px]">None stored</span>
+              )}
             </div>
           )}
 

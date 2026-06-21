@@ -133,7 +133,9 @@ const SC_ADJ_PAIRS = [
   ['C6','C8'],['C7','C8'],
 ];
 function buildAdjacency(mapId) {
-  const pairs = mapId === 'map_v1_standard' ? [] : SC_ADJ_PAIRS;
+  // SC_ADJ_PAIRS covers shattered_crown_v1; for other maps use SC_ADJ_PAIRS as fallback
+  // (V1 standard map is not used in production campaigns)
+  const pairs = SC_ADJ_PAIRS;
   const adj = {};
   for (const [a, b] of pairs) {
     if (!adj[a]) adj[a] = new Set();

@@ -7,6 +7,20 @@ import { TrendingUp } from 'lucide-react';
 export default function DeployIncomeCard({ income, player, isMe }) {
   if (!income) return null;
 
+  // Verify sum matches total (defensive display)
+  const categorySum = (income.territory_bonus ?? 0) + (income.troop_bonus ?? 0)
+    + (income.region_bonus ?? 0) + (income.continent_bonus ?? 0) + (income.building_bonus ?? 0);
+  const displayTotal = income.total ?? categorySum;
+
+  const row = (label, value, highlight) => (
+    <div className="flex justify-between">
+      <span>{label}</span>
+      <span className={value > 0 ? (highlight ? 'text-green-400' : 'text-foreground') : 'text-muted-foreground/50'}>
+        +{value}
+      </span>
+    </div>
+  );
+
   return (
     <div className={`rounded border px-3 py-2 text-xs space-y-1 ${
       isMe ? 'border-primary/40 bg-primary/5' : 'border-border bg-muted/20'
@@ -18,39 +32,21 @@ export default function DeployIncomeCard({ income, player, isMe }) {
         </span>
         <span className="flex items-center gap-1 font-mono font-bold text-sm text-foreground">
           <TrendingUp className="w-3 h-3 text-status-info" />
-          +{income.total}
+          +{displayTotal}
         </span>
       </div>
       <div className="space-y-0.5 text-muted-foreground">
-        <div className="flex justify-between">
-          <span>Territory Income</span>
-          <span className="text-foreground">+{income.territory_bonus ?? 0}</span>
-        </div>
-        <div className="flex justify-between">
-          <span>Troop Bonus</span>
-          <span className={income.troop_bonus > 0 ? 'text-foreground' : 'text-muted-foreground/50'}>
-            +{income.troop_bonus ?? 0}
-          </span>
-        </div>
-        <div className="flex justify-between">
-          <span>Region Bonus</span>
-          <span className={income.region_bonus > 0 ? 'text-foreground' : 'text-muted-foreground/50'}>
-            +{income.region_bonus ?? 0}
-          </span>
-        </div>
-        <div className="flex justify-between">
-          <span>Continent Bonus</span>
-          <span className={income.continent_bonus > 0 ? 'text-foreground' : 'text-muted-foreground/50'}>
-            +{income.continent_bonus ?? 0}
-          </span>
-        </div>
-        <div className="flex justify-between">
-          <span>Structure Bonus <span className="text-[10px] opacity-60">(Barracks)</span></span>
-          <span className={income.building_bonus > 0 ? 'text-green-400' : 'text-muted-foreground/50'}>
-            +{income.building_bonus ?? 0}
-          </span>
-        </div>
+        {row('Territory Income', income.territory_bonus ?? 0)}
+        {row('Troop-Based Income', income.troop_bonus ?? 0)}
+        {row('Region Bonuses', income.region_bonus ?? 0)}
+        {row('Continent Bonuses', income.continent_bonus ?? 0)}
+        {row('Structure Bonuses (Barracks)', income.building_bonus ?? 0, true)}
       </div>
+      {categorySum !== displayTotal && (
+        <p className="text-[9px] text-amber-400/70 italic">
+          ⚠ Sum mismatch: categories={categorySum}, total={displayTotal}
+        </p>
+      )}
     </div>
   );
 }

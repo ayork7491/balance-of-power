@@ -23,7 +23,7 @@
     "troop_bonus": {
       "type": "number",
       "default": 0,
-      "description": "Troops from total troop count formula."
+      "description": "Troops from total troop count (floor(troops/10))."
     },
     "region_bonus": {
       "type": "number",
@@ -35,10 +35,15 @@
       "default": 0,
       "description": "Troops from fully controlled continents."
     },
+    "building_bonus": {
+      "type": "number",
+      "default": 0,
+      "description": "Troops from Barracks buildings (0.5 \u00d7 avgBattleSize per active Barracks)."
+    },
     "total": {
       "type": "number",
       "default": 0,
-      "description": "Total troops available to deploy this round."
+      "description": "Total troops available to deploy this round (sum of all bonuses)."
     },
     "resources_generated": {
       "type": "object",
