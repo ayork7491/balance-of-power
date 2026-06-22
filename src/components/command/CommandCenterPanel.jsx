@@ -94,9 +94,11 @@ export default function CommandCenterPanel({
   const [operationsStatus, setOperationsStatus] = useState(null);
 
 
-  // Local-first staging state owned at this level, passed down to panels
-  const [localEconomicStaging, setLocalEconomicStaging] = useState([]);
-  const [localDiplomaticStaging, setLocalDiplomaticStaging] = useState([]);
+  // Local-first staging state owned at this level, passed down to panels.
+  // Initialized as null to distinguish "not yet hydrated" from "empty array".
+  // OperationsPhaseHeader hydrates from localStorage on mount before any writes.
+  const [localEconomicStaging, setLocalEconomicStaging] = useState(null);
+  const [localDiplomaticStaging, setLocalDiplomaticStaging] = useState(null);
 
   // Reset status caches when actingAsPlayerId changes
   const prevActingRef = useRef(actingAsPlayerId);

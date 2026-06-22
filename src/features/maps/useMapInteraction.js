@@ -170,10 +170,10 @@ export function useMapInteraction({
             setInteractionMode('attack_target_selected');
             onAttackTargetSelect?.(attackOriginId, territoryId);
           } else if (territoryId === attackOriginId) {
-            // Clicked same origin - cancel attack selection
+            // Clicked same origin again — clear attack mode and open territory popup
             setAttackOriginId(null);
-            onSelect(null);
-            setInteractionMode(null);
+            setInteractionMode('view_only');
+            onSelect(territoryId);
           } else if (isOwnedByActingPlayer(territoryId)) {
             // Clicked another own territory - change origin
             setAttackOriginId(territoryId);

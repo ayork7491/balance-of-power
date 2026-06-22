@@ -19,8 +19,10 @@
 import { useCallback } from 'react';
 
 export function useOperationsStagingStore({ campaignId, playerId, round }) {
-  const diploKey  = `ops_diplo_staging_${campaignId}_${playerId}_${round}`;
-  const econKey   = `ops_econ_staging_${campaignId}_${playerId}_${round}`;
+  const diploKey   = `ops_diplo_staging_${campaignId}_${playerId}_${round}`;
+  const econKey    = `ops_econ_staging_${campaignId}_${playerId}_${round}`;
+  // Military attacks are stored in the useAttackPhase localStorage key — we just read from it.
+  const militaryKey = `atk_local_${campaignId}_${playerId}_${round}`;
 
   const getDiplomaticStaging = useCallback(() => {
     try {
@@ -44,18 +46,28 @@ export function useOperationsStagingStore({ campaignId, playerId, round }) {
     localStorage.setItem(econKey, JSON.stringify(arr));
   }, [econKey]);
 
+  const getMilitaryAttacks = useCallback(() => {
+    try {
+      const raw = localStorage.getItem(militaryKey);
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  }, [militaryKey]);
+
   const clearAll = useCallback(() => {
     localStorage.removeItem(diploKey);
     localStorage.removeItem(econKey);
+    // Note: militaryKey (atk_local_*) is owned by useAttackPhase — cleared there after lock.
   }, [diploKey, econKey]);
 
   return {
     diploKey,
     econKey,
+    militaryKey,
     getDiplomaticStaging,
     setDiplomaticStaging,
     getEconomicStaging,
     setEconomicStaging,
+    getMilitaryAttacks,
     clearAll,
   };
 }

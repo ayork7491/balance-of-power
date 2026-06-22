@@ -124,15 +124,16 @@ export default function OperationsPhaseHeader({
     return () => { if (retryRef.current) clearTimeout(retryRef.current); };
   }, [load]);
 
-  // Persist local staging to localStorage whenever it changes
+  // Persist local staging to localStorage whenever it changes,
+  // but only AFTER hydration (parent starts as null, becomes array once hydrated).
   useEffect(() => {
-    if (localEconomicStaging !== null && localEconomicStaging !== undefined) {
+    if (Array.isArray(localEconomicStaging)) {
       stagingStore.setEconomicStaging(localEconomicStaging);
     }
   }, [localEconomicStaging]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (localDiplomaticStaging !== null && localDiplomaticStaging !== undefined) {
+    if (Array.isArray(localDiplomaticStaging)) {
       stagingStore.setDiplomaticStaging(localDiplomaticStaging);
     }
   }, [localDiplomaticStaging]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -143,10 +144,12 @@ export default function OperationsPhaseHeader({
     setLocking(true);
     setError(null);
     try {
+      const localMilitaryAttacks = stagingStore.getMilitaryAttacks();
       await base44.functions.invoke('operationsLockPhase', {
         action: 'lockOperationsPhase',
         campaign_id: campaign.id,
         acting_as_player_id: actingAsPlayerId ?? undefined,
+        _local_military_attacks: localMilitaryAttacks,
         _local_economic_staged: localEconomicStaging ?? [],
         _local_diplomatic_staged: localDiplomaticStaging ?? [],
       });
@@ -197,8 +200,8 @@ export default function OperationsPhaseHeader({
   const lockedCount = playerLocks.filter(p => p.operations_locked).length;
   const totalPlayers = playerLocks.length;
 
-  const econCount  = (localEconomicStaging ?? []).length;
-  const diploCount = (localDiplomaticStaging ?? []).length;
+  const econCount  = Array.isArray(localEconomicStaging) ? localEconomicStaging.length : 0;
+  const diploCount = Array.isArray(localDiplomaticStaging) ? localDiplomaticStaging.length : 0;
 
   return (
     <div className="border-b border-border bg-panel-header px-3 py-2 space-y-1">

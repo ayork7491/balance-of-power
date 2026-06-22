@@ -513,16 +513,47 @@ Deno.serve(async (req) => {
 
     const results = {};
 
-    // ── 1. Military: lock attack phase decision ──────────────────────────────
+    // ── 1. Military: upsert + lock attack phase decision ────────────────────
+    // Accept local-first attacks from the client (no separate Save Attacks step needed).
+    const localMilitaryAttacks = Array.isArray(body._local_military_attacks) ? body._local_military_attacks : null;
     const attackDecision = await getAttackDecision(base44, campaign_id, actingPlayer.id, round);
-    if (attackDecision && !attackDecision.is_locked) {
-      await base44.asServiceRole.entities.PhaseDecision.update(attackDecision.id, {
-        is_locked: true,
-        locked_at: new Date().toISOString(),
-      });
-      results.military = { locked: true };
+    const lockedNow = new Date().toISOString();
+
+    if (attackDecision) {
+      if (!attackDecision.is_locked) {
+        // Merge: prefer local attacks if provided (most up-to-date), else keep server data
+        const attacksToCommit = localMilitaryAttacks !== null
+          ? localMilitaryAttacks.map(a => ({
+              ...a,
+              // Remap local_ prefixed ids to stable ids
+              id: a.id?.startsWith('local_') ? `atk_${Date.now()}_${Math.random().toString(36).slice(2)}` : a.id,
+            }))
+          : (attackDecision.data?.attacks ?? []);
+        await base44.asServiceRole.entities.PhaseDecision.update(attackDecision.id, {
+          is_locked: true,
+          locked_at: lockedNow,
+          data: { attacks: attacksToCommit },
+        });
+        results.military = { locked: true, attacks_committed: attacksToCommit.length };
+      } else {
+        results.military = { locked: true, already_locked: true, attacks_committed: (attackDecision.data?.attacks ?? []).length };
+      }
     } else {
-      results.military = { locked: true, already_locked: !attackDecision ? false : attackDecision.is_locked };
+      // No existing decision — create one from local attacks
+      const attacksToCommit = (localMilitaryAttacks ?? []).map(a => ({
+        ...a,
+        id: a.id?.startsWith('local_') ? `atk_${Date.now()}_${Math.random().toString(36).slice(2)}` : (a.id ?? `atk_${Date.now()}_${Math.random().toString(36).slice(2)}`),
+      }));
+      await base44.asServiceRole.entities.PhaseDecision.create({
+        campaign_id,
+        player_id: actingPlayer.id,
+        phase: 'attack',
+        round,
+        is_locked: true,
+        locked_at: lockedNow,
+        data: { attacks: attacksToCommit },
+      });
+      results.military = { locked: true, created: true, attacks_committed: attacksToCommit.length };
     }
 
     // ── 2. Economic: commit construction projects ────────────────────────────

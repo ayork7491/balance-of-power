@@ -74,6 +74,10 @@ Deno.serve(async (req) => {
       actingPlayer = target;
     }
 
+    // Full admin spectator mode (sees all hidden data) only when explicitly requested.
+    // Default admin view is filtered to their own player perspective, same as any player.
+    // This prevents the admin account from leaking all test players' hidden information.
+    const isExplicitSpectatorMode = isAdmin && !!body.admin_spectator_mode && !acting_as_player_id;
     const isAdminTestMode = isAdmin && !!acting_as_player_id;
     const actingPlayerId = actingPlayer.id;
     const phase = campaign.current_phase;
@@ -122,13 +126,9 @@ Deno.serve(async (req) => {
     // ── Apply visibility filtering to territory states ────────────────────────
     const filteredTerritories = territoryStates.map(ts => {
       const isOwn = ts.owner_player_id === actingPlayerId;
-      // In admin/test mode with acting_as_player_id set, load ALL territory data (admin needs
-      // complete visibility to manage the game), but resource_storage and troops are only
-      // shown in full for own (acting-as) territories — enemy territories still show masked troops.
-      // When no acting_as_player_id, admin sees all data (spectator mode).
-      const isFullAdminView = isAdmin && !acting_as_player_id;
-
-      if (isOwn || isFullAdminView || !shouldMaskEnemies) {
+      // Full data shown for: own territories, explicit spectator mode, or non-masked phases.
+      // Admin acting as a player sees only that player's allowed data (same as a real player).
+      if (isOwn || isExplicitSpectatorMode || !shouldMaskEnemies) {
         // Full data — own territory or non-masked phase
         return { ...ts, _hidden: false, _revealed_by: null };
       }
@@ -233,8 +233,7 @@ Deno.serve(async (req) => {
     const ownTerritoryIds = new Set(
       territoryStates.filter(ts => ts.owner_player_id === actingPlayerId).map(ts => ts.territory_id)
     );
-    const isFullAdminViewForRoutes = isAdmin && !acting_as_player_id;
-    const visibleSupplyRoutes = isFullAdminViewForRoutes
+    const visibleSupplyRoutes = isExplicitSpectatorMode
       ? supplyRoutes
       : supplyRoutes.filter(r =>
           r.owner_player_id === actingPlayerId ||
@@ -252,7 +251,7 @@ Deno.serve(async (req) => {
       buildings_by_territory: buildingsByTerritory,
       supply_routes: visibleSupplyRoutes,
       spread_threshold: SPREAD_THRESHOLD,
-      is_admin_payload: isAdminTestMode,
+      is_admin_payload: isAdminTestMode || isExplicitSpectatorMode,
       acting_player_id: actingPlayerId,
       round,
       phase,

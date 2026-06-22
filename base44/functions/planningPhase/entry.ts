@@ -769,7 +769,7 @@ Deno.serve(async (req) => {
         const stateMap = {};
         for (const s of myStates) stateMap[s.territory_id] = s;
 
-        // Resolve capital territory for this player (resources funnel there)
+        // Resolve capital territory + dev records for food production calculations
         const devRecords = await base44.asServiceRole.entities.TerritoryDevelopment.filter({
           campaign_id, owner_player_id: actingPlayer.id,
         });
@@ -795,6 +795,20 @@ Deno.serve(async (req) => {
             foodAccum += 1;
           } else {
             capitalAccum[primary] = (capitalAccum[primary] ?? 0) + 1;
+          }
+          // Food production based on territory development level (always produces food)
+          // Level 1: produce 2, consume 1 → net +1
+          // Level 2: produce 2.5, consume 2 → net +0.5
+          // Level 3: produce 3, consume 3 → net 0
+          // Level 4: produce 4, consume 4.5 → net -0.5
+          // Level 5: produce 5, consume 6 → net -1
+          // We apply per-territory food surplus from development here
+          {
+            const devRec = devRecords.find(d => d.territory_id === territory_id);
+            const devLevel = devRec?.development_level ?? 1;
+            const FOOD_NET = [0, 1, 0.5, 0, -0.5, -1]; // index = level
+            const netFood = FOOD_NET[Math.min(devLevel, 5)] ?? 0;
+            if (netFood > 0) foodAccum += netFood;
           }
 
           activationResults.push({
