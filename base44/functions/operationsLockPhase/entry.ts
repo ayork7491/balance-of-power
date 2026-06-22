@@ -280,6 +280,46 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'source_territory_id is required for supply_route' }, { status: 400 });
     }
 
+    // ── Duplicate supply route guard — check before ANY resource deduction ──────
+    if (building_type === 'supply_route' && source_territory_id) {
+      const [existingRoutes, existingCards] = await Promise.all([
+        base44.asServiceRole.entities.SupplyRoute.filter({
+          campaign_id, owner_player_id: actingPlayer.id, source_territory_id,
+        }),
+        base44.asServiceRole.entities.BattleCard.filter({
+          campaign_id, round, source_player_id: actingPlayer.id, battle_card_source: 'supply_route_establishment',
+        }),
+      ]);
+      // Check active/disrupted routes to this source
+      const activeRoute = existingRoutes.find(r => r.route_status !== 'inactive');
+      if (activeRoute) {
+        return Response.json({
+          error: `A supply route to ${source_territory_id} already exists. Each source territory can only have one route.`,
+        }, { status: 400 });
+      }
+      // Check pending battle card for same source this round
+      const pendingCard = existingCards.find(c =>
+        c.source_operation_metadata?.route_target_territory === source_territory_id &&
+        c.status !== 'resolved' && c.status !== 'forfeited'
+      );
+      if (pendingCard) {
+        return Response.json({
+          error: `A supply route battle for ${source_territory_id} is already pending this round.`,
+        }, { status: 400 });
+      }
+
+      // Check locally staged items — source already staged by this player this round
+      const existingDecisionStage = await getStagingDecision(base44, campaign_id, actingPlayer.id, round);
+      const alreadyStagedForSource = (existingDecisionStage?.data?.economic_staged ?? []).some(
+        p => p.building_type === 'supply_route' && p.source_territory_id === source_territory_id
+      );
+      if (alreadyStagedForSource) {
+        return Response.json({
+          error: `You already have a staged supply route to ${source_territory_id} this round.`,
+        }, { status: 400 });
+      }
+    }
+
     const staging = await getStagingDecision(base44, campaign_id, actingPlayer.id, round);
     const stagingData = staging?.data ?? emptyStaging();
     if (stagingData.locked_at) {

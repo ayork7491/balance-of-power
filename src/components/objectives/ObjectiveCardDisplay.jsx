@@ -19,6 +19,7 @@ export default function ObjectiveCardDisplay({
   completedEntry = null,
   selected = false,
   isOwner = false,   // true = viewing player owns this objective — show full text
+  progressData = null, // { current, required, conditionMet } for active cards
   onSelect,
   onComplete,
 }) {
@@ -89,7 +90,28 @@ export default function ObjectiveCardDisplay({
         </div>
       </div>
 
-      {/* Complete button removed — objectives are auto-completed by the system */}
+      {/* Progress bar — shown for active auto-completable cards when progressData provided */}
+      {variant === 'active' && isOwner && progressData && (
+        <div className="mt-2 space-y-1">
+          <div className="flex items-center justify-between text-[10px]">
+            <span className="text-muted-foreground">Progress</span>
+            <span className={`font-mono font-bold ${progressData.conditionMet ? 'text-green-400' : catCfg.color}`}>
+              {progressData.conditionMet ? '✓ Complete' : `${progressData.current} / ${progressData.required}`}
+            </span>
+          </div>
+          <div className="w-full bg-muted/20 rounded-full h-1 overflow-hidden">
+            <div
+              className={`h-1 rounded-full transition-all duration-300 ${progressData.conditionMet ? 'bg-green-500' : 'bg-current opacity-60'}`}
+              style={{
+                width: progressData.required > 0
+                  ? `${Math.min(100, Math.round((progressData.current / progressData.required) * 100))}%`
+                  : progressData.conditionMet ? '100%' : '0%',
+                color: progressData.conditionMet ? undefined : catCfg.color.replace('text-', '').replace('-400', ''),
+              }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

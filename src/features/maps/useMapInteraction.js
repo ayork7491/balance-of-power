@@ -146,8 +146,9 @@ export function useMapInteraction({
         break;
       }
 
-      case 'attack': {
-        // Attack phase: two-step selection
+      case 'attack':
+      case 'operations': {
+        // Attack/Operations phase: two-step selection
         if (!attackOriginId) {
           // First click: select attack origin (must own)
           if (isOwnedByActingPlayer(territoryId) && state?.troop_count > 0) {

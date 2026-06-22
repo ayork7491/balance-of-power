@@ -974,13 +974,70 @@ Deno.serve(async (req) => {
       }
     }
 
-    // REVEAL: Process safe caravans — move resources between territories
+    // REVEAL: Process caravans — safe ones deliver immediately, unsafe ones generate battle cards
     const RESOURCES = ['gold','iron','timber','stone','food'];
     const resourceChanges = {}; // territory_id -> { gold, iron, ... } delta
+    const DEFAULT_AVG_BATTLE_SIZE = 1000;
     for (const dec of finalDecisions) {
       const caravans = dec.data?.caravans ?? [];
       for (const caravan of caravans) {
-        if (!caravan.safe) continue; // unsafe caravans only move after battle resolution
+        if (!caravan.safe) {
+          // Unsafe caravan — generate supply_caravan_escort BattleCard instead of delivering
+          const { origin, destination, contents, path, enemy_territories } = caravan;
+          if (!origin || !destination || !contents) continue;
+          // Idempotency: skip if card already exists for this caravan
+          const existingEscortCards = await base44.asServiceRole.entities.BattleCard.filter({
+            campaign_id, round, source_player_id: dec.player_id, battle_card_source: 'supply_caravan_escort',
+          });
+          const alreadyExists = existingEscortCards.some(c =>
+            c.source_operation_metadata?.shipment_origin === origin &&
+            c.source_operation_metadata?.shipment_destination === destination
+          );
+          if (!alreadyExists) {
+            // Use first enemy territory as the contested territory
+            const targetTerritoryId = (enemy_territories ?? [])[0] ?? destination;
+            const allStatesForEscort = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+            const targetState = allStatesForEscort.find(s => s.territory_id === targetTerritoryId);
+            const defenderPlayerId = targetState?.owner_player_id ?? null;
+            const defenderTroops = targetState?.troop_count ?? 0;
+            // Escort force: 20% of destination garrison or 50 min
+            const destState = allStatesForEscort.find(s => s.territory_id === destination);
+            const escortTroops = Math.max(50, Math.floor((destState?.troop_count ?? 0) * 0.2));
+            const totalTroops = escortTroops + defenderTroops;
+            const scaleFactor = parseFloat(Math.max(totalTroops / DEFAULT_AVG_BATTLE_SIZE, 1).toFixed(2));
+            const tabletopSize = Math.round(totalTroops / scaleFactor);
+            await base44.asServiceRole.entities.BattleCard.create({
+              campaign_id, round,
+              battle_type: 'supply_caravan_escort',
+              battle_pillar: 'economic',
+              target_territory_id: targetTerritoryId,
+              defender_player_id: defenderPlayerId,
+              defender_troops: defenderTroops,
+              attackers: [{ player_id: dec.player_id, origin_territory_id: origin, committed_troops: escortTroops }],
+              total_attacking_troops: escortTroops,
+              total_troops_in_battle: totalTroops,
+              scale_factor: scaleFactor,
+              tabletop_size: tabletopSize,
+              status: 'pending',
+              is_mutual: false,
+              battle_preferences: {},
+              battle_card_source: 'supply_caravan_escort',
+              source_player_id: dec.player_id,
+              source_operation_metadata: {
+                shipment_origin: origin,
+                shipment_destination: destination,
+                shipment_contents: contents,
+                path,
+                enemy_territories: enemy_territories ?? [],
+                caravan_id: caravan.id,
+              },
+            });
+          }
+          await log(base44, campaign_id, round, phase, 'caravan_escort_battle_generated', dec.player_id, {
+            origin, destination, contents, enemy_territories: enemy_territories ?? [], caravan_id: caravan.id,
+          }, false);
+          continue; // Do NOT deliver resources — held until battle resolves
+        }
         const { origin, destination, contents } = caravan;
         if (!origin || !destination || !contents) continue;
         if (!resourceChanges[origin])      resourceChanges[origin]      = {};

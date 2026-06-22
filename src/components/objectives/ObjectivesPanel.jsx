@@ -67,6 +67,45 @@ export default function ObjectivesPanel({
   const completed = state?.completed ?? [];
   const discarded = state?.discarded ?? [];
 
+  // Compute progress data for each active card based on current game state
+  const ownedTerritoryIds = Object.values(stateById)
+    .filter(ts => ts.owner_player_id === actingPlayer?.id)
+    .map(ts => ts.territory_id);
+
+  function computeProgressData(cardDef) {
+    if (!cardDef) return null;
+    const condition = cardDef.completion_condition ?? cardDef.trigger_condition ?? '';
+    if (!condition) return null;
+    if (condition.startsWith('hold_territories:') || condition.startsWith('territories_count:')) {
+      const required = parseInt(condition.split(':')[1]) || 0;
+      return { current: ownedTerritoryIds.length, required, conditionMet: ownedTerritoryIds.length >= required };
+    }
+    if (condition.startsWith('hold_region:')) {
+      const regionId = condition.split(':')[1];
+      // Count territories in region vs owned in region
+      const allTs = Object.values(stateById);
+      const SC_TERRITORY_REGION = {
+        I8:'outer_passes',I4:'outer_passes',I6:'outer_passes',I7:'outer_passes',
+        I1:'high_crown',I2:'high_crown',I3:'high_crown',I5:'high_crown',
+        W1:'northern_wilds',W2:'northern_wilds',W3:'northern_wilds',W4:'northern_wilds',W5:'northern_wilds',
+        W6:'deepwoods',W7:'deepwoods',W8:'deepwoods',W9:'deepwoods',
+        B1:'northern_ruins',B3:'northern_ruins',B2:'northern_ruins',B4:'northern_ruins',
+        B5:'central_crossroads',B6:'central_crossroads',B7:'central_crossroads',
+        B8:'southern_ruins',B9:'southern_ruins',B10:'southern_ruins',
+        S1:'western_plains',S4:'western_plains',S7:'western_plains',S2:'western_plains',
+        S5:'eastern_granaries',S8:'eastern_granaries',S3:'eastern_granaries',
+        S6:'eastern_granaries',S9:'eastern_granaries',
+        C1:'northern_isles',C2:'northern_isles',C3:'northern_isles',C4:'northern_isles',
+        C5:'southern_fractures',C6:'southern_fractures',C7:'southern_fractures',C8:'southern_fractures',
+      };
+      const regionTs = allTs.filter(ts => SC_TERRITORY_REGION[ts.territory_id] === regionId);
+      const ownedInRegion = regionTs.filter(ts => ts.owner_player_id === actingPlayer?.id).length;
+      const required = regionTs.length;
+      return { current: ownedInRegion, required, conditionMet: required > 0 && ownedInRegion >= required };
+    }
+    return null;
+  }
+
   return (
     <div className="px-3 pt-3 pb-2 space-y-4">
       {/* Header */}
@@ -137,6 +176,7 @@ export default function ObjectivesPanel({
                     cardDef={cardDefs[cid]}
                     variant="active"
                     isOwner={true}
+                    progressData={computeProgressData(cardDefs[cid])}
                   />
                 ))}
               </div>

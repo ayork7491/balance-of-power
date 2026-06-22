@@ -652,15 +652,11 @@ Deno.serve(async (req) => {
       );
       if (alreadyDone) continue;
 
-      // ── Evaluate trigger_condition ──────────────────────────────────────
-      // Supported conditions (extend as objective catalog grows):
-      //   hold_territories:<count>          — own at least N territories
-      //   hold_region:<region_id>           — own ALL territories in a region
-      //   influence_pool:<region>:<min>     — have >= min spendable influence in region
-      //   territories_count:<min>           — alias for hold_territories
+      // ── Evaluate condition ──────────────────────────────────────────────
+      // Uses completion_condition (canonical); falls back to trigger_condition (legacy).
       let conditionMet = false;
-      const condition = cardDef.trigger_condition ?? '';
-      const params    = cardDef.metadata_json ?? {};
+      const condition = cardDef.completion_condition ?? cardDef.trigger_condition ?? '';
+      const params    = cardDef.condition_params ?? cardDef.metadata_json ?? {};
 
       if (condition.startsWith('hold_territories:') || condition.startsWith('territories_count:')) {
         const required = parseInt(condition.split(':')[1]) || (params.count ?? 0);
@@ -765,9 +761,9 @@ Deno.serve(async (req) => {
         );
         if (alreadyDone) continue;
 
-        // Evaluate condition
+        // Evaluate condition — use completion_condition (canonical) with trigger_condition as fallback
         let conditionMet = false;
-        const condition = cardDef.trigger_condition ?? '';
+        const condition = cardDef.completion_condition ?? cardDef.trigger_condition ?? '';
 
         if (condition.startsWith('hold_territories:') || condition.startsWith('territories_count:')) {
           const required = parseInt(condition.split(':')[1]) || 0;
