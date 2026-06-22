@@ -79,6 +79,7 @@ export default function InitialDeployPanel({
   // Capital state — loaded during staging so player can set before locking
   const [capitalData, setCapitalData] = useState(null);
   const [capitalLoading, setCapitalLoading] = useState(false);
+  const [capitalSaving, setCapitalSaving] = useState(false);
   useEffect(() => {
     if (!campaign?.id || !myPlayer?.id) return;
     setCapitalLoading(true);
@@ -87,6 +88,22 @@ export default function InitialDeployPanel({
       campaign_id: campaign.id,
     }).then(res => setCapitalData(res.data)).catch(() => {}).finally(() => setCapitalLoading(false));
   }, [campaign?.id, myPlayer?.id]);
+
+  const handleCapitalSelected = async (tid) => {
+    setCapitalSaving(true);
+    try {
+      await base44.functions.invoke('territoryDevelopment', {
+        action: 'setCapital',
+        campaign_id: campaign.id,
+        territory_id: tid,
+      });
+      setCapitalData(prev => ({ ...prev, capital_territory_id: tid }));
+    } catch (err) {
+      console.error('Failed to set capital:', err);
+    } finally {
+      setCapitalSaving(false);
+    }
+  };
 
   const capitalTerritories = useMemo(() =>
     myTerritories.map(ts => ({
@@ -248,15 +265,12 @@ export default function InitialDeployPanel({
             <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="w-3 h-3 animate-spin" /> Loading…</div>
           ) : (
             <CapitalSelector
-              campaign={campaign}
-              myPlayer={myPlayer}
               territories={capitalTerritories}
               currentCapitalId={capitalData?.capital_territory_id ?? null}
-              lastSetRound={null}
-              onCapitalSet={(tid) => setCapitalData(prev => ({ ...prev, capital_territory_id: tid }))}
-              allowChangeLabel="Set Capital"
+              onCapitalSelected={handleCapitalSelected}
             />
           )}
+          {capitalSaving && <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="w-3 h-3 animate-spin" /> Saving capital…</div>}
         </div>
       )}
 

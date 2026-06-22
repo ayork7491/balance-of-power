@@ -73,7 +73,9 @@ export default function CapitalSelector({
           <option key={t.territory_id} value={t.territory_id}>{t.name}</option>
         ))}
       </select>
-      <p className="text-[10px] text-muted-foreground italic">Selection committed when you lock the Planning Phase.</p>
+      {stagedCapitalId === undefined && (
+        <p className="text-[10px] text-muted-foreground italic">Selection committed when you lock the Planning Phase.</p>
+      )}
     </div>
   );
 }
