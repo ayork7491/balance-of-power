@@ -34,8 +34,8 @@ export default function InitialDeployPanel({
 
   // My owned territories
   const myTerritories = useMemo(
-    () => Object.values(stateById).filter(s => s.owner_player_id === myPlayer?.id),
-    [stateById, myPlayer?.id],
+    () => Object.values(stateById).filter(s => s.owner_player_id === (actingAsPlayer?.id ?? myPlayer?.id)),
+    [stateById, actingAsPlayer?.id, myPlayer?.id],
   );
 
   // Own deployment logic (only my PhaseDecision)
@@ -86,8 +86,9 @@ export default function InitialDeployPanel({
     base44.functions.invoke('territoryDevelopment', {
       action: 'getPlayerDevelopment',
       campaign_id: campaign.id,
+      acting_as_player_id: actingAsCampaignPlayerId || undefined,
     }).then(res => setCapitalData(res.data)).catch(() => {}).finally(() => setCapitalLoading(false));
-  }, [campaign?.id, myPlayer?.id]);
+  }, [campaign?.id, myPlayer?.id, actingAsCampaignPlayerId]);
 
   const handleCapitalSelected = async (tid) => {
     setCapitalSaving(true);
@@ -96,6 +97,7 @@ export default function InitialDeployPanel({
         action: 'setCapital',
         campaign_id: campaign.id,
         territory_id: tid,
+        acting_as_player_id: actingAsCampaignPlayerId || undefined,
       });
       setCapitalData(prev => ({ ...prev, capital_territory_id: tid }));
     } catch (err) {
