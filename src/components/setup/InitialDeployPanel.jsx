@@ -284,12 +284,12 @@ export default function InitialDeployPanel({
         </div>
       )}
 
-      {/* Capital not set warning */}
+      {/* Capital not set hint */}
       {!isLocked && !capitalData?.capital_territory_id && !capitalLoading && (
         <div className="flex items-start gap-2 px-3 py-2 rounded border border-amber-400/40 bg-amber-400/10 text-xs">
           <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
           <span className="text-amber-400">
-            You must designate a capital territory before locking.
+            No capital set — one will be auto-assigned on reveal if not chosen.
           </span>
         </div>
       )}
@@ -309,7 +309,7 @@ export default function InitialDeployPanel({
           </button>
           <button
             onClick={handleLockAndRefresh}
-            disabled={submitting || troopsRemaining !== 0 || !capitalData?.capital_territory_id}
+            disabled={submitting || troopsRemaining !== 0}
             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded bg-primary text-primary-foreground text-xs font-display tracking-wider uppercase hover:brightness-110 disabled:opacity-40"
           >
             {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}

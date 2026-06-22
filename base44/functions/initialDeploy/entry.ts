@@ -205,18 +205,6 @@ Deno.serve(async (req) => {
       }, { status: 400 });
     }
 
-    // ── Capital validation: must set capital before locking ────────────────
-    const capitalDevRecords = await base44.asServiceRole.entities.TerritoryDevelopment.filter({
-      campaign_id, owner_player_id: actingPlayer.id,
-    });
-    const hasCapital = capitalDevRecords.some(d => d.is_capital);
-    if (!hasCapital) {
-      return Response.json({
-        error: 'You must designate a capital territory before locking your deployment.',
-        validation_error: 'capital_not_set',
-      }, { status: 400 });
-    }
-
     await base44.entities.PhaseDecision.update(decision.id, {
       is_locked: true,
       locked_at: new Date().toISOString(),
