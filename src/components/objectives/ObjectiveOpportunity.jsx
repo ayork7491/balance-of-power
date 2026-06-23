@@ -55,7 +55,10 @@ export default function ObjectiveOpportunity({
   const [stagingDone, setStagingDone] = useState(!!localDiplo?.kept_card_id);
 
   const hasPending = pendingDraw && pendingDraw.length > 0;
-  const atCap = (currentHeld?.length ?? 0) >= MAX_HAND;
+  // Use server-reported held_count as the authoritative source for cap detection,
+  // falling back to prop length. This prevents mismatches with the lock bar's own check.
+  const serverHeldCount = planningStatus?.diplomatic?.held_count ?? (currentHeld?.length ?? 0);
+  const atCap = serverHeldCount >= MAX_HAND;
   const diplomaticLocked = planningStatus?.diplomatic?.is_locked ?? false;
   const diplomaticStaged = localDiplo ?? planningStatus?.diplomatic?.diplomatic_staged;
 
@@ -257,11 +260,12 @@ export default function ObjectiveOpportunity({
 
       {atCap && selectedCard && (
         <div className="space-y-1.5">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
-            Replace which active objective?
+          <p className="text-[10px] text-amber-400 font-medium">
+            ⚠ Your hand is full (3/3). Select a card to discard:
           </p>
           <div className="space-y-1">
-            {currentHeld.map(cid => {
+            {/* Existing held cards */}
+            {(currentHeld ?? []).map(cid => {
               const def = cardDefinitions?.[cid];
               const catCfg = def ? OBJECTIVE_CATEGORY_CONFIG[def.category] : null;
               return (
@@ -280,6 +284,29 @@ export default function ObjectiveOpportunity({
                 </button>
               );
             })}
+            {/* Newly selected card — player can discard it instead */}
+            {selectedCard && (() => {
+              const def = cardDefinitions?.[selectedCard];
+              const catCfg = def ? OBJECTIVE_CATEGORY_CONFIG[def.category] : null;
+              return (
+                <button
+                  key={selectedCard}
+                  onClick={() => handleSelectReplace(selectedCard)}
+                  className={[
+                    'w-full text-left px-2.5 py-1.5 rounded border text-xs flex items-center justify-between transition-all',
+                    replaceCard === selectedCard
+                      ? 'border-destructive/60 bg-destructive/10 text-destructive'
+                      : 'border-dashed border-border text-muted-foreground hover:border-muted-foreground',
+                  ].join(' ')}
+                >
+                  <span className="flex items-center gap-1">
+                    {catCfg?.icon} {def?.title ?? selectedCard}
+                    <span className="text-[9px] text-muted-foreground italic">(newly drawn)</span>
+                  </span>
+                  {replaceCard === selectedCard && <Check className="w-3 h-3" />}
+                </button>
+              );
+            })()}
           </div>
         </div>
       )}
