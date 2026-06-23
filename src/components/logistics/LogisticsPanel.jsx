@@ -25,7 +25,7 @@ export default function LogisticsPanel({ campaign, myPlayer, mapDef }) {
     hubs, hub_count, caravan_capacity, active_routes,
     total_route_capacity, routes, warehouse_territories,
     loading, error, reload,
-  } = usePlayerLogistics({ campaignId: campaign?.id, playerId: myPlayer?.id });
+  } = usePlayerLogistics({ campaignId: campaign?.id, playerId: myPlayer?.id, enabled: true });
 
   const [collecting, setCollecting] = useState(false);
   const [collectResult, setCollectResult] = useState(null);

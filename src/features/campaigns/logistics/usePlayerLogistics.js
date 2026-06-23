@@ -20,13 +20,13 @@ const EMPTY_STATE = {
   warehouse_territories: [],
 };
 
-export function usePlayerLogistics({ campaignId, playerId }) {
+export function usePlayerLogistics({ campaignId, playerId, enabled = false }) {
   const [state, setState] = useState(EMPTY_STATE);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
   const load = useCallback(async () => {
-    if (!campaignId || !playerId) {
+    if (!campaignId || !playerId || !enabled) {
       setState(EMPTY_STATE);
       return;
     }

@@ -71,14 +71,14 @@ function PlayerVictoryRow({ tracker, player, thresholds }) {
   );
 }
 
-export default function VictoryProgressPanel({ campaign, players }) {
+export default function VictoryProgressPanel({ campaign, players, enabled = false }) {
   const [trackers, setTrackers] = useState([]);
   const [thresholds, setThresholds] = useState(VICTORY_THRESHOLDS);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
   const load = useCallback(async () => {
-    if (!campaign?.id) return;
+    if (!campaign?.id || !enabled) return;
     setLoading(true);
     setError(null);
     try {
@@ -95,7 +95,7 @@ export default function VictoryProgressPanel({ campaign, players }) {
     }
   }, [campaign?.id]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (enabled) load(); }, [load, enabled]);
 
   const activePlayers = players?.filter(p => !p.is_eliminated) ?? [];
 

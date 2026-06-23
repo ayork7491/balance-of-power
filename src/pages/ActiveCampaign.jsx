@@ -2,7 +2,7 @@
  * ActiveCampaign — primary gameplay screen.
  * Refactored for maintainability: routers extracted, logic simplified.
  */
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useParams } from 'react-router-dom';
 
@@ -31,7 +31,6 @@ import { useCampaign } from '@/features/campaigns';
 import { getMap, buildAdjacencyMap, buildTypedAdjacencyMap } from '@/features/maps';
 import { usePhaseViewState } from '@/features/maps/usePhaseViewState';
 import { CampaignTestModeProvider, useCampaignTestContext } from '@/features/adminTestMode/CampaignTestContext';
-import { usePlayerLogistics } from '@/features/campaigns/logistics/usePlayerLogistics';
 import { base44 } from '@/api/base44Client';
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
@@ -171,18 +170,22 @@ function ActiveCampaignContent() {
     myPlayer,
   });
 
-  // Logistics state — hubs, routes, warehouses for myPlayer
-  const { hubs: logisticsHubs, reload: reloadLogistics } = usePlayerLogistics({
-    campaignId: id,
-    playerId: myPlayer?.id,
-  });
+  // Track last-known phase+round so we can avoid redundant phaseViewState reloads
+  const prevPhaseRef = useRef(null);
+  const prevRoundRef = useRef(null);
 
-  // Re-fetch campaign + full phase view when a phase action completes
-  const handlePhaseChanged = useCallback(() => {
-    reloadCampaign();
+  // Coordinated refresh after a phase action or lock-in.
+  // - Always reloads campaign (lightweight — detects phase/round change)
+  // - Only reloads phaseViewState if phase or round actually changed
+  const handlePhaseChanged = useCallback(async () => {
+    // Reload campaign first to get updated phase/round
+    await reloadCampaign();
+    // Always refresh state after a phase action — the campaign ref may not
+    // have updated yet in this closure, so reload unconditionally here.
     reloadState();
-    reloadLogistics();
-  }, [reloadCampaign, reloadState, reloadLogistics]);
+    prevPhaseRef.current = null; // reset so next campaign reload re-evaluates
+    prevRoundRef.current = null;
+  }, [reloadCampaign, reloadState]);
 
   // Attack reveals — loaded after attack phase ends (post-reveal)
   const { reveals: attackReveals } = useAttackReveals({
@@ -207,12 +210,18 @@ function ActiveCampaignContent() {
     delayedBattleCards,
   });
 
-  // Index hubs by territory_id for O(1) lookup in TerritoryDetailPanel
+  // Index supply routes by hub territory_id for TerritoryDetailPanel lookup
+  // Uses allSupplyRoutes from phaseViewState — no separate logistics fetch needed.
   const hubsByTerritoryId = useMemo(() => {
     const m = {};
-    for (const h of logisticsHubs) m[h.territory_id] = h;
+    for (const route of allSupplyRoutes) {
+      const tid = route.hub_territory_id;
+      if (!m[tid]) m[tid] = { territory_id: tid, routes: [], route_capacity: 3, routes_used: 0 };
+      m[tid].routes.push(route);
+      if (route.route_status === 'active') m[tid].routes_used = (m[tid].routes_used ?? 0) + 1;
+    }
     return m;
-  }, [logisticsHubs]);
+  }, [allSupplyRoutes]);
 
   // Set of capital territory IDs for map crown icons
   const capitalTerritoryIds = useMemo(() => {

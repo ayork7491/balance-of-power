@@ -42,15 +42,16 @@ export default function WorldStatusPanel({ campaign, players, mapDef, stateById 
         ))}
       </div>
 
+      {/* Only mount panels when their tab is active — prevents background fetches */}
       {activeSection === 'standings' && (
-        <LeaderboardPanel campaign={campaign} players={players} />
+        <LeaderboardPanel campaign={campaign} players={players} enabled={true} />
       )}
 
       {activeSection === 'victory' && (
         <div className="space-y-0">
           <VictorySummaryPanel players={players} />
           <div className="border-t border-border">
-            <VictoryProgressPanel campaign={campaign} players={players} />
+            <VictoryProgressPanel campaign={campaign} players={players} enabled={true} />
           </div>
         </div>
       )}

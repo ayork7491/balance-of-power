@@ -44,7 +44,7 @@ export function usePhaseViewState({
     setLoading(true);
     setError(null);
     const loadStart = performance.now();
-    console.log('[usePhaseViewState] fetch triggered', { campaignId, actingAsPlayerId, phase, round });
+    console.log('[usePhaseViewState] fetch triggered', { campaignId, actingAsPlayerId, phase, round, ts: new Date().toISOString() });
     try {
       const res = await base44.functions.invoke('getPhaseViewState', {
         campaign_id: campaignId,

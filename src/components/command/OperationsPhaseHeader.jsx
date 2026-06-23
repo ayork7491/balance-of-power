@@ -77,43 +77,41 @@ export default function OperationsPhaseHeader({
     if (!status) setLoading(true);
 
     try {
-      const [statusRes, adminRes] = await Promise.allSettled([
-        base44.functions.invoke('operationsLockPhase', {
+      // Single merged call — include_admin_status bundles admin lock state inline
+      let statusRes;
+      try {
+        statusRes = await base44.functions.invoke('operationsLockPhase', {
           action: 'getOperationsStatus',
           campaign_id: campaign.id,
           acting_as_player_id: actingAsPlayerId ?? undefined,
-        }),
-        base44.functions.invoke('operationsLockPhase', {
-          action: 'getAdminLockStatus',
-          campaign_id: campaign.id,
-        }),
-      ]);
-
-      if (statusRes.status === 'fulfilled') {
-        const serverStatus = statusRes.value.data;
-        setStatus(serverStatus);
-        onStatusLoaded?.(serverStatus);
-        setError(null);
-        retryRef.current = null;
-
-        if (serverStatus?.operations_locked) {
-          stagingStore.clearAll();
-        } else {
-          // Restore from localStorage or seed from server (only on initial load)
-          const localEcon = stagingStore.getEconomicStaging();
-          const localDiplo = stagingStore.getDiplomaticStaging();
-          onEconomicLocalChange?.(localEcon ?? (serverStatus?.economic?.staged ?? []));
-          onDiplomaticLocalChange?.(localDiplo ?? (serverStatus?.diplomatic?.staged ?? []));
-        }
-      } else {
-        const msg = statusRes.reason?.response?.data?.error ?? statusRes.reason?.message ?? '';
+          include_admin_status: true,
+        });
+      } catch (err) {
+        const msg = err?.response?.data?.error ?? err?.message ?? '';
         console.warn('[OperationsPhaseHeader] load error (suppressed):', msg);
         if (!retryRef.current) {
           retryRef.current = setTimeout(() => { retryRef.current = null; load(true); }, 3000);
         }
+        return;
       }
 
-      if (adminRes.status === 'fulfilled') setAdminStatus(adminRes.value.data);
+      const serverStatus = statusRes.data;
+      setStatus(serverStatus);
+      onStatusLoaded?.(serverStatus);
+      setError(null);
+      retryRef.current = null;
+
+      if (serverStatus?.operations_locked) {
+        stagingStore.clearAll();
+      } else {
+        // Restore from localStorage or seed from server (only on initial load)
+        const localEcon = stagingStore.getEconomicStaging();
+        const localDiplo = stagingStore.getDiplomaticStaging();
+        onEconomicLocalChange?.(localEcon ?? (serverStatus?.economic?.staged ?? []));
+        onDiplomaticLocalChange?.(localDiplo ?? (serverStatus?.diplomatic?.staged ?? []));
+      }
+
+      if (serverStatus?.admin_lock_status) setAdminStatus(serverStatus.admin_lock_status);
     } finally {
       setLoading(false);
     }

@@ -8,8 +8,8 @@ import PlayerColorDot from '@/components/ui/PlayerColorDot';
 import VictoryProgressPanel from '@/components/campaigns/VictoryProgressPanel';
 import VictorySummaryPanel from '@/components/campaigns/VictorySummaryPanel';
 
-export default function LeaderboardPanel({ campaign, players, trackers = [], thresholds }) {
-  const { leaderboard, isLoading, error } = useLeaderboard(campaign?.id);
+export default function LeaderboardPanel({ campaign, players, trackers = [], thresholds, enabled = false }) {
+  const { leaderboard, isLoading, error } = useLeaderboard(campaign?.id, enabled);
 
   if (isLoading) {
     return (

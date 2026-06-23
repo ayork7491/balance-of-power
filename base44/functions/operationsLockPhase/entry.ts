@@ -225,12 +225,37 @@ Deno.serve(async (req) => {
 
     const operationsLocked = !!staging.locked_at;
 
+    // Optionally bundle admin lock status inline (saves a separate getAdminLockStatus call)
+    let adminLockStatus = null;
+    if (body.include_admin_status) {
+      const activePl = players.filter(p => !p.is_eliminated);
+      const [stagingRecs, attackDecs] = await Promise.all([
+        base44.asServiceRole.entities.PhaseDecision.filter({ campaign_id, phase: 'operations_stage', round }),
+        base44.asServiceRole.entities.PhaseDecision.filter({ campaign_id, phase: 'attack', round }),
+      ]);
+      adminLockStatus = {
+        players: activePl.map(p => {
+          const s = stagingRecs.find(r => r.player_id === p.id);
+          const a = attackDecs.find(r => r.player_id === p.id);
+          const sd = s?.data ?? emptyStaging();
+          return {
+            player_id: p.id,
+            display_name: p.display_name,
+            operations_locked: !!sd.locked_at,
+            locked_at: sd.locked_at ?? null,
+            military_locked: a?.is_locked ?? sd.military_locked ?? false,
+          };
+        }),
+      };
+    }
+
     return Response.json({
       success: true,
       player_id: actingPlayer.id,
       round,
       operations_locked: operationsLocked,
       locked_at: staging.locked_at ?? null,
+      admin_lock_status: adminLockStatus,
       military: {
         attacks_staged: stagedAttacks.length,
         attacks_limit: maxAttacks,
