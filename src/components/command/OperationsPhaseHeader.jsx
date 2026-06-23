@@ -118,8 +118,11 @@ export default function OperationsPhaseHeader({
   }, [campaign?.id, campaign?.current_phase, myPlayer?.id, actingAsPlayerId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    load();
-    return () => { if (retryRef.current) clearTimeout(retryRef.current); };
+    const timer = setTimeout(() => { load(); }, 150);
+    return () => {
+      clearTimeout(timer);
+      if (retryRef.current) clearTimeout(retryRef.current);
+    };
   }, [load]);
 
   // Persist local staging to localStorage whenever it changes,
