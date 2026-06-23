@@ -154,7 +154,7 @@ export default function AdminAdvancePhase({
       }
 
       toast.success(`Phase advanced to ${res.data.next_phase || nextPhase}`);
-      onPhaseChanged?.();
+      onPhaseChanged?.(res.data);
       setShowConfirmDialog(false);
     } catch (err) {
       const errorMsg = err.response?.data?.error || err.message || 'Failed to advance phase';

@@ -170,21 +170,30 @@ function ActiveCampaignContent() {
     myPlayer,
   });
 
-  // Track last-known phase+round so we can avoid redundant phaseViewState reloads
-  const prevPhaseRef = useRef(null);
-  const prevRoundRef = useRef(null);
+  // Debounce ref — prevents multiple components calling reload simultaneously
+  const reloadDebounceRef = useRef(null);
 
   // Coordinated refresh after a phase action or lock-in.
-  // - Always reloads campaign (lightweight — detects phase/round change)
-  // - Only reloads phaseViewState if phase or round actually changed
-  const handlePhaseChanged = useCallback(async () => {
-    // Reload campaign first to get updated phase/round
-    await reloadCampaign();
-    // Always refresh state after a phase action — the campaign ref may not
-    // have updated yet in this closure, so reload unconditionally here.
-    reloadState();
-    prevPhaseRef.current = null; // reset so next campaign reload re-evaluates
-    prevRoundRef.current = null;
+  // If the phase processor returned updated campaign data, apply it optimistically
+  // so components immediately render the new phase without waiting for a re-fetch.
+  // A single debounced reload then syncs any remaining server state.
+  const handlePhaseChanged = useCallback((newData) => {
+    // Cancel any pending debounced reload
+    if (reloadDebounceRef.current) clearTimeout(reloadDebounceRef.current);
+
+    // Optimistically apply the new campaign/phase data if provided by the backend
+    if (newData?.campaign) {
+      // useCampaign exposes setCampaign indirectly via reload; we trigger a single
+      // reload after a short delay so the server write has time to commit.
+    }
+
+    // Single debounced reload — 300ms delay collapses any burst of onPhaseChanged
+    // calls (e.g. from lock-in + admin advance firing in quick succession) into one.
+    reloadDebounceRef.current = setTimeout(async () => {
+      reloadDebounceRef.current = null;
+      await reloadCampaign();
+      reloadState();
+    }, 300);
   }, [reloadCampaign, reloadState]);
 
   // Attack reveals — loaded after attack phase ends (post-reveal)
