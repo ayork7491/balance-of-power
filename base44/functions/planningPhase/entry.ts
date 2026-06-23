@@ -1099,17 +1099,29 @@ Deno.serve(async (req) => {
         const discardedEntries = [];
 
         if (currentHeld.length >= 3) {
-          if (!replace_card_id || !currentHeld.includes(replace_card_id)) {
-            // At cap: player must choose which card to discard — never auto-discard
+          // replace_card_id can be an existing held card (swap it out) OR the kept_card_id itself
+          // (meaning: discard the new card, keep all existing held cards unchanged).
+          const isValidReplace = replace_card_id && (
+            currentHeld.includes(replace_card_id) || replace_card_id === kept_card_id
+          );
+          if (!isValidReplace) {
             return Response.json({
               error: 'You have 3 active objectives. You must select which existing objective to replace (provide replace_card_id).',
               validation_error: 'replace_card_required',
               held: currentHeld,
             }, { status: 400 });
           }
-          newHeld = currentHeld.filter(cid => cid !== replace_card_id).concat(kept_card_id);
-          discardCardIds.push(replace_card_id);
-          discardedEntries.push({ card_id: replace_card_id, discarded_round: round });
+          if (replace_card_id === kept_card_id) {
+            // Player chose to discard the newly drawn card — held remains unchanged
+            newHeld = [...currentHeld];
+            discardCardIds.push(kept_card_id);
+            discardedEntries.push({ card_id: kept_card_id, discarded_round: round });
+          } else {
+            // Player chose to replace an existing held card with the new one
+            newHeld = currentHeld.filter(cid => cid !== replace_card_id).concat(kept_card_id);
+            discardCardIds.push(replace_card_id);
+            discardedEntries.push({ card_id: replace_card_id, discarded_round: round });
+          }
         } else {
           newHeld = [...currentHeld, kept_card_id];
         }
