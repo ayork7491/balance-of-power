@@ -50,7 +50,11 @@ export function useDiplomaticActions({ campaignId, playerId, actingAsPlayerId, e
     }
   }, [campaignId, playerId, actingAsPlayerId, enabled]);
 
-  useEffect(() => { load(); }, [load]);
+  // Debounced load — stagger panel fetches to avoid thundering-herd 429s
+  useEffect(() => {
+    const timer = setTimeout(() => { load(); }, 450);
+    return () => clearTimeout(timer);
+  }, [load]);
 
   const submitAction = useCallback(async (params) => {
     const res = await base44.functions.invoke('diplomaticPhase', {

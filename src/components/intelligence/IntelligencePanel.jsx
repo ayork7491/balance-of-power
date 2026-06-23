@@ -57,7 +57,11 @@ export default function IntelligencePanel({
     }
   }, [campaignId, actingPlayer?.id]);
 
-  useEffect(() => { load(); }, [load]);
+  // Debounced load — stagger panel fetches to avoid thundering-herd 429s
+  useEffect(() => {
+    const timer = setTimeout(() => { load(); }, 600);
+    return () => clearTimeout(timer);
+  }, [load]);
 
   const handleActionSuccess = (result) => {
     setActiveAction(null);

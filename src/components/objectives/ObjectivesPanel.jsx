@@ -59,7 +59,11 @@ export default function ObjectivesPanel({
     }
   }, [campaignId, actingPlayer?.id]);
 
-  useEffect(() => { load(); }, [load]);
+  // Debounced load — prevents burst of concurrent calls on tab switch / perspective change
+  useEffect(() => {
+    const timer = setTimeout(() => { load(); }, 300);
+    return () => clearTimeout(timer);
+  }, [load]);
 
   const cardDefs = state?.card_definitions ?? {};
   const held = state?.held ?? [];
