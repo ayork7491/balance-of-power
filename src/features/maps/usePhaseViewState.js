@@ -18,6 +18,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { base44 } from '@/api/base44Client';
 
+// Debounce delay (ms) for acting-as player switches to prevent thundering-herd
+// API calls when an admin rapidly cycles through player perspectives.
+const ACTING_AS_DEBOUNCE_MS = 400;
+
 export function usePhaseViewState({
   campaignId,
   actingAsPlayerId = null,
@@ -25,6 +29,17 @@ export function usePhaseViewState({
   round,
   enabled = true,
 }) {
+  // Debounced acting-as player ID — only updates after the user stops switching
+  const [debouncedActingAsPlayerId, setDebouncedActingAsPlayerId] = useState(actingAsPlayerId);
+  const debounceTimerRef = useRef(null);
+
+  useEffect(() => {
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = setTimeout(() => {
+      setDebouncedActingAsPlayerId(actingAsPlayerId);
+    }, ACTING_AS_DEBOUNCE_MS);
+    return () => clearTimeout(debounceTimerRef.current);
+  }, [actingAsPlayerId]);
   const [stateById, setStateById]                     = useState({}); // { [territory_id]: TerritoryState }
   const [influenceByTerritory, setInfluenceByTerritory] = useState({});
   const [influenceByRegion, setInfluenceByRegion]       = useState({});
@@ -44,11 +59,11 @@ export function usePhaseViewState({
     setLoading(true);
     setError(null);
     const loadStart = performance.now();
-    console.log('[usePhaseViewState] fetch triggered', { campaignId, actingAsPlayerId, phase, round, ts: new Date().toISOString() });
+    console.log('[usePhaseViewState] fetch triggered', { campaignId, actingAsPlayerId: debouncedActingAsPlayerId, phase, round, ts: new Date().toISOString() });
     try {
       const res = await base44.functions.invoke('getPhaseViewState', {
         campaign_id: campaignId,
-        acting_as_player_id: actingAsPlayerId ?? undefined,
+        acting_as_player_id: debouncedActingAsPlayerId ?? undefined,
       });
       const data = res.data ?? {};
 
@@ -74,15 +89,15 @@ export function usePhaseViewState({
     } finally {
       setLoading(false);
     }
-  }, [campaignId, actingAsPlayerId, enabled]);
+  }, [campaignId, debouncedActingAsPlayerId, enabled]);
 
   // Reload whenever campaign, phase, round, or acting-as player changes
   useEffect(() => {
-    const key = `${campaignId}|${actingAsPlayerId}|${phase}|${round}`;
+    const key = `${campaignId}|${debouncedActingAsPlayerId}|${phase}|${round}`;
     if (key === lastLoadKey.current) return;
     lastLoadKey.current = key;
     load();
-  }, [campaignId, actingAsPlayerId, phase, round, load]);
+  }, [campaignId, debouncedActingAsPlayerId, phase, round, load]);
 
   return {
     // Territory state (compatible with existing stateById consumers)
