@@ -132,19 +132,54 @@ export default function ObjectiveOpportunity({
     );
   }
 
-  // Staged but not yet committed
+  // Staged but not yet committed — if at cap and no replace card chosen, show replace picker
   if (stagingDone || (diplomaticStaged?.kept_card_id && !hasPending)) {
     const keptId = diplomaticStaged?.kept_card_id ?? selectedCard;
     const keptDef = keptId ? cardDefinitions?.[keptId] : null;
+    const needsReplaceSelection = atCap && !replaceCard;
+
     return (
       <div className="space-y-2">
         <div className="flex items-center gap-2 px-3 py-2.5 rounded border border-purple-500/30 bg-purple-500/10 text-xs text-purple-400">
           <Clock className="w-3.5 h-3.5" />
           Objective staged: <span className="font-medium ml-1">{keptDef?.title ?? keptId}</span>
         </div>
-        <p className="text-[10px] text-muted-foreground text-center">
-          Will be committed when you lock in Planning Phase.
-        </p>
+
+        {/* At hand cap — must choose which existing card to discard */}
+        {needsReplaceSelection && (
+          <div className="space-y-1.5">
+            <p className="text-[10px] text-amber-400 font-medium">
+              ⚠ Your hand is full (3/3). Select an objective to discard:
+            </p>
+            <div className="space-y-1">
+              {(currentHeld ?? []).map(cid => {
+                const def = cardDefinitions?.[cid];
+                const catCfg = def ? OBJECTIVE_CATEGORY_CONFIG[def.category] : null;
+                return (
+                  <button
+                    key={cid}
+                    onClick={() => handleSelectReplace(cid)}
+                    className={[
+                      'w-full text-left px-2.5 py-1.5 rounded border text-xs flex items-center justify-between transition-all',
+                      replaceCard === cid
+                        ? 'border-destructive/60 bg-destructive/10 text-destructive'
+                        : 'border-border text-muted-foreground hover:border-muted-foreground',
+                    ].join(' ')}
+                  >
+                    <span>{catCfg?.icon} {def?.title ?? cid}</span>
+                    {replaceCard === cid && <Check className="w-3 h-3" />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {!needsReplaceSelection && (
+          <p className="text-[10px] text-muted-foreground text-center">
+            Will be committed when you lock in Planning Phase.
+          </p>
+        )}
       </div>
     );
   }

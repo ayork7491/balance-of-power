@@ -330,7 +330,7 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
         <p className="text-[10px] text-muted-foreground">
           {!militaryReady ? '· Stage troops ' : ''}
           {!economicReady ? '· Stage activations ' : ''}
-          {!diplomaticReady ? '· Select objective ' : ''}
+          {!diplomaticReady ? (needsReplace ? '· Discard an objective card (hand full) ' : '· Select objective ') : ''}
           to unlock
         </p>
       )}
