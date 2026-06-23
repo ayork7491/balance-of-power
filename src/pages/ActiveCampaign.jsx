@@ -321,7 +321,7 @@ function ActiveCampaignContent() {
   // Use attackOriginId (set by map interaction, survives TerritoryDetailPanel close)
   // so that red highlights persist even after the detail popup is dismissed.
   const attackableIds = useMemo(() => {
-    if (phase !== 'attack' || !effectivePlayer || !mapDef) return new Set();
+    if ((phase !== 'attack' && phase !== 'operations') || !effectivePlayer || !mapDef) return new Set();
     const originId = attackOriginId ?? selectedTerritoryId;
     if (!originId) return new Set();
     const isOwn = stateById[originId]?.owner_player_id === effectivePlayer.id;
@@ -422,7 +422,7 @@ function ActiveCampaignContent() {
           />
 
           {/* Attack staging overlay — shown on map when origin + target are both set */}
-          {phase === 'attack' && attackOriginId && attackPreselectedTargetId && (
+          {(phase === 'attack' || phase === 'operations') && attackOriginId && attackPreselectedTargetId && (
             <AttackStagingOverlay
               originId={attackOriginId}
               targetId={attackPreselectedTargetId}
@@ -448,8 +448,8 @@ function ActiveCampaignContent() {
             />
           )}
 
-          {/* Territory detail panel — shown in all phases except during attack staging */}
-          {!(phase === 'attack' && attackOriginId)
+          {/* Territory detail panel — shown in all phases except during active attack staging */}
+          {!((phase === 'attack' || phase === 'operations') && attackOriginId && attackPreselectedTargetId)
             && selectedTerritory && (() => {
             // Draft phase: compute if it's the acting player's turn
             const setupOrder     = campaign?.setup_order ?? [];

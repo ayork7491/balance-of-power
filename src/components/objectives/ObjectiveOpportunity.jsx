@@ -232,7 +232,7 @@ export default function ObjectiveOpportunity({
       )}
 
       {atCap && !replaceCard && selectedCard && (
-        <p className="text-[10px] text-amber-400">Select an objective above to replace.</p>
+        <p className="text-[10px] text-amber-400">⚠ You must choose which objective to replace before locking.</p>
       )}
       <p className="text-[10px] text-muted-foreground text-center">
         Selection will commit when you lock in Planning Phase.

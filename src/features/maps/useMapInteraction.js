@@ -174,6 +174,7 @@ export function useMapInteraction({
             // Clicked same origin again — clear attack mode and open territory popup
             setAttackOriginId(null);
             setInteractionMode('view_only');
+            onSelect(null); // force panel to close/reopen
             onSelect(territoryId);
           } else if (isOwnedByActingPlayer(territoryId)) {
             // Clicked another own territory - change origin

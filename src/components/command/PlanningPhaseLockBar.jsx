@@ -217,7 +217,10 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
   const economicLocalReady = economicLimit === 0 || economicStaged >= economicLimit;
 
   const diplomaticLocalStaged = localDiplomaticStaging ?? diplomatic?.diplomatic_staged ?? null;
-  const diplomaticLocalReady  = !diplomatic?.required || !!diplomaticLocalStaged;
+  // Block lock if player is at hand cap and hasn't chosen a card to replace
+  const heldCount = diplomatic?.held_count ?? 0;
+  const needsReplace = heldCount >= 3 && !!diplomaticLocalStaged?.kept_card_id && !diplomaticLocalStaged?.replace_card_id;
+  const diplomaticLocalReady  = !diplomatic?.required || (!!diplomaticLocalStaged && !needsReplace);
 
   // Determine readiness (server locked state takes priority; local state used when not yet locked)
   const militaryReady   = military?.is_locked || militaryLocalReady;

@@ -1006,8 +1006,11 @@ Deno.serve(async (req) => {
             const totalTroops = escortTroops + defenderTroops;
             const scaleFactor = parseFloat(Math.max(totalTroops / DEFAULT_AVG_BATTLE_SIZE, 1).toFixed(2));
             const tabletopSize = Math.round(totalTroops / scaleFactor);
+            // Schedule for NEXT round's Conflict phase so it appears correctly after phase advance
+            const escortRound = round + 1;
             await base44.asServiceRole.entities.BattleCard.create({
-              campaign_id, round,
+              campaign_id,
+              round: escortRound,
               battle_type: 'supply_caravan_escort',
               battle_pillar: 'economic',
               target_territory_id: targetTerritoryId,
@@ -1030,6 +1033,8 @@ Deno.serve(async (req) => {
                 path,
                 enemy_territories: enemy_territories ?? [],
                 caravan_id: caravan.id,
+                generated_from_round: round,
+                resolves_in_round: escortRound,
               },
             });
           }

@@ -509,11 +509,7 @@ Deno.serve(async (req) => {
     });
 
     // ── Auto-evaluate held objectives before dealing new cards ─────────────
-    // This runs inline here (no local imports allowed) by delegating to objectivePhase
-    // via base44.functions.invoke (service-role call not available cross-function;
-    // evaluation logic is light so we do a minimal inline check here).
-    // Full evaluation is available via objectivePhase/evaluateObjectives.
-    // We call it as a best-effort fire-and-forget — errors don't block dealing.
+    // Best-effort, non-blocking. Full per-player evaluation runs at lockPlanningPhase.
     try {
       await base44.functions.invoke('objectivePhase', {
         action: 'evaluateObjectives',
@@ -821,15 +817,20 @@ Deno.serve(async (req) => {
           });
         }
 
-        // ── Supply route bonus: if any activated territory is a Resource Hub,
-        // also collect resources from each active supply route's source territory.
-        const activeSupplyRoutes = await base44.asServiceRole.entities.SupplyRoute.filter({
-          campaign_id, owner_player_id: actingPlayer.id,
-        });
-        const activatedHubIds = new Set(economicStaged.filter(tid => {
-          const ts = stateMap[tid];
-          return ts?.has_resource_hub;
-        }));
+        // ── Supply route bonus: determine activated hub territories via TerritoryBuilding records
+        // (do NOT rely solely on TerritoryState.has_resource_hub which may lag behind).
+        const [activeSupplyRoutes, hubBuildings] = await Promise.all([
+          base44.asServiceRole.entities.SupplyRoute.filter({
+            campaign_id, owner_player_id: actingPlayer.id,
+          }),
+          base44.asServiceRole.entities.TerritoryBuilding.filter({
+            campaign_id, player_id: actingPlayer.id, building_type: 'resource_hub', status: 'active',
+          }),
+        ]);
+        const hubBuildingTerritoryIds = new Set(hubBuildings.map(b => b.territory_id));
+        const activatedHubIds = new Set(economicStaged.filter(tid =>
+          hubBuildingTerritoryIds.has(tid) || stateMap[tid]?.has_resource_hub
+        ));
         for (const route of activeSupplyRoutes) {
           if (route.route_status !== 'active') continue;
           if (!activatedHubIds.has(route.hub_territory_id)) continue;
@@ -1098,18 +1099,17 @@ Deno.serve(async (req) => {
         const discardedEntries = [];
 
         if (currentHeld.length >= 3) {
-          if (replace_card_id && currentHeld.includes(replace_card_id)) {
-            newHeld = currentHeld.filter(cid => cid !== replace_card_id).concat(kept_card_id);
-            discardCardIds.push(replace_card_id);
-            discardedEntries.push({ card_id: replace_card_id, discarded_round: round });
-          } else {
-            // At cap but no replace_card_id — force discard the first held card to maintain ≤3 limit.
-            // This prevents the 3+1=4 bug where the backend was lenient and allowed overflows.
-            const forcedDiscard = currentHeld[0];
-            newHeld = currentHeld.slice(1).concat(kept_card_id);
-            discardCardIds.push(forcedDiscard);
-            discardedEntries.push({ card_id: forcedDiscard, discarded_round: round });
+          if (!replace_card_id || !currentHeld.includes(replace_card_id)) {
+            // At cap: player must choose which card to discard — never auto-discard
+            return Response.json({
+              error: 'You have 3 active objectives. You must select which existing objective to replace (provide replace_card_id).',
+              validation_error: 'replace_card_required',
+              held: currentHeld,
+            }, { status: 400 });
           }
+          newHeld = currentHeld.filter(cid => cid !== replace_card_id).concat(kept_card_id);
+          discardCardIds.push(replace_card_id);
+          discardedEntries.push({ card_id: replace_card_id, discarded_round: round });
         } else {
           newHeld = [...currentHeld, kept_card_id];
         }
@@ -1160,6 +1160,22 @@ Deno.serve(async (req) => {
     } else {
       // No staged objective — mark as skipped (player had no pending draw)
       results.diplomatic = { locked: true, skipped: true, reason: 'No staged objective selection' };
+    }
+
+    // ── Evaluate objectives for all active players at Planning lock ──────────
+    // This ensures objective auto-completion is tied to the phase lifecycle,
+    // not to card dealing, so influence rewards are awarded reliably.
+    try {
+      const evalPlayers = players.filter(p => !p.is_eliminated);
+      for (const ep of evalPlayers) {
+        await base44.functions.invoke('objectivePhase', {
+          action: 'evaluateObjectives',
+          campaign_id,
+          acting_as_player_id: ep.id,
+        });
+      }
+    } catch (evalErr) {
+      console.warn('[lockPlanningPhase] Objective evaluation failed (non-fatal):', evalErr?.message);
     }
 
     // ── Finalize staging record ──────────────────────────────────────────────
