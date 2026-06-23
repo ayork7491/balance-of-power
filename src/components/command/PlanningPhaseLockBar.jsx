@@ -106,7 +106,11 @@ export default function PlanningPhaseLockBar({ campaign, myPlayer, actingAsPlaye
     }
   }, [campaign?.id, campaign?.current_phase, myPlayer?.id, actingAsPlayerId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { load(); }, [load]);
+  // Debounced load — perspective switches trigger this; short delay collapses rapid changes
+  useEffect(() => {
+    const timer = setTimeout(() => { load(); }, 150);
+    return () => clearTimeout(timer);
+  }, [load]);
 
   const handleUnlock = async () => {
     if (!campaign?.id || lockInFlightRef.current) return;

@@ -59,9 +59,9 @@ export default function ObjectivesPanel({
     }
   }, [campaignId, actingPlayer?.id]);
 
-  // Debounced load — prevents burst of concurrent calls on tab switch / perspective change
+  // Debounced load — staggered to avoid concurrent 429s with other panel fetches
   useEffect(() => {
-    const timer = setTimeout(() => { load(); }, 300);
+    const timer = setTimeout(() => { load(); }, 500);
     return () => clearTimeout(timer);
   }, [load]);
 

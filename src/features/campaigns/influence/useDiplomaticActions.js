@@ -52,7 +52,7 @@ export function useDiplomaticActions({ campaignId, playerId, actingAsPlayerId, e
 
   // Debounced load — stagger panel fetches to avoid thundering-herd 429s
   useEffect(() => {
-    const timer = setTimeout(() => { load(); }, 450);
+    const timer = setTimeout(() => { load(); }, 800);
     return () => clearTimeout(timer);
   }, [load]);
 
