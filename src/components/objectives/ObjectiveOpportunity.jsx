@@ -172,29 +172,29 @@ export default function ObjectiveOpportunity({
                   </button>
                 );
               })}
-              {/* Unchosen drawn cards (all drawn cards except the one being kept) */}
-              {(pendingDraw ?? []).filter(cid => cid !== keptId).map(cid => {
-                const def = cardDefinitions?.[cid];
+              {/* The newly chosen card — player can also discard it and keep an existing one instead */}
+              {keptId && (() => {
+                const def = cardDefinitions?.[keptId];
                 const catCfg = def ? OBJECTIVE_CATEGORY_CONFIG[def.category] : null;
                 return (
                   <button
-                    key={cid}
-                    onClick={() => handleSelectReplace(cid)}
+                    key={keptId}
+                    onClick={() => handleSelectReplace(keptId)}
                     className={[
                       'w-full text-left px-2.5 py-1.5 rounded border text-xs flex items-center justify-between transition-all',
-                      replaceCard === cid
+                      replaceCard === keptId
                         ? 'border-destructive/60 bg-destructive/10 text-destructive'
                         : 'border-dashed border-border text-muted-foreground hover:border-muted-foreground',
                     ].join(' ')}
                   >
                     <span className="flex items-center gap-1">
-                      {catCfg?.icon} {def?.title ?? cid}
-                      <span className="text-[9px] text-muted-foreground italic">(drawn)</span>
+                      {catCfg?.icon} {def?.title ?? keptId}
+                      <span className="text-[9px] text-muted-foreground italic">(newly drawn)</span>
                     </span>
-                    {replaceCard === cid && <Check className="w-3 h-3" />}
+                    {replaceCard === keptId && <Check className="w-3 h-3" />}
                   </button>
                 );
-              })}
+              })()}
             </div>
           </div>
         )}
