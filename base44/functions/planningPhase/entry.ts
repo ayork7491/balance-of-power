@@ -1281,8 +1281,12 @@ Deno.serve(async (req) => {
   }
 
   // ── ACTION: unlockPlanningPhase ────────────────────────────────────────────
-  // Allows a player to undo their planning lock before the phase advances.
-  // Admin can unlock any player by providing acting_as_player_id.
+  // Fully reverses a planning lock, restoring all three pillars to staged state:
+  //   Military:   subtracts placed troops from territory states; keeps placements staged
+  //   Economic:   subtracts generated resources from capital/territory storage;
+  //               reverses food from capital development progress; keeps territory_ids staged
+  //   Diplomatic: moves kept card + discarded cards back to pending_draw on the ledger;
+  //               removes those card_ids from the deck's discard pile
   if (action === 'unlockPlanningPhase') {
     if (campaign.current_phase !== 'deploy') {
       return Response.json({ error: 'Not in deploy (Planning) phase' }, { status: 400 });
@@ -1293,7 +1297,272 @@ Deno.serve(async (req) => {
       return Response.json({ success: true, idempotent: true, message: 'Planning phase is not locked.' });
     }
 
-    // Unlock the staging decision — wipe locked_at and per-pillar locks
+    const stagingData = staging.data;
+    const reversalLog = {};
+
+    // ── 1. Military reversal ────────────────────────────────────────────────
+    // Subtract placed troops from TerritoryState and mark deploy decision unlocked.
+    const deployDecision = await getDeployDecision(base44, campaign_id, actingPlayer.id, round);
+    if (deployDecision?.is_locked) {
+      const placements = deployDecision.data?.placements ?? {};
+      if (Object.keys(placements).length > 0) {
+        const allStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+        await Promise.all(
+          Object.entries(placements).map(([tid, placed]) => {
+            if (!placed || placed <= 0) return Promise.resolve();
+            const ts = allStates.find(s => s.territory_id === tid);
+            if (!ts) return Promise.resolve();
+            return base44.asServiceRole.entities.TerritoryState.update(ts.id, {
+              troop_count: Math.max(0, (ts.troop_count ?? 0) - placed),
+            });
+          })
+        );
+        reversalLog.military = { troops_reversed: Object.values(placements).reduce((s, n) => s + (n || 0), 0), placements };
+      }
+      // Unlock deploy decision — keep placements intact so UI can restore staged state
+      await base44.asServiceRole.entities.PhaseDecision.update(deployDecision.id, {
+        is_locked: false,
+        locked_at: null,
+      });
+    }
+
+    // ── 2. Economic reversal ────────────────────────────────────────────────
+    // Reverse resources that were written to capital/territory storage at lock time.
+    if (stagingData.economic_locked && (stagingData.economic_staged ?? []).length > 0) {
+      const SC_RESOURCE_TYPES = {
+        I1:'iron', I2:'iron', I3:'stone', I4:'iron', I5:'stone',
+        I6:'timber', I7:'timber', I8:'iron',
+        W1:'timber', W2:'stone', W3:'timber', W4:'timber', W5:'timber',
+        W6:'timber', W7:'gold', W8:'gold', W9:'iron',
+        B1:'stone', B2:'stone', B3:'stone', B4:'stone', B5:'iron',
+        B6:'stone', B7:'stone', B8:'stone', B9:'iron', B10:'gold',
+        S1:'timber', S2:'gold', S3:'iron', S4:'gold', S5:'gold',
+        S6:'stone', S7:'timber', S8:'gold', S9:'iron',
+        C1:'iron', C2:'gold', C3:'iron', C4:'gold', C5:'gold',
+        C6:'gold', C7:'stone', C8:'gold',
+      };
+      const VALID_RESOURCES = ['gold', 'iron', 'timber', 'stone'];
+      const economicStaged = stagingData.economic_staged;
+
+      const [allTsForEco, devRecsEco] = await Promise.all([
+        base44.asServiceRole.entities.TerritoryState.filter({ campaign_id }),
+        base44.asServiceRole.entities.TerritoryDevelopment.filter({ campaign_id, owner_player_id: actingPlayer.id }),
+      ]);
+      const myTsMap = {};
+      for (const ts of allTsForEco) {
+        if (ts.owner_player_id === actingPlayer.id) myTsMap[ts.territory_id] = ts;
+      }
+
+      const capitalDevRec = devRecsEco.find(d => d.is_capital) ?? null;
+      const capitalTs = capitalDevRec ? allTsForEco.find(s => s.territory_id === capitalDevRec.territory_id) : null;
+
+      // Compute what was generated and accumulated into capital
+      const capitalDeduct = { gold: 0, iron: 0, timber: 0, stone: 0 };
+      let foodDeduct = 0;
+
+      for (const tid of economicStaged) {
+        const ts = myTsMap[tid];
+        if (!ts) continue;
+        const primary = ts.resource_type ?? SC_RESOURCE_TYPES[tid] ?? 'food';
+        if (primary === 'food') {
+          foodDeduct += 1;
+        } else if (VALID_RESOURCES.includes(primary)) {
+          capitalDeduct[primary] = (capitalDeduct[primary] ?? 0) + 1;
+        }
+        // Reverse food net from development
+        const devRec = devRecsEco.find(d => d.territory_id === tid);
+        const devLevel = devRec?.development_level ?? 1;
+        const FOOD_NET = [0, 1, 0.5, 0, -0.5, -1];
+        const netFood = FOOD_NET[Math.min(devLevel, 5)] ?? 0;
+        if (netFood > 0) foodDeduct += netFood;
+      }
+
+      // Also account for supply route resources that were written to capital
+      const [activeSupplyRoutes, hubBuildings] = await Promise.all([
+        base44.asServiceRole.entities.SupplyRoute.filter({ campaign_id, owner_player_id: actingPlayer.id }),
+        base44.asServiceRole.entities.TerritoryBuilding.filter({ campaign_id, player_id: actingPlayer.id, building_type: 'resource_hub', status: 'active' }),
+      ]);
+      const hubBuildingTerritoryIds = new Set(hubBuildings.map(b => b.territory_id));
+      const activatedHubIds = new Set(economicStaged.filter(tid =>
+        hubBuildingTerritoryIds.has(tid) || myTsMap[tid]?.has_resource_hub
+      ));
+      for (const route of activeSupplyRoutes) {
+        if (route.route_status !== 'active') continue;
+        if (!activatedHubIds.has(route.hub_territory_id)) continue;
+        const sourceTs = allTsForEco.find(s => s.territory_id === route.source_territory_id);
+        const sourcePrimary = sourceTs?.resource_type ?? SC_RESOURCE_TYPES[route.source_territory_id] ?? route.resource_type ?? null;
+        if (!sourcePrimary) continue;
+        if (sourcePrimary === 'food') {
+          foodDeduct += 1;
+        } else if (VALID_RESOURCES.includes(sourcePrimary)) {
+          capitalDeduct[sourcePrimary] = (capitalDeduct[sourcePrimary] ?? 0) + 1;
+        }
+      }
+
+      // Deduct non-food from capital storage
+      if (capitalTs && VALID_RESOURCES.some(r => capitalDeduct[r] > 0)) {
+        const newStorage = { gold: 0, iron: 0, timber: 0, stone: 0, food: 0, ...(capitalTs.resource_storage ?? {}) };
+        for (const r of VALID_RESOURCES) {
+          newStorage[r] = Math.max(0, (newStorage[r] ?? 0) - (capitalDeduct[r] ?? 0));
+        }
+        await base44.asServiceRole.entities.TerritoryState.update(capitalTs.id, { resource_storage: newStorage });
+      } else if (!capitalTs) {
+        // No capital — resources were stored in individual activated territories; reverse each
+        await Promise.all(economicStaged.map(tid => {
+          const ts = myTsMap[tid];
+          if (!ts) return Promise.resolve();
+          const primary = ts.resource_type ?? SC_RESOURCE_TYPES[tid] ?? 'food';
+          if (primary === 'food') return Promise.resolve();
+          const newStorage = { gold: 0, iron: 0, timber: 0, stone: 0, food: 0, ...(ts.resource_storage ?? {}) };
+          newStorage[primary] = Math.max(0, (newStorage[primary] ?? 0) - 1);
+          return base44.asServiceRole.entities.TerritoryState.update(ts.id, { resource_storage: newStorage });
+        }));
+      }
+
+      // Reverse food from capital development progress
+      if (foodDeduct > 0 && capitalDevRec) {
+        function foodThreshold(lvl) {
+          const thresholds = [0, 3, 5, 8, 12, 17];
+          return thresholds[lvl] ?? (lvl + 12);
+        }
+        // Walk backwards: reconstruct what level/progress was before the food was invested
+        let level = capitalDevRec.development_level ?? 1;
+        let progress = capitalDevRec.development_progress ?? 0;
+        let totalInvested = Math.max(0, (capitalDevRec.total_food_invested ?? 0) - foodDeduct);
+        // Subtract food from progress, potentially de-leveling
+        let remaining = foodDeduct;
+        while (remaining > 0 && level >= 1) {
+          if (progress >= remaining) {
+            progress -= remaining;
+            remaining = 0;
+          } else {
+            remaining -= progress;
+            if (level > 1) {
+              level -= 1;
+              progress = foodThreshold(level) - remaining;
+              remaining = 0;
+            } else {
+              progress = 0;
+              remaining = 0;
+            }
+          }
+        }
+        await base44.asServiceRole.entities.TerritoryDevelopment.update(capitalDevRec.id, {
+          development_level: Math.max(1, level),
+          development_progress: Math.max(0, progress),
+          food_to_next_level: foodThreshold(Math.max(1, level)),
+          total_food_invested: totalInvested,
+          last_updated_round: round,
+        });
+      }
+
+      reversalLog.economic = { deducted: capitalDeduct, food_reversed: foodDeduct };
+    }
+
+    // ── 3. Diplomatic reversal ──────────────────────────────────────────────
+    // Move the kept card (and any replaced card) back to pending_draw.
+    // Remove them from the deck's discard pile.
+    if (stagingData.diplomatic_locked && stagingData.diplomatic_staged?.kept_card_id) {
+      const { kept_card_id, replace_card_id } = stagingData.diplomatic_staged;
+
+      const [ledgerRecs, deckRecs] = await Promise.all([
+        base44.asServiceRole.entities.PlayerInfluenceLedger.filter({ campaign_id, player_id: actingPlayer.id }),
+        base44.asServiceRole.entities.CampaignObjectiveDeck.filter({ campaign_id }),
+      ]);
+      const ledger = ledgerRecs[0];
+      const deck = deckRecs[0];
+
+      if (ledger) {
+        const cards = { held: [], pending_draw: null, completed: [], discarded: [], ...(ledger.objective_cards_json ?? {}) };
+
+        // Determine which cards were discarded at lock time from this operation
+        // Cards discarded during this lock: the non-kept drawn cards + (replace_card_id if it was a held card swap)
+        const lockedPendingCards = [kept_card_id]; // kept was in pending_draw — restore it
+
+        // Cards to restore to pending_draw: was the entire pending_draw that was drawn at autoDeal
+        // We need to figure out what the full drawn set was. The deck opportunity_log has it.
+        let originalDrawn = null;
+        if (deck) {
+          // Find the opportunity_log entry for this round+player
+          const logEntry = (deck.opportunity_log ?? []).slice().reverse().find(
+            e => e.round === round && e.player_id === actingPlayer.id
+          );
+          if (logEntry) {
+            originalDrawn = logEntry.drawn ?? null;
+          }
+        }
+
+        // Cards to remove from deck discard pile (were moved there at lock time)
+        const cardsToRestoreFromDeck = [];
+        let newHeld = [...(cards.held ?? [])];
+        let newDiscarded = [...(cards.discarded ?? [])];
+
+        if (originalDrawn && originalDrawn.length > 0) {
+          // Restore ALL originally drawn cards back to pending_draw
+          // Remove them from deck.discard_pile since they're active again
+          for (const cid of originalDrawn) {
+            if (cid !== kept_card_id) cardsToRestoreFromDeck.push(cid); // non-kept were discarded to deck
+            // Remove any discarded entry added at lock time
+            newDiscarded = newDiscarded.filter(e => !(e.card_id === cid && e.discarded_round === round));
+          }
+          // If replace_card_id was a held card that was swapped out, restore it to held
+          if (replace_card_id && replace_card_id !== kept_card_id && !newHeld.includes(replace_card_id)) {
+            // The kept card was added to held — remove it; restore replace_card_id back
+            newHeld = newHeld.filter(cid => cid !== kept_card_id);
+            newHeld.push(replace_card_id);
+            // replace_card_id was added to deck discard — remove it
+            cardsToRestoreFromDeck.push(replace_card_id);
+            newDiscarded = newDiscarded.filter(e => !(e.card_id === replace_card_id && e.discarded_round === round));
+          } else if (!replace_card_id) {
+            // Simple add: kept_card_id was added to held without replacement — remove it from held
+            newHeld = newHeld.filter(cid => cid !== kept_card_id);
+          } else if (replace_card_id === kept_card_id) {
+            // Player discarded the new card and kept existing hand — no held changes needed
+            cardsToRestoreFromDeck.push(kept_card_id);
+            newDiscarded = newDiscarded.filter(e => !(e.card_id === kept_card_id && e.discarded_round === round));
+          }
+
+          const updatedCards = {
+            ...cards,
+            held: newHeld,
+            pending_draw: originalDrawn, // restore full drawn set
+            discarded: newDiscarded,
+          };
+          await base44.asServiceRole.entities.PlayerInfluenceLedger.update(ledger.id, {
+            objective_cards_json: updatedCards, updated_at_round: round,
+          });
+        }
+
+        // Remove restored cards from deck discard pile
+        if (deck && cardsToRestoreFromDeck.length > 0) {
+          const restoreSet = new Set(cardsToRestoreFromDeck);
+          // Remove one instance of each card from the discard pile
+          const currentDiscard = [...(deck.discard_pile ?? [])];
+          const newDeckDiscard = [];
+          const toRemove = { ...Object.fromEntries([...restoreSet].map(c => [c, 1])) };
+          for (const cid of currentDiscard) {
+            if (toRemove[cid] > 0) {
+              toRemove[cid]--;
+            } else {
+              newDeckDiscard.push(cid);
+            }
+          }
+          // Also remove the opportunity_log entry for this round+player so re-lock works cleanly
+          const newOpLog = (deck.opportunity_log ?? []).filter(
+            e => !(e.round === round && e.player_id === actingPlayer.id)
+          );
+          await base44.asServiceRole.entities.CampaignObjectiveDeck.update(deck.id, {
+            discard_pile: newDeckDiscard,
+            opportunity_log: newOpLog,
+          });
+        }
+
+        reversalLog.diplomatic = { kept_card_id, replace_card_id: replace_card_id ?? null, restored_to_pending: originalDrawn };
+      }
+    }
+
+    // ── Unlock the staging decision — wipe locked_at and per-pillar locks ───
+    // Keep economic_staged and diplomatic_staged intact so the UI can restore them.
     await upsertStagingDecision(base44, campaign_id, actingPlayer.id, round, {
       military_locked: false,
       economic_locked: false,
@@ -1301,20 +1570,11 @@ Deno.serve(async (req) => {
       locked_at: null,
     });
 
-    // Also unlock the deploy PhaseDecision so the player can re-stage troops
-    const deployDecision = await getDeployDecision(base44, campaign_id, actingPlayer.id, round);
-    if (deployDecision?.is_locked) {
-      await base44.asServiceRole.entities.PhaseDecision.update(deployDecision.id, {
-        is_locked: false,
-        locked_at: null,
-      });
-    }
-
     await base44.asServiceRole.entities.SetupLog.create({
       campaign_id, phase: 'deploy', round,
       event_type: 'planning_phase_unlocked',
       player_id: actingPlayer.id,
-      payload: { display_name: actingPlayer.display_name, unlocked_by: myPlayer.id },
+      payload: { display_name: actingPlayer.display_name, unlocked_by: myPlayer?.id ?? actingPlayer.id, reversal: reversalLog },
       is_public: true,
     });
 
@@ -1322,6 +1582,7 @@ Deno.serve(async (req) => {
       success: true,
       message: `Planning phase unlocked for ${actingPlayer.display_name}.`,
       player_id: actingPlayer.id,
+      reversal: reversalLog,
     });
   }
 
