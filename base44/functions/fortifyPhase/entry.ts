@@ -454,17 +454,13 @@ Deno.serve(async (req) => {
       return Response.json({ success: true, idempotent: true, snapshot_repaired: !snapshotExists, active_players: activePlayers.length });
     }
 
-    // Create PhaseDecision stubs for all active players
-    for (const p of activePlayers) {
-      await base44.asServiceRole.entities.PhaseDecision.create({
-        campaign_id,
-        player_id: p.id,
-        phase: 'fortify',
-        round,
-        is_locked: false,
-        data: { movements: [], construction: null },
-      });
-    }
+    // Create PhaseDecision stubs for all active players — in parallel
+    await Promise.all(activePlayers.map(p =>
+      base44.asServiceRole.entities.PhaseDecision.create({
+        campaign_id, player_id: p.id, phase: 'fortify', round,
+        is_locked: false, data: { movements: [], construction: null },
+      })
+    ));
 
     await log(base44, campaign_id, round, phase, 'phase_started', null, {
       active_players: activePlayers.length,
@@ -1089,115 +1085,67 @@ Deno.serve(async (req) => {
     }
 
     // REVEAL: Process staged construction choices and create ConstructionProjects
-    // C2 fix: deduct costs from PlayerResourceLedger (actual territory storage), not DeployIncome.
-    const constructionsToCreate = [];
-    
-    for (const dec of finalDecisions) {
-      const construction = dec.data?.construction;
-      if (!construction || !construction.territory_id || !construction.structure_type) continue;
-      
-      const config = getBuildingConfig(construction.structure_type);
-      if (!config) continue; // Unknown type — skip gracefully
+    // Fetch all ledgers and dev records in parallel upfront, then process each construction.
+    const constructionDecs = finalDecisions.filter(d => d.data?.construction?.territory_id && d.data?.construction?.structure_type);
 
-      // C2 fix: validate resources against PlayerResourceLedger (actual player resources)
-      const playerLedgers = await base44.asServiceRole.entities.PlayerResourceLedger.filter({
-        campaign_id, player_id: dec.player_id,
-      });
-      const ledger = playerLedgers[0];
-      const ledgerResources = {
-        gold: ledger?.gold ?? 0,
-        iron: ledger?.iron ?? 0,
-        timber: ledger?.timber ?? 0,
-        stone: ledger?.stone ?? 0,
-        food: ledger?.food ?? 0,
-      };
+    if (constructionDecs.length > 0) {
+      const [allLedgers, allDevRecs] = await Promise.all([
+        base44.asServiceRole.entities.PlayerResourceLedger.filter({ campaign_id }),
+        base44.asServiceRole.entities.TerritoryDevelopment.filter({ campaign_id }),
+      ]);
 
-      // Also check capital territory storage as fallback (resources may be stored there)
-      const devRecs = await base44.asServiceRole.entities.TerritoryDevelopment.filter({
-        campaign_id, owner_player_id: dec.player_id,
-      });
-      const capitalDev = devRecs.find(d => d.is_capital) ?? devRecs[0] ?? null;
-      const capitalTs = capitalDev
-        ? allTerritoryStates.find(s => s.territory_id === capitalDev.territory_id)
-        : null;
-      const capitalStorage = capitalTs?.resource_storage ?? {};
+      for (const dec of constructionDecs) {
+        const construction = dec.data.construction;
+        const config = getBuildingConfig(construction.structure_type);
+        if (!config) continue;
 
-      // Combined resources: ledger + capital storage
-      const combined = {
-        gold:   (ledgerResources.gold   ?? 0) + (capitalStorage.gold   ?? 0),
-        iron:   (ledgerResources.iron   ?? 0) + (capitalStorage.iron   ?? 0),
-        timber: (ledgerResources.timber ?? 0) + (capitalStorage.timber ?? 0),
-        stone:  (ledgerResources.stone  ?? 0) + (capitalStorage.stone  ?? 0),
-        food:   (ledgerResources.food   ?? 0) + (capitalStorage.food   ?? 0),
-      };
+        const ledger = allLedgers.find(l => l.player_id === dec.player_id);
+        const ledgerResources = { gold: ledger?.gold ?? 0, iron: ledger?.iron ?? 0, timber: ledger?.timber ?? 0, stone: ledger?.stone ?? 0, food: ledger?.food ?? 0 };
 
-      const canAfford = Object.entries(config.cost).every(([res, amount]) => {
-        if (amount === 0) return true;
-        return (combined[res] ?? 0) >= amount;
-      });
-      
-      if (!canAfford) {
-        queueLog(campaign_id, round, phase, 'construction_failed', dec.player_id, {
-          structure_type: construction.structure_type,
-          territory_id: construction.territory_id,
-          reason: 'insufficient_resources',
-          cost: config.cost,
-          available: combined,
-        }, false);
-        continue;
-      }
+        const devRecs = allDevRecs.filter(d => d.owner_player_id === dec.player_id);
+        const capitalDev = devRecs.find(d => d.is_capital) ?? devRecs[0] ?? null;
+        const capitalTs = capitalDev ? allTerritoryStates.find(s => s.territory_id === capitalDev.territory_id) : null;
+        const capitalStorage = capitalTs?.resource_storage ?? {};
 
-      // C2 fix: deduct resources from capital storage first, then ledger
-      let remainingCost = { ...config.cost };
-      // Deduct from capital storage first
-      if (capitalTs) {
-        const newCapStorage = { ...capitalStorage };
-        for (const [res, amount] of Object.entries(remainingCost)) {
-          if (amount <= 0) continue;
-          const avail = newCapStorage[res] ?? 0;
-          const take = Math.min(avail, amount);
-          newCapStorage[res] = avail - take;
-          remainingCost[res] = amount - take;
+        const combined = {
+          gold:   (ledgerResources.gold   ?? 0) + (capitalStorage.gold   ?? 0),
+          iron:   (ledgerResources.iron   ?? 0) + (capitalStorage.iron   ?? 0),
+          timber: (ledgerResources.timber ?? 0) + (capitalStorage.timber ?? 0),
+          stone:  (ledgerResources.stone  ?? 0) + (capitalStorage.stone  ?? 0),
+          food:   (ledgerResources.food   ?? 0) + (capitalStorage.food   ?? 0),
+        };
+
+        const canAfford = Object.entries(config.cost).every(([res, amount]) => amount === 0 || (combined[res] ?? 0) >= amount);
+        if (!canAfford) {
+          queueLog(campaign_id, round, phase, 'construction_failed', dec.player_id, { structure_type: construction.structure_type, territory_id: construction.territory_id, reason: 'insufficient_resources', cost: config.cost, available: combined }, false);
+          continue;
         }
-        await base44.asServiceRole.entities.TerritoryState.update(capitalTs.id, {
-          resource_storage: newCapStorage,
-        });
-      }
-      // Deduct remainder from ledger
-      if (ledger) {
-        const newLedger = { ...ledgerResources };
-        for (const [res, amount] of Object.entries(remainingCost)) {
-          if (amount <= 0) continue;
-          newLedger[res] = Math.max(0, (newLedger[res] ?? 0) - amount);
+
+        let remainingCost = { ...config.cost };
+        const updateOps = [];
+        if (capitalTs) {
+          const newCapStorage = { ...capitalStorage };
+          for (const [res, amount] of Object.entries(remainingCost)) {
+            if (amount <= 0) continue;
+            const take = Math.min(newCapStorage[res] ?? 0, amount);
+            newCapStorage[res] = (newCapStorage[res] ?? 0) - take;
+            remainingCost[res] = amount - take;
+          }
+          updateOps.push(base44.asServiceRole.entities.TerritoryState.update(capitalTs.id, { resource_storage: newCapStorage }));
         }
-        await base44.asServiceRole.entities.PlayerResourceLedger.update(ledger.id, {
-          gold: newLedger.gold, iron: newLedger.iron, timber: newLedger.timber,
-          stone: newLedger.stone, food: newLedger.food,
-          updated_at_round: round, updated_at_phase: 'fortify',
-        });
+        if (ledger) {
+          const newLedger = { ...ledgerResources };
+          for (const [res, amount] of Object.entries(remainingCost)) {
+            if (amount <= 0) continue;
+            newLedger[res] = Math.max(0, (newLedger[res] ?? 0) - amount);
+          }
+          updateOps.push(base44.asServiceRole.entities.PlayerResourceLedger.update(ledger.id, { gold: newLedger.gold, iron: newLedger.iron, timber: newLedger.timber, stone: newLedger.stone, food: newLedger.food, updated_at_round: round, updated_at_phase: 'fortify' }));
+        }
+        updateOps.push(base44.asServiceRole.entities.ConstructionProject.create({ campaign_id, round_started: round, player_id: dec.player_id, territory_id: construction.territory_id, structure_type: construction.structure_type, total_cost: config.cost, resources_paid: config.cost, rounds_required: config.rounds, rounds_completed: 0, status: 'in_progress' }));
+        await Promise.all(updateOps);
+
+        queueLog(campaign_id, round, phase, 'construction_revealed', dec.player_id, { structure_type: construction.structure_type, territory_id: construction.territory_id, cost_deducted: config.cost }, false);
       }
-      
-      // Create ConstructionProject (now visible to all)
-      const project = await base44.asServiceRole.entities.ConstructionProject.create({
-        campaign_id,
-        round_started: round,
-        player_id: dec.player_id,
-        territory_id: construction.territory_id,
-        structure_type: construction.structure_type,
-        total_cost: config.cost,
-        resources_paid: config.cost,
-        rounds_required: config.rounds,
-        rounds_completed: 0,
-        status: 'in_progress',
-      });
-      
-      constructionsToCreate.push(project);
-      
-      queueLog(campaign_id, round, phase, 'construction_revealed', dec.player_id, {
-        structure_type: construction.structure_type,
-        territory_id: construction.territory_id,
-        cost_deducted: config.cost,
-      }, false);
     }
     
     // Process existing construction projects — all in parallel
@@ -1248,46 +1196,28 @@ Deno.serve(async (req) => {
     try {
       const monumentBuildings = allTerritoryBuildings.filter(b => b.building_type === 'monument' && b.status === 'active');
       if (monumentBuildings.length > 0) {
-        for (const mon of monumentBuildings) {
+        // Fetch all existing influence records in parallel upfront
+        const [existingPermInfluences, existingPools] = await Promise.all([
+          base44.asServiceRole.entities.TerritoryInfluence.filter({ campaign_id }),
+          base44.asServiceRole.entities.RegionalInfluencePool.filter({ campaign_id }),
+        ]);
+        await Promise.all(monumentBuildings.map(async mon => {
           const regionId = SC_TERRITORY_REGION_FORT[mon.territory_id];
-          // +1 permanent influence on the monument territory
-          const existingPermInfluence = await base44.asServiceRole.entities.TerritoryInfluence.filter({
-            campaign_id, territory_id: mon.territory_id, player_id: mon.player_id,
-          });
-          const permRec = existingPermInfluence[0];
-          if (permRec) {
-            await base44.asServiceRole.entities.TerritoryInfluence.update(permRec.id, {
-              influence_amount: (permRec.influence_amount ?? 0) + 1,
-              last_updated_round: round, source: 'monument',
-            });
-          } else {
-            await base44.asServiceRole.entities.TerritoryInfluence.create({
-              campaign_id, territory_id: mon.territory_id, player_id: mon.player_id,
-              influence_amount: 1, last_updated_round: round, source: 'monument',
-            });
-          }
-          // +1 spendable influence in the territory's region
+          const permRec = existingPermInfluences.find(i => i.territory_id === mon.territory_id && i.player_id === mon.player_id);
+          const permOp = permRec
+            ? base44.asServiceRole.entities.TerritoryInfluence.update(permRec.id, { influence_amount: (permRec.influence_amount ?? 0) + 1, last_updated_round: round, source: 'monument' })
+            : base44.asServiceRole.entities.TerritoryInfluence.create({ campaign_id, territory_id: mon.territory_id, player_id: mon.player_id, influence_amount: 1, last_updated_round: round, source: 'monument' });
+          const ops = [permOp];
           if (regionId) {
-            const existingPool = await base44.asServiceRole.entities.RegionalInfluencePool.filter({
-              campaign_id, region_id: regionId, player_id: mon.player_id,
-            });
-            const poolRec = existingPool[0];
-            if (poolRec) {
-              await base44.asServiceRole.entities.RegionalInfluencePool.update(poolRec.id, {
-                spendable_influence: (poolRec.spendable_influence ?? 0) + 1,
-                last_updated_round: round,
-              });
-            } else {
-              await base44.asServiceRole.entities.RegionalInfluencePool.create({
-                campaign_id, region_id: regionId, player_id: mon.player_id,
-                spendable_influence: 1, last_updated_round: round,
-              });
-            }
+            const poolRec = existingPools.find(p => p.region_id === regionId && p.player_id === mon.player_id);
+            ops.push(poolRec
+              ? base44.asServiceRole.entities.RegionalInfluencePool.update(poolRec.id, { spendable_influence: (poolRec.spendable_influence ?? 0) + 1, last_updated_round: round })
+              : base44.asServiceRole.entities.RegionalInfluencePool.create({ campaign_id, region_id: regionId, player_id: mon.player_id, spendable_influence: 1, last_updated_round: round })
+            );
           }
-          queueLog(campaign_id, round, phase, 'monument_influence_generated', mon.player_id, {
-            territory_id: mon.territory_id, region_id: regionId ?? null,
-          }, false);
-        }
+          await Promise.all(ops);
+          queueLog(campaign_id, round, phase, 'monument_influence_generated', mon.player_id, { territory_id: mon.territory_id, region_id: regionId ?? null }, false);
+        }));
       }
     } catch (monErr) {
       console.warn('[fortifyPhase] Monument influence generation error (non-fatal):', monErr?.message);
@@ -1374,14 +1304,12 @@ Deno.serve(async (req) => {
       victory_scores: fortEndVictory.map(v => ({ player_id: v.player_id, occupancy_score: v.occupancy_score ?? 0, wealth_score: v.wealth_score ?? 0, influence_score: v.influence_score ?? 0, has_won: v.has_won ?? false, winning_condition: v.winning_condition ?? null })),
     });
 
-    await log(base44, campaign_id, round, phase, 'phase_advanced', null, {
-      next_phase: campaign.current_round >= 1 ? 'deploy' : 'deploy', // Loop back to deploy for next round
-      round,
-      movements_applied: Object.keys(troopChanges).length / 2,
-      constructions_completed: allProjects.filter(p => 
-        (p.rounds_completed + 1) >= p.rounds_required
-      ).length,
-    }, true);
+    // Write final log in parallel with victory check prep
+    await base44.asServiceRole.entities.SetupLog.create({
+      campaign_id, phase, round, event_type: 'phase_advanced', player_id: null,
+      payload: { next_phase: 'deploy', round, movements_applied: Object.keys(troopChanges).length / 2, constructions_completed: allProjects.filter(p => (p.rounds_completed + 1) >= p.rounds_required).length },
+      is_public: true,
+    });
 
     // ── Sprint 5A: Victory check at end of Consolidation (Fortify) Phase ────
     // Invoke victoryPhase.checkVictory. If a winner is found, it sets
@@ -1413,10 +1341,7 @@ Deno.serve(async (req) => {
 
     // Advance to next round's deploy phase
     const nextRound = round + 1;
-    await base44.asServiceRole.entities.Campaign.update(campaign_id, {
-      current_round: nextRound,
-      current_phase: 'deploy',
-    });
+    await base44.asServiceRole.entities.Campaign.update(campaign_id, { current_round: nextRound, current_phase: 'deploy' });
 
     return Response.json({
       success: true,
