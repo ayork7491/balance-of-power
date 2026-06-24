@@ -299,15 +299,20 @@ function findPath(startId, endId, adj, ownedTerritories) {
 
 // ─── Inline: Log helper ───────────────────────────────────────────────────────
 
+// Pending log queue — call flushLogs() after the main processing loop
+const _pendingLogs = [];
+function queueLog(campaignId, round, phase, eventType, playerId, payload, isPublic = true) {
+  _pendingLogs.push({ campaign_id: campaignId, phase, round, event_type: eventType, player_id: playerId ?? null, payload, is_public: isPublic });
+}
+async function flushLogs(base44) {
+  if (_pendingLogs.length === 0) return;
+  const batch = _pendingLogs.splice(0, _pendingLogs.length);
+  await Promise.all(batch.map(entry => base44.asServiceRole.entities.SetupLog.create(entry)));
+}
 async function log(base44, campaignId, round, phase, eventType, playerId, payload, isPublic = true) {
   await base44.asServiceRole.entities.SetupLog.create({
-    campaign_id: campaignId,
-    phase,
-    round,
-    event_type: eventType,
-    player_id: playerId ?? null,
-    payload,
-    is_public: isPublic,
+    campaign_id: campaignId, phase, round, event_type: eventType,
+    player_id: playerId ?? null, payload, is_public: isPublic,
   });
 }
 
@@ -935,26 +940,21 @@ Deno.serve(async (req) => {
       campaign_id, phase: 'fortify', round,
     });
 
-    // All players auto-submitted (no hidden data to randomize)
-    for (const p of activePlayers) {
+    // All players auto-submitted — run in parallel
+    await Promise.all(activePlayers.map(async p => {
       const dec = allDecisions.find(d => d.player_id === p.id);
       if (!dec || !dec.is_locked) {
-        if (dec) {
-          await base44.asServiceRole.entities.PhaseDecision.update(dec.id, {
-            is_locked: true, is_auto_submitted: true,
-          });
-        } else {
-          await base44.asServiceRole.entities.PhaseDecision.create({
-            campaign_id, player_id: p.id, phase: 'fortify', round,
-            is_locked: true, is_auto_submitted: true,
-            data: { movements: [], construction: null },
-          });
-        }
-        await log(base44, campaign_id, round, phase, 'auto_submitted', p.id, {
-          display_name: p.display_name,
-        }, false);
+        await (dec
+          ? base44.asServiceRole.entities.PhaseDecision.update(dec.id, { is_locked: true, is_auto_submitted: true })
+          : base44.asServiceRole.entities.PhaseDecision.create({
+              campaign_id, player_id: p.id, phase: 'fortify', round,
+              is_locked: true, is_auto_submitted: true,
+              data: { movements: [], construction: null },
+            })
+        );
+        queueLog(campaign_id, round, phase, 'auto_submitted', p.id, { display_name: p.display_name }, false);
       }
-    }
+    }));
 
     // Reload finalized decisions
     const finalDecisions = await base44.asServiceRole.entities.PhaseDecision.filter({
@@ -1038,7 +1038,7 @@ Deno.serve(async (req) => {
               },
             });
           }
-          await log(base44, campaign_id, round, phase, 'caravan_escort_battle_generated', dec.player_id, {
+          queueLog(campaign_id, round, phase, 'caravan_escort_battle_generated', dec.player_id, {
             origin, destination, contents, enemy_territories: enemy_territories ?? [], caravan_id: caravan.id,
           }, false);
           continue; // Do NOT deliver resources — held until battle resolves
@@ -1053,37 +1053,39 @@ Deno.serve(async (req) => {
           resourceChanges[origin][r]      = (resourceChanges[origin][r] ?? 0) - amt;
           resourceChanges[destination][r] = (resourceChanges[destination][r] ?? 0) + amt;
         }
-        await log(base44, campaign_id, round, phase, 'caravan_delivered', dec.player_id, {
+        queueLog(campaign_id, round, phase, 'caravan_delivered', dec.player_id, {
           origin, destination, contents, caravan_id: caravan.id,
         }, false);
       }
     }
 
-    // Apply troop changes
+    // Apply troop changes — all in parallel
     const allTerritoryStates = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
-    for (const [tid, change] of Object.entries(troopChanges)) {
-      if (change === 0) continue;
-      const existing = allTerritoryStates.find(s => s.territory_id === tid);
-      if (existing) {
-        await base44.asServiceRole.entities.TerritoryState.update(existing.id, {
-          troop_count: Math.max(0, (existing.troop_count || 0) + change),
-        });
-      }
-    }
+    await Promise.all(
+      Object.entries(troopChanges)
+        .filter(([, change]) => change !== 0)
+        .map(([tid, change]) => {
+          const existing = allTerritoryStates.find(s => s.territory_id === tid);
+          if (!existing) return Promise.resolve();
+          return base44.asServiceRole.entities.TerritoryState.update(existing.id, {
+            troop_count: Math.max(0, (existing.troop_count || 0) + change),
+          });
+        })
+    );
 
-    // Apply caravan resource changes
+    // Apply caravan resource changes — all in parallel (re-use allTerritoryStates; troop fields don't overlap resource_storage)
     if (Object.keys(resourceChanges).length > 0) {
-      // Re-fetch states after troop updates to get fresh storage values
-      const statesAfterTroops = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
-      for (const [tid, delta] of Object.entries(resourceChanges)) {
-        const ts = statesAfterTroops.find(s => s.territory_id === tid);
-        if (!ts) continue;
-        const storage = { gold:0, iron:0, timber:0, stone:0, food:0, ...(ts.resource_storage ?? {}) };
-        for (const r of RESOURCES) {
-          storage[r] = Math.max(0, (storage[r] ?? 0) + (delta[r] ?? 0));
-        }
-        await base44.asServiceRole.entities.TerritoryState.update(ts.id, { resource_storage: storage });
-      }
+      await Promise.all(
+        Object.entries(resourceChanges).map(([tid, delta]) => {
+          const ts = allTerritoryStates.find(s => s.territory_id === tid);
+          if (!ts) return Promise.resolve();
+          const storage = { gold:0, iron:0, timber:0, stone:0, food:0, ...(ts.resource_storage ?? {}) };
+          for (const r of RESOURCES) {
+            storage[r] = Math.max(0, (storage[r] ?? 0) + (delta[r] ?? 0));
+          }
+          return base44.asServiceRole.entities.TerritoryState.update(ts.id, { resource_storage: storage });
+        })
+      );
     }
 
     // REVEAL: Process staged construction choices and create ConstructionProjects
@@ -1135,7 +1137,7 @@ Deno.serve(async (req) => {
       });
       
       if (!canAfford) {
-        await log(base44, campaign_id, round, phase, 'construction_failed', dec.player_id, {
+        queueLog(campaign_id, round, phase, 'construction_failed', dec.player_id, {
           structure_type: construction.structure_type,
           territory_id: construction.territory_id,
           reason: 'insufficient_resources',
@@ -1191,52 +1193,40 @@ Deno.serve(async (req) => {
       
       constructionsToCreate.push(project);
       
-      await log(base44, campaign_id, round, phase, 'construction_revealed', dec.player_id, {
+      queueLog(campaign_id, round, phase, 'construction_revealed', dec.player_id, {
         structure_type: construction.structure_type,
         territory_id: construction.territory_id,
         cost_deducted: config.cost,
       }, false);
     }
     
-    // Process existing and new construction projects
+    // Process existing construction projects — all in parallel
     const allProjects = await base44.asServiceRole.entities.ConstructionProject.filter({
       campaign_id, status: 'in_progress',
     });
 
-    for (const project of allProjects) {
+    await Promise.all(allProjects.map(async project => {
       const newRoundsCompleted = project.rounds_completed + 1;
       const isComplete = newRoundsCompleted >= project.rounds_required;
-
       if (isComplete) {
-        // Add structure to territory
-        const territoryStates = allTerritoryStates.filter(ts => ts.territory_id === project.territory_id);
-        const ts = territoryStates[0];
+        const ts = allTerritoryStates.find(s => s.territory_id === project.territory_id);
         if (ts) {
-          const structures = ts.structures ?? [];
+          const structures = [...(ts.structures ?? [])];
           if (!structures.includes(project.structure_type)) {
             structures.push(project.structure_type);
-            await base44.asServiceRole.entities.TerritoryState.update(ts.id, {
-              structures,
-            });
+            await base44.asServiceRole.entities.TerritoryState.update(ts.id, { structures });
           }
         }
-
         await base44.asServiceRole.entities.ConstructionProject.update(project.id, {
-          rounds_completed: newRoundsCompleted,
-          status: 'completed',
-          completed_at: new Date().toISOString(),
+          rounds_completed: newRoundsCompleted, status: 'completed', completed_at: new Date().toISOString(),
         });
-
-        await log(base44, campaign_id, round, phase, 'construction_completed', project.player_id, {
-          structure_type: project.structure_type,
-          territory_id: project.territory_id,
+        queueLog(campaign_id, round, phase, 'construction_completed', project.player_id, {
+          structure_type: project.structure_type, territory_id: project.territory_id,
         }, true);
       } else {
-        await base44.asServiceRole.entities.ConstructionProject.update(project.id, {
-          rounds_completed: newRoundsCompleted,
-        });
+        await base44.asServiceRole.entities.ConstructionProject.update(project.id, { rounds_completed: newRoundsCompleted });
       }
-    }
+    }));
 
     // ── Monument influence generation ─────────────────────────────────────────
     // Active Monuments generate +1 permanent influence + +1 spendable per round.
@@ -1294,7 +1284,7 @@ Deno.serve(async (req) => {
               });
             }
           }
-          await log(base44, campaign_id, round, phase, 'monument_influence_generated', mon.player_id, {
+          queueLog(campaign_id, round, phase, 'monument_influence_generated', mon.player_id, {
             territory_id: mon.territory_id, region_id: regionId ?? null,
           }, false);
         }
@@ -1303,11 +1293,7 @@ Deno.serve(async (req) => {
       console.warn('[fortifyPhase] Monument influence generation error (non-fatal):', monErr?.message);
     }
 
-    // ── TerritoryBuilding lifecycle: planned → under_construction → active ──────
-    // Buildings created during Operations lock-in start as 'planned'.
-    // At end of first Consolidation they become 'under_construction'.
-    // After rounds_required more rounds, they become 'active'.
-    // V1: all buildings complete in 1 round (planned→active immediately).
+    // ── TerritoryBuilding lifecycle — all in parallel ─────────────────────────
     const BUILDING_ROUNDS = {
       barracks: 1, war_council: 2, logistics_corps: 1,
       embassy: 1, council_chamber: 2, foreign_office: 1, monument: 2,
@@ -1315,63 +1301,38 @@ Deno.serve(async (req) => {
       resource_hub: 1, supply_route: 1, warehouse: 1,
     };
     const allTerritoryBuildings = await base44.asServiceRole.entities.TerritoryBuilding.filter({ campaign_id });
-    for (const bld of allTerritoryBuildings) {
-      if (bld.status === 'planned') {
-        const requiredRounds = BUILDING_ROUNDS[bld.building_type] ?? 1;
-        const progress = (bld.construction_progress ?? 0) + 1;
-        if (progress >= requiredRounds) {
-          await base44.asServiceRole.entities.TerritoryBuilding.update(bld.id, {
-            status: 'active',
-            construction_progress: progress,
-            completed_round: round,
-          });
-          // Set has_resource_hub flag if applicable
-          if (bld.building_type === 'resource_hub') {
-            const ts = allTerritoryStates.find(s => s.territory_id === bld.territory_id);
-            if (ts) {
-              await base44.asServiceRole.entities.TerritoryState.update(ts.id, { has_resource_hub: true });
-            }
-          }
-          await log(base44, campaign_id, round, phase, 'building_activated', bld.player_id, {
-            building_type: bld.building_type, territory_id: bld.territory_id,
-            started_round: bld.started_round, completed_round: round,
-          }, true);
-        } else {
-          await base44.asServiceRole.entities.TerritoryBuilding.update(bld.id, {
-            status: 'under_construction',
-            construction_progress: progress,
-          });
-          await log(base44, campaign_id, round, phase, 'building_under_construction', bld.player_id, {
+    await Promise.all(allTerritoryBuildings.map(async bld => {
+      if (bld.status !== 'planned' && bld.status !== 'under_construction') return;
+      const requiredRounds = BUILDING_ROUNDS[bld.building_type] ?? 1;
+      const progress = (bld.construction_progress ?? 0) + 1;
+      if (progress >= requiredRounds) {
+        await base44.asServiceRole.entities.TerritoryBuilding.update(bld.id, {
+          status: 'active', construction_progress: progress, completed_round: round,
+        });
+        if (bld.building_type === 'resource_hub') {
+          const ts = allTerritoryStates.find(s => s.territory_id === bld.territory_id);
+          if (ts) await base44.asServiceRole.entities.TerritoryState.update(ts.id, { has_resource_hub: true });
+        }
+        queueLog(campaign_id, round, phase, 'building_activated', bld.player_id, {
+          building_type: bld.building_type, territory_id: bld.territory_id,
+          started_round: bld.started_round, completed_round: round,
+        }, true);
+      } else {
+        await base44.asServiceRole.entities.TerritoryBuilding.update(bld.id, {
+          status: bld.status === 'planned' ? 'under_construction' : bld.status,
+          construction_progress: progress,
+        });
+        if (bld.status === 'planned') {
+          queueLog(campaign_id, round, phase, 'building_under_construction', bld.player_id, {
             building_type: bld.building_type, territory_id: bld.territory_id,
             construction_progress: progress, rounds_required: requiredRounds,
           }, false);
         }
-      } else if (bld.status === 'under_construction') {
-        const requiredRounds = BUILDING_ROUNDS[bld.building_type] ?? 1;
-        const progress = (bld.construction_progress ?? 0) + 1;
-        if (progress >= requiredRounds) {
-          await base44.asServiceRole.entities.TerritoryBuilding.update(bld.id, {
-            status: 'active',
-            construction_progress: progress,
-            completed_round: round,
-          });
-          if (bld.building_type === 'resource_hub') {
-            const ts = allTerritoryStates.find(s => s.territory_id === bld.territory_id);
-            if (ts) {
-              await base44.asServiceRole.entities.TerritoryState.update(ts.id, { has_resource_hub: true });
-            }
-          }
-          await log(base44, campaign_id, round, phase, 'building_activated', bld.player_id, {
-            building_type: bld.building_type, territory_id: bld.territory_id,
-            started_round: bld.started_round, completed_round: round,
-          }, true);
-        } else {
-          await base44.asServiceRole.entities.TerritoryBuilding.update(bld.id, {
-            construction_progress: progress,
-          });
-        }
       }
-    }
+    }));
+
+    // Flush all queued log writes before taking the snapshot
+    await flushLogs(base44);
 
     // Phase snapshot — full v2 schema
     const [finalStates, fortEndInfluence, fortEndRegionalPools, fortEndBuildings, fortEndSupplyRoutes, fortEndObjectives, fortEndVictory, fortEndDev] = await Promise.all([
