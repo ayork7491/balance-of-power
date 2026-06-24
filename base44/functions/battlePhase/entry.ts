@@ -540,18 +540,18 @@ function buildTerritoryUpdates(card, result, territoryStates) {
 // ─── DB application ────────────────────────────────────────────────────────────
 
 async function applyTerritoryUpdates(base44, updates) {
-  for (const upd of updates) {
-    if (upd._create) {
-      await base44.asServiceRole.entities.TerritoryState.create({
-        campaign_id: upd.campaign_id, map_id: upd.map_id ?? '',
-        territory_id: upd.territory_id, owner_player_id: upd.owner_player_id, troop_count: upd.troop_count,
-      });
-    } else {
-      await base44.asServiceRole.entities.TerritoryState.update(upd.id, {
-        owner_player_id: upd.owner_player_id, troop_count: upd.troop_count,
-      });
-    }
-  }
+  if (updates.length === 0) return;
+  const creates = updates.filter(u => u._create);
+  const edits   = updates.filter(u => !u._create);
+  await Promise.all([
+    ...creates.map(upd => base44.asServiceRole.entities.TerritoryState.create({
+      campaign_id: upd.campaign_id, map_id: upd.map_id ?? '',
+      territory_id: upd.territory_id, owner_player_id: upd.owner_player_id, troop_count: upd.troop_count,
+    })),
+    ...edits.map(upd => base44.asServiceRole.entities.TerritoryState.update(upd.id, {
+      owner_player_id: upd.owner_player_id, troop_count: upd.troop_count,
+    })),
+  ]);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1050,7 +1050,18 @@ async function upsertRegionalInfluence(base44, campaignId, regionId, playerId, a
 // § LOGGING + LOCKED TERRITORIES
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Pending log queue for batch flushing — call flushLogs() after the main processing loop
+const _pendingLogs = [];
+function queueLog(campaignId, round, eventType, playerId, payload, isPublic = true) {
+  _pendingLogs.push({ campaign_id: campaignId, phase: 'battle', round, event_type: eventType, player_id: playerId ?? null, payload, is_public: isPublic });
+}
+async function flushLogs(base44) {
+  if (_pendingLogs.length === 0) return;
+  const batch = _pendingLogs.splice(0, _pendingLogs.length);
+  await Promise.all(batch.map(entry => base44.asServiceRole.entities.SetupLog.create(entry)));
+}
 async function log(base44, campaignId, round, eventType, playerId, payload, isPublic = true) {
+  // Immediate write for single-call paths (non-processPhaseEnd actions)
   await base44.asServiceRole.entities.SetupLog.create({
     campaign_id: campaignId, phase: 'battle', round,
     event_type: eventType, player_id: playerId ?? null, payload, is_public: isPublic,
@@ -2193,7 +2204,7 @@ Deno.serve(async (req) => {
           player_forfeits: {},
         });
         delayedCount++;
-        await log(base44, campaign_id, round, 'battle_carried_over', null, {
+        queueLog(campaign_id, round, 'battle_carried_over', null, {
           battle_card_id: card.id, target_territory_id: card.target_territory_id, original_round: card.round, carry_to_round: round + 1,
         }, true);
         continue;
@@ -2202,7 +2213,7 @@ Deno.serve(async (req) => {
       // active_carryover that wasn't resolved — carry again
       if (card.status === 'active_carryover') {
         delayedCount++;
-        await log(base44, campaign_id, round, 'battle_carried_over_again', null, { battle_card_id: card.id, original_round: card.round }, true);
+        queueLog(campaign_id, round, 'battle_carried_over_again', null, { battle_card_id: card.id, original_round: card.round }, true);
         continue;
       }
 
@@ -2240,7 +2251,7 @@ Deno.serve(async (req) => {
         });
         resultToApply = { ...enrichedAutoResult, _authCard: batchAuthCard };
         autoResolvedCount++;
-        await log(base44, campaign_id, round, 'battle_auto_resolved', null, {
+        queueLog(campaign_id, round, 'battle_auto_resolved', null, {
           battle_card_id: card.id, winner_player_id: autoResult.winner_player_id,
           winner_bop_survivors: winnerBopSurvivors,
           defender_troop_source: batchTrace.defender.source,
@@ -2269,19 +2280,24 @@ Deno.serve(async (req) => {
       }
     }
 
-    await refreshLockedTerritories(base44, campaign_id);
+    // Flush all queued log writes from the card-processing loop
+    await Promise.all([refreshLockedTerritories(base44, campaign_id), flushLogs(base44)]);
 
     const finalStates   = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
     const activePlayers = players.filter(p => !p.is_eliminated);
     const eliminatedNow = [];
 
+    const eliminationOps = [];
     for (const p of activePlayers) {
       if (finalStates.filter(s => s.owner_player_id === p.id).length === 0) {
-        await base44.asServiceRole.entities.CampaignPlayer.update(p.id, { is_eliminated: true, eliminated_at: new Date().toISOString() });
         eliminatedNow.push(p.id);
-        await log(base44, campaign_id, round, 'player_eliminated', p.id, { display_name: p.display_name }, true);
+        eliminationOps.push(
+          base44.asServiceRole.entities.CampaignPlayer.update(p.id, { is_eliminated: true, eliminated_at: new Date().toISOString() }),
+          base44.asServiceRole.entities.SetupLog.create({ campaign_id, phase: 'battle', round, event_type: 'player_eliminated', player_id: p.id, payload: { display_name: p.display_name }, is_public: true }),
+        );
       }
     }
+    if (eliminationOps.length > 0) await Promise.all(eliminationOps);
 
     // ── Snapshot consistency check: verify player_standings.troop_total matches territory sum ──
     const snapConsistencyWarnings = [];
@@ -2348,7 +2364,7 @@ Deno.serve(async (req) => {
       victory_scores: battleEndVictory.map(v => ({ player_id: v.player_id, occupancy_score: v.occupancy_score ?? 0, wealth_score: v.wealth_score ?? 0, influence_score: v.influence_score ?? 0, has_won: v.has_won ?? false, winning_condition: v.winning_condition ?? null })),
     });
 
-    await log(base44, campaign_id, round, 'phase_advanced', null, { next_phase: 'fortify', round, battles_resolved: resolvedCount, battles_auto_resolved: autoResolvedCount, battles_forfeited: forfeitedCount, battles_delayed: delayedCount }, true);
+    await base44.asServiceRole.entities.SetupLog.create({ campaign_id, phase: 'battle', round, event_type: 'phase_advanced', player_id: null, payload: { next_phase: 'fortify', round, battles_resolved: resolvedCount, battles_auto_resolved: autoResolvedCount, battles_forfeited: forfeitedCount, battles_delayed: delayedCount }, is_public: true });
 
     const remainingAfterElim = activePlayers.filter(p => !eliminatedNow.includes(p.id) && !p.is_eliminated);
     let nextPhase = 'fortify';
