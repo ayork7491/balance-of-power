@@ -220,15 +220,20 @@ function seededRandom(seed) {
 
 // ─── Inline: Log helper ───────────────────────────────────────────────────────
 
+// Pending log queue — flushed in bulk at the end of processPhaseEnd
+const _pendingLogs = [];
+function queueLog(campaignId, round, phase, eventType, playerId, payload, isPublic = true) {
+  _pendingLogs.push({ campaign_id: campaignId, phase, round, event_type: eventType, player_id: playerId ?? null, payload, is_public: isPublic });
+}
+async function flushLogs(base44) {
+  if (_pendingLogs.length === 0) return;
+  const batch = _pendingLogs.splice(0, _pendingLogs.length);
+  await Promise.all(batch.map(entry => base44.asServiceRole.entities.SetupLog.create(entry)));
+}
 async function log(base44, campaignId, round, phase, eventType, playerId, payload, isPublic = true) {
   await base44.asServiceRole.entities.SetupLog.create({
-    campaign_id: campaignId,
-    phase,
-    round,
-    event_type:  eventType,
-    player_id:   playerId ?? null,
-    payload,
-    is_public:   isPublic,
+    campaign_id: campaignId, phase, round,
+    event_type: eventType, player_id: playerId ?? null, payload, is_public: isPublic,
   });
 }
 
@@ -283,6 +288,7 @@ function calcBattleScaling(totalTroops, avgBattleSize = 1000) {
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
+  try {
   const base44 = createClientFromRequest(req);
   const user   = await base44.auth.me();
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
@@ -650,8 +656,8 @@ Deno.serve(async (req) => {
       campaign_id, phase: 'attack', round,
     });
 
-    // Auto-submit (skip) any players who did not lock
-    for (const p of activePlayers) {
+    // Auto-submit (skip) any players who did not lock — parallel
+    await Promise.all(activePlayers.map(async (p) => {
       const dec = allDecisions.find(d => d.player_id === p.id);
       if (!dec || !dec.is_locked) {
         if (dec) {
@@ -666,11 +672,9 @@ Deno.serve(async (req) => {
             data: { attacks: [] },
           });
         }
-        await log(base44, campaign_id, round, phase, 'auto_submitted', p.id, {
-          display_name: p.display_name,
-        }, false);
+        queueLog(campaign_id, round, phase, 'auto_submitted', p.id, { display_name: p.display_name }, false);
       }
-    }
+    }));
 
     // Reload all finalized decisions
     const finalDecisions = await base44.asServiceRole.entities.PhaseDecision.filter({
@@ -726,7 +730,7 @@ Deno.serve(async (req) => {
           validation_result: 'rejected',
           rejection_reason: rejectionReason,
         });
-        await log(base44, campaign_id, round, phase, `attack_rejected_${rejectionReason}`, atk.player_id, {
+        queueLog(campaign_id, round, phase, `attack_rejected_${rejectionReason}`, atk.player_id, {
           origin_territory_id: atk.origin_territory_id,
           target_territory_id: atk.target_territory_id,
           committed_troops: atk.committed_troops,
@@ -773,19 +777,20 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── STEP 3: Persist troop deductions + vacations to DB ────────────────────
-    for (const [tid, state] of Object.entries(postCommitStateById)) {
-      const original = allTerritoryStates.find(s => s.territory_id === tid);
-      if (!original) continue;
-      const troopChanged  = original.troop_count !== state.troop_count;
-      const ownerChanged  = original.owner_player_id !== state.owner_player_id;
-      if (troopChanged || ownerChanged) {
-        await base44.asServiceRole.entities.TerritoryState.update(original.id, {
-          troop_count:      state.troop_count,
-          owner_player_id:  state.owner_player_id ?? null,
+    // ── STEP 3: Persist troop deductions + vacations to DB — parallel ─────────
+    await Promise.all(
+      Object.entries(postCommitStateById).map(([tid, state]) => {
+        const original = allTerritoryStates.find(s => s.territory_id === tid);
+        if (!original) return Promise.resolve();
+        const troopChanged = original.troop_count !== state.troop_count;
+        const ownerChanged = original.owner_player_id !== state.owner_player_id;
+        if (!troopChanged && !ownerChanged) return Promise.resolve();
+        return base44.asServiceRole.entities.TerritoryState.update(original.id, {
+          troop_count:     state.troop_count,
+          owner_player_id: state.owner_player_id ?? null,
         });
-      }
-    }
+      })
+    );
 
     // ── STEP 3B: Re-fetch territory states from DB after persisting deductions ─
     // This ensures battle cards use the AUTHORITATIVE persisted troop counts,
@@ -830,60 +835,39 @@ Deno.serve(async (req) => {
       const isBloodbath = mutualOrigins.length > 0;
 
       if (isBloodbath) {
-        // Generate ONE bloodbath card per mutual pair.
-        // IMPORTANT: only mark the *other* territory (originId) as consumed —
-        // NOT targetId itself. This ensures non-mutual attacks against targetId
-        // (e.g. C→B when A↔B is a bloodbath) still get their own battle card.
+        // Generate ONE bloodbath card per mutual pair — collect specs first, then parallel-create.
         const pairedOrigins = new Set();
+        const bloodbathSpecs = [];
         for (const originId of mutualOrigins) {
           const pairKey = bloodbathKey(targetId, originId);
           if (pairedOrigins.has(pairKey)) continue;
           pairedOrigins.add(pairKey);
-
-          // Only consume originId so it isn't processed again as a target.
-          // targetId is NOT consumed here — non-mutual attacks on it proceed below.
           consumedTargets.add(originId);
-
-          // Combine all attacks involved in this mutual pair
-          const attacksFromTarget = validatedAttacks.filter(
-            a => a.origin_territory_id === targetId && a.target_territory_id === originId
-          );
-          const attacksFromOrigin = validatedAttacks.filter(
-            a => a.origin_territory_id === originId && a.target_territory_id === targetId
-          );
+          const attacksFromTarget = validatedAttacks.filter(a => a.origin_territory_id === targetId && a.target_territory_id === originId);
+          const attacksFromOrigin = validatedAttacks.filter(a => a.origin_territory_id === originId && a.target_territory_id === targetId);
           const allBloodbathAttacks = [...attacksFromOrigin, ...attacksFromTarget];
-
           const totalTroops = allBloodbathAttacks.reduce((s, a) => s + (a.committed_troops || 0), 0);
           const { scale_factor, tabletop_size } = calcBattleScaling(totalTroops, avgBattleSize);
-
-          const card = await base44.asServiceRole.entities.BattleCard.create({
-            campaign_id,
-            round,
-            battle_type: 'bloodbath',
-            // target_territory_id is the lexicographically first of the pair
-            target_territory_id: [targetId, originId].sort()[0],
-            defender_player_id:  null, // bloodbath has no single defender
-            defender_troops:     0,
-            attackers: allBloodbathAttacks.map(a => ({
-              player_id:           a.player_id,
-              origin_territory_id: a.origin_territory_id,
-              committed_troops:    a.committed_troops,
-            })),
-            total_attacking_troops: totalTroops,
-            total_troops_in_battle: totalTroops,
-            scale_factor,
-            tabletop_size,
-            status: 'pending',
-            is_mutual: true,
-          });
-          battleCards.push(card);
-
-          await log(base44, campaign_id, round, phase, 'battle_card_generated', null, {
-            battle_type:        'bloodbath',
-            target_territory_id: card.target_territory_id,
-            pair:               [targetId, originId],
-            scale_factor,
-            tabletop_size,
+          bloodbathSpecs.push({ targetId, originId, allBloodbathAttacks, totalTroops, scale_factor, tabletop_size });
+        }
+        // Create all bloodbath cards in parallel
+        const createdBloodbathCards = await Promise.all(bloodbathSpecs.map(spec =>
+          base44.asServiceRole.entities.BattleCard.create({
+            campaign_id, round, battle_type: 'bloodbath',
+            target_territory_id: [spec.targetId, spec.originId].sort()[0],
+            defender_player_id: null, defender_troops: 0,
+            attackers: spec.allBloodbathAttacks.map(a => ({ player_id: a.player_id, origin_territory_id: a.origin_territory_id, committed_troops: a.committed_troops })),
+            total_attacking_troops: spec.totalTroops, total_troops_in_battle: spec.totalTroops,
+            scale_factor: spec.scale_factor, tabletop_size: spec.tabletop_size,
+            status: 'pending', is_mutual: true,
+          })
+        ));
+        for (let i = 0; i < createdBloodbathCards.length; i++) {
+          battleCards.push(createdBloodbathCards[i]);
+          queueLog(campaign_id, round, phase, 'battle_card_generated', null, {
+            battle_type: 'bloodbath', target_territory_id: createdBloodbathCards[i].target_territory_id,
+            pair: [bloodbathSpecs[i].targetId, bloodbathSpecs[i].originId],
+            scale_factor: bloodbathSpecs[i].scale_factor, tabletop_size: bloodbathSpecs[i].tabletop_size,
           }, true);
         }
 
@@ -959,7 +943,7 @@ Deno.serve(async (req) => {
           troops_moved:        attacker.committed_troops,
           origin_troops_after: originAfter,
         });
-        await log(base44, campaign_id, round, phase, 'skirmish_resolved', attacker.player_id, {
+        queueLog(campaign_id, round, phase, 'skirmish_resolved', attacker.player_id, {
           target_territory_id: targetId,
           origin_territory_id: attacker.origin_territory_id,
           committed_troops:    attacker.committed_troops,
@@ -1006,32 +990,27 @@ Deno.serve(async (req) => {
       });
 
       battleCards.push(card);
-
-      await log(base44, campaign_id, round, phase, 'battle_card_generated', null, {
-        battle_type:         battleType,
-        target_territory_id: targetId,
-        scale_factor,
-        tabletop_size,
-        attacker_count:      attacksOnTarget.length,
+      queueLog(campaign_id, round, phase, 'battle_card_generated', null, {
+        battle_type: battleType, target_territory_id: targetId,
+        scale_factor, tabletop_size, attacker_count: attacksOnTarget.length,
       }, true);
     }
 
-    // Write public AttackReveal records (only valid attacks — include attack_id for audit traceability)
-    for (const atk of validatedAttacks) {
-      await base44.asServiceRole.entities.AttackReveal.create({
-        campaign_id,
-        round,
+    // Write public AttackReveal records in parallel
+    await Promise.all(validatedAttacks.map(atk =>
+      base44.asServiceRole.entities.AttackReveal.create({
+        campaign_id, round,
         player_id: atk.player_id,
         origin_territory_id: atk.origin_territory_id,
         target_territory_id: atk.target_territory_id,
         committed_troops: atk.committed_troops,
         attack_id: atk.id ?? null,
-      });
-    }
+      })
+    ));
 
     // Log rejected attacks summary for audit
     if (rejectedAttacks.length > 0) {
-      await log(base44, campaign_id, round, phase, 'attacks_rejected_at_resolution', null, {
+      queueLog(campaign_id, round, phase, 'attacks_rejected_at_resolution', null, {
         rejected_count: rejectedAttacks.length,
         rejected: rejectedAttacks.map(a => ({
           player_id: a.player_id,
@@ -1042,6 +1021,9 @@ Deno.serve(async (req) => {
         })),
       }, false);
     }
+
+    // Flush all queued log writes before snapshot
+    await flushLogs(base44);
 
     // Phase snapshot — full enriched
     const [finalStates, atkEndInfluence, atkEndRegionalPools, atkEndBuildings, atkEndSupplyRoutes, atkEndObjectives, atkEndVictory, atkEndDev] = await Promise.all([
@@ -1083,19 +1065,15 @@ Deno.serve(async (req) => {
       victory_scores: atkEndVictory.map(v => ({ player_id: v.player_id, occupancy_score: v.occupancy_score ?? 0, wealth_score: v.wealth_score ?? 0, influence_score: v.influence_score ?? 0, has_won: v.has_won ?? false, winning_condition: v.winning_condition ?? null })),
     });
 
-    await log(base44, campaign_id, round, phase, 'phase_advanced', null, {
-      next_phase: 'battle',
-      round,
-      total_attacks: validatedAttacks.length,
-      rejected_attacks: rejectedAttacks.length,
-      battle_cards_generated: battleCards.length,
-      skirmishes_auto_resolved: skirmishResults.length,
-    }, true);
-
-    // Advance to battle phase
-    await base44.asServiceRole.entities.Campaign.update(campaign_id, {
-      current_phase: 'battle',
-    });
+    // Advance phase + write final log in parallel
+    await Promise.all([
+      base44.asServiceRole.entities.Campaign.update(campaign_id, { current_phase: 'battle' }),
+      base44.asServiceRole.entities.SetupLog.create({
+        campaign_id, phase, round, event_type: 'phase_advanced', player_id: null,
+        payload: { next_phase: 'battle', round, total_attacks: validatedAttacks.length, rejected_attacks: rejectedAttacks.length, battle_cards_generated: battleCards.length, skirmishes_auto_resolved: skirmishResults.length },
+        is_public: true,
+      }),
+    ]);
 
     return Response.json({
       success: true,
@@ -1110,4 +1088,8 @@ Deno.serve(async (req) => {
   }
 
   return Response.json({ error: `Unknown action: ${action}` }, { status: 400 });
+  } catch (err) {
+    console.error('[attackPhase] Unhandled error:', err?.message ?? err);
+    return Response.json({ error: err?.message ?? 'Internal server error' }, { status: 500 });
+  }
 });
