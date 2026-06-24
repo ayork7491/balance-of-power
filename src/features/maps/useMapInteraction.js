@@ -149,43 +149,47 @@ export function useMapInteraction({
       case 'attack':
       case 'operations': {
         // Attack/Operations phase: two-step selection
+        // First tap on owned territory → select as origin, highlight adjacencies, NO popup.
+        // Second tap on same origin → clear attack mode and open popup.
+        // Tap on valid adjacent target → stage attack.
+        // Tap on different owned territory → switch origin.
         if (!attackOriginId) {
-          // First click: select attack origin (must own)
+          // First click: select attack origin (must own and have troops)
           if (isOwnedByActingPlayer(territoryId) && state?.troop_count > 0) {
             setAttackOriginId(territoryId);
-            onSelect(territoryId);
             setInteractionMode('attack_origin_selected');
             onAttackOriginSelect?.(territoryId);
+            // Do NOT call onSelect here — suppresses territory popup on first tap
           } else {
             // Not owned or no troops - just show details
             onSelect(territoryId);
             setInteractionMode('view_only');
           }
         } else {
-          // Second click: select attack target (must be adjacent enemy/neutral)
+          // Second click: determine what was tapped
           const validTargets = getValidAttackTargets(attackOriginId);
-          if (validTargets.includes(territoryId)) {
-            // Issue 4: keep selectedTerritoryId = origin so AttackPanel shows AttackTargetSelector.
-            // The target is communicated via onAttackTargetSelect callback only.
+          if (territoryId === attackOriginId) {
+            // Tapped same origin again → clear attack mode and open popup
+            setAttackOriginId(null);
+            setInteractionMode('view_only');
+            onSelect(territoryId);
+          } else if (validTargets.includes(territoryId)) {
+            // Valid adjacent enemy/neutral → stage attack target
+            // Keep selectedTerritoryId = origin so AttackPanel shows AttackTargetSelector
             onSelect(attackOriginId);
             setInteractionMode('attack_target_selected');
             onAttackTargetSelect?.(attackOriginId, territoryId);
-          } else if (territoryId === attackOriginId) {
-            // Clicked same origin again — clear attack mode and open territory popup
-            setAttackOriginId(null);
-            setInteractionMode('view_only');
-            onSelect(null); // force panel to close/reopen
-            onSelect(territoryId);
-          } else if (isOwnedByActingPlayer(territoryId)) {
-            // Clicked another own territory - change origin
+          } else if (isOwnedByActingPlayer(territoryId) && stateById[territoryId]?.troop_count > 0) {
+            // Clicked a different owned territory → switch attack origin (no popup)
             setAttackOriginId(territoryId);
-            onSelect(territoryId);
             setInteractionMode('attack_origin_selected');
             onAttackOriginSelect?.(territoryId);
+            // Do NOT call onSelect — suppresses popup on origin switch
           } else {
-            // Invalid target - just show details
-            onSelect(territoryId);
+            // Invalid target — show details and clear attack mode
+            setAttackOriginId(null);
             setInteractionMode('view_only');
+            onSelect(territoryId);
           }
         }
         break;

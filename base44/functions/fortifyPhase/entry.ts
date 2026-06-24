@@ -981,14 +981,19 @@ Deno.serve(async (req) => {
           // Unsafe caravan — generate supply_caravan_escort BattleCard instead of delivering
           const { origin, destination, contents, path, enemy_territories } = caravan;
           if (!origin || !destination || !contents) continue;
-          // Idempotency: skip if card already exists for this caravan
+          // Idempotency: skip if card already exists for this caravan.
+          // Use caravan.id as the stable key; fall back to a deterministic key from
+          // campaign+round+player+origin+destination to handle legacy caravans without ids.
+          const stableKey = caravan.id ?? `${campaign_id}:${round}:${dec.player_id}:${origin}:${destination}`;
           const existingEscortCards = await base44.asServiceRole.entities.BattleCard.filter({
             campaign_id, round, source_player_id: dec.player_id, battle_card_source: 'supply_caravan_escort',
           });
-          const alreadyExists = existingEscortCards.some(c =>
-            c.source_operation_metadata?.shipment_origin === origin &&
-            c.source_operation_metadata?.shipment_destination === destination
-          );
+          const alreadyExists = existingEscortCards.some(c => {
+            const meta = c.source_operation_metadata ?? {};
+            // Match by caravan_id first (stable), then fall back to origin+destination
+            if (meta.caravan_id && caravan.id) return meta.caravan_id === caravan.id;
+            return meta.shipment_origin === origin && meta.shipment_destination === destination;
+          });
           if (!alreadyExists) {
             // Use first enemy territory as the contested territory
             const targetTerritoryId = (enemy_territories ?? [])[0] ?? destination;

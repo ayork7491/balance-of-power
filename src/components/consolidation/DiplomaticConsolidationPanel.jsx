@@ -24,6 +24,18 @@ function getPlayerName(players, id) {
 
 // ── Asset Summary (read-only display on a proposal card) ──────────────────────
 
+// Resolve total amount from a resource value that may be:
+//   - a plain number (legacy / request side)
+//   - an array of { source_territory, amount } lines (offer side from TradeOfferBuilder)
+//   - an object { amount, dest_territory } (request side)
+function resolveResourceAmount(v) {
+  if (v == null) return 0;
+  if (typeof v === 'number') return v;
+  if (Array.isArray(v)) return v.reduce((s, line) => s + (line.amount ?? 0), 0);
+  if (typeof v === 'object') return v.amount ?? 0;
+  return 0;
+}
+
 function AssetSummary({ assets, label }) {
   const resources = assets?.resources ?? {};
   const influence = assets?.influence ?? {};
@@ -31,12 +43,17 @@ function AssetSummary({ assets, label }) {
   const peace     = assets?.peace_treaty ?? {};
 
   const lines = [];
-  Object.entries(resources).filter(([,v]) => v > 0).forEach(([r, v]) => lines.push(
-    <span key={r} className="text-foreground">{RESOURCE_ICONS[r]} {v}</span>
-  ));
-  Object.entries(influence).filter(([, v]) => (typeof v === 'object' ? (v.amount ?? 0) : (v ?? 0)) > 0).forEach(([region, v]) => {
-    const amt = typeof v === 'object' ? (v.amount ?? v) : v;
-    lines.push(<span key={region} className="text-purple-400">🌐 {region.replace(/_/g,' ')} +{amt}</span>);
+  Object.entries(resources).forEach(([r, v]) => {
+    const total = resolveResourceAmount(v);
+    if (total > 0) lines.push(
+      <span key={r} className="text-foreground">{RESOURCE_ICONS[r]} {total}</span>
+    );
+  });
+  Object.entries(influence).forEach(([region, v]) => {
+    const amt = resolveResourceAmount(v);
+    if (amt > 0) lines.push(
+      <span key={region} className="text-purple-400">🌐 {region.replace(/_/g,' ')} +{amt}</span>
+    );
   });
   if ((troops.amount ?? 0) > 0) lines.push(<span key="troops" className="text-red-400">⚔ {troops.amount} troops</span>);
   if ((peace.duration ?? 0) > 0) lines.push(<span key="peace" className="text-cyan-400">🕊 Peace {peace.duration}R</span>);

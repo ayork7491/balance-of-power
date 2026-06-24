@@ -831,25 +831,48 @@ Deno.serve(async (req) => {
         const activatedHubIds = new Set(economicStaged.filter(tid =>
           hubBuildingTerritoryIds.has(tid) || stateMap[tid]?.has_resource_hub
         ));
+        // Fetch all territory states once for supply route source lookups
+        const allStatesForRoutes = await base44.asServiceRole.entities.TerritoryState.filter({ campaign_id });
+        const allDevRecsForRoutes = await base44.asServiceRole.entities.TerritoryDevelopment.filter({ campaign_id });
+
         for (const route of activeSupplyRoutes) {
           if (route.route_status !== 'active') continue;
           if (!activatedHubIds.has(route.hub_territory_id)) continue;
-          // Collect resource from source territory
-          const sourcePrimary = route.resource_type ?? null;
-          if (sourcePrimary && sourcePrimary !== 'food') {
+
+          // Resolve source territory's primary resource from live TerritoryState
+          // (route.resource_type may be stale). Fall back to SC_RESOURCE_TYPES map.
+          const sourceTs = allStatesForRoutes.find(s => s.territory_id === route.source_territory_id);
+          const sourcePrimary = sourceTs?.resource_type ?? SC_RESOURCE_TYPES[route.source_territory_id] ?? route.resource_type ?? null;
+          if (!sourcePrimary) continue;
+
+          // Primary resource — guaranteed
+          if (sourcePrimary !== 'food') {
             capitalAccum[sourcePrimary] = (capitalAccum[sourcePrimary] ?? 0) + 1;
-          } else if (sourcePrimary === 'food') {
+          } else {
             foodAccum += 1;
           }
+
+          // Secondary resource — 40% chance if unlocked (dev level >= 2)
+          const sourceDevRec = allDevRecsForRoutes.find(d => d.territory_id === route.source_territory_id);
+          const sourceDevLevel = sourceDevRec?.development_level ?? 1;
+          let secondaryGenerated = null;
+          if (sourceDevLevel >= 2) {
+            // We don't store a canonical secondary resource per territory yet,
+            // so skip the secondary roll here — just log it as future work.
+            // This can be wired once secondary resources are defined in map config.
+          }
+
           activationResults.push({
             territory_id: route.source_territory_id,
             player_id: actingPlayer.id,
-            resource_type: sourcePrimary ?? 'unknown',
+            resource_type: sourcePrimary,
             amount_generated: 1,
-            generated: { [sourcePrimary ?? 'food']: 1 },
+            generated: { [sourcePrimary]: 1 },
             destination: sourcePrimary === 'food' ? 'ledger_food' : (capitalTerritoryId ?? route.hub_territory_id),
             via_supply_route: route.id,
             hub_territory_id: route.hub_territory_id,
+            source_dev_level: sourceDevLevel,
+            secondary_generated: secondaryGenerated,
           });
         }
 
@@ -1175,17 +1198,16 @@ Deno.serve(async (req) => {
     }
 
     // ── Evaluate objectives for all active players at Planning lock ──────────
-    // This ensures objective auto-completion is tied to the phase lifecycle,
-    // not to card dealing, so influence rewards are awarded reliably.
+    // Uses asServiceRole to avoid user-scoped permission issues in loop.
     try {
       const evalPlayers = players.filter(p => !p.is_eliminated);
-      for (const ep of evalPlayers) {
-        await base44.functions.invoke('objectivePhase', {
+      await Promise.all(evalPlayers.map(ep =>
+        base44.asServiceRole.functions.invoke('objectivePhase', {
           action: 'evaluateObjectives',
           campaign_id,
           acting_as_player_id: ep.id,
-        });
-      }
+        }).catch(e => console.warn(`[lockPlanningPhase] Objective eval failed for ${ep.id}:`, e?.message))
+      ));
     } catch (evalErr) {
       console.warn('[lockPlanningPhase] Objective evaluation failed (non-fatal):', evalErr?.message);
     }

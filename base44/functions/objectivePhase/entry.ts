@@ -646,10 +646,8 @@ Deno.serve(async (req) => {
       if (!cardDef) continue;
       // Only auto-evaluate cards marked as auto_completable
       if (!cardDef.auto_completable) continue;
-      // Skip if already completed this round (idempotency)
-      const alreadyDone = (updatedCards.completed ?? []).some(
-        e => e.card_id === cardId && e.completed_round === round
-      );
+      // Skip if already completed at any round (idempotency — card should no longer be in held)
+      const alreadyDone = (updatedCards.completed ?? []).some(e => e.card_id === cardId);
       if (alreadyDone) continue;
 
       // ── Evaluate condition ──────────────────────────────────────────────
@@ -755,10 +753,8 @@ Deno.serve(async (req) => {
         const cardDef = autoCards.find(c => c.card_id === cardId);
         if (!cardDef) continue;
 
-        // Skip if already completed this round
-        const alreadyDone = (updatedCards.completed ?? []).some(
-          e => e.card_id === cardId && e.completed_round === round
-        );
+        // Skip if already completed (any round — card should have been removed from held)
+        const alreadyDone = (updatedCards.completed ?? []).some(e => e.card_id === cardId);
         if (alreadyDone) continue;
 
         // Evaluate condition — use completion_condition (canonical) with trigger_condition as fallback
