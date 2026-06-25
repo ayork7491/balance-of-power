@@ -298,10 +298,9 @@ function ActiveCampaignContent() {
 
   const handleAttackOriginSelect = useCallback((originId) => {
     setAttackOriginId(originId);
-    // Do NOT set selectedTerritoryId here — that would open the TerritoryDetailPanel immediately.
-    // The panel only opens on a second tap of the same origin (handled in useMapInteraction).
-    // CommandCenterPanel receives attackOriginId directly to show the attack panel.
-  }, []);
+    // Keep selectedTerritoryId pointing at origin so AttackPanel sees the origin territory
+    setSelectedTerritoryId(originId);
+  }, [setSelectedTerritoryId]);
 
   const handleAttackTargetSelect = useCallback((_originId, targetId) => {
     setAttackPreselectedTargetId(targetId);
@@ -341,7 +340,7 @@ function ActiveCampaignContent() {
   // so that red highlights persist even after the detail popup is dismissed.
   const attackableIds = useMemo(() => {
     if ((phase !== 'attack' && phase !== 'operations') || !effectivePlayer || !mapDef) return new Set();
-    const originId = attackOriginId;
+    const originId = attackOriginId ?? selectedTerritoryId;
     if (!originId) return new Set();
     const isOwn = stateById[originId]?.owner_player_id === effectivePlayer.id;
     if (!isOwn) return new Set();
