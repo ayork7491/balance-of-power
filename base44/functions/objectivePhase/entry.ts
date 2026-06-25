@@ -244,13 +244,20 @@ async function getAllHeldCardIds(base44, campaignId) {
 Deno.serve(async (req) => {
   try {
   const base44 = createClientFromRequest(req);
-  const user = await base44.auth.me();
-  if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json();
   const { action, campaign_id } = body;
+  const isInternalCall = body._internal === true;
+
   if (!campaign_id || !action) {
     return Response.json({ error: 'campaign_id and action are required' }, { status: 400 });
+  }
+
+  // Internal/service-role calls skip user auth (e.g. from planningPhase evaluateObjectives)
+  let user = null;
+  if (!isInternalCall) {
+    user = await base44.auth.me();
+    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const [campaigns, players] = await Promise.all([
@@ -260,22 +267,25 @@ Deno.serve(async (req) => {
   const campaign = campaigns[0];
   if (!campaign) return Response.json({ error: 'Campaign not found' }, { status: 404 });
 
-  const myPlayer = players.find(p => p.user_id === user.id);
-  if (!myPlayer) return Response.json({ error: 'Not a player in this campaign' }, { status: 403 });
+  const myPlayer = user ? players.find(p => p.user_id === user.id) : null;
+  if (!isInternalCall && !myPlayer) return Response.json({ error: 'Not a player in this campaign' }, { status: 403 });
 
-  const isAdmin = campaign.admin_user_id === user.id;
+  const isAdmin = isInternalCall || (user && campaign.admin_user_id === user.id);
   const round = campaign.current_round ?? 1;
 
-  // Resolve acting player (admin can act as others)
+  // Resolve acting player (admin can act as others; internal calls require acting_as_player_id)
   const { acting_as_player_id } = body;
   let actingPlayer = myPlayer;
   if (acting_as_player_id) {
     const target = players.find(p => p.id === acting_as_player_id);
     if (!target) return Response.json({ error: 'Invalid acting_as_player_id' }, { status: 400 });
-    if (!isAdmin && target.id !== myPlayer.id) {
+    if (!isAdmin && !isInternalCall && target.id !== myPlayer?.id) {
       return Response.json({ error: 'Only admins can act as other players' }, { status: 403 });
     }
     actingPlayer = target;
+  }
+  if (isInternalCall && !actingPlayer) {
+    return Response.json({ error: 'Internal calls must provide acting_as_player_id' }, { status: 400 });
   }
 
   // ── ACTION: getObjectiveState ──────────────────────────────────────────────

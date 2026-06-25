@@ -511,10 +511,11 @@ Deno.serve(async (req) => {
     // ── Auto-evaluate held objectives before dealing new cards ─────────────
     // Best-effort, non-blocking. Full per-player evaluation runs at lockPlanningPhase.
     try {
-      await base44.functions.invoke('objectivePhase', {
+      await base44.asServiceRole.functions.invoke('objectivePhase', {
         action: 'evaluateObjectives',
         campaign_id,
         acting_as_player_id: actingPlayer.id,
+        _internal: true,
       });
     } catch { /* non-blocking */ }
 
@@ -1198,7 +1199,7 @@ Deno.serve(async (req) => {
     }
 
     // ── Evaluate objectives for all active players at Planning lock ──────────
-    // Uses asServiceRole to avoid user-scoped permission issues in loop.
+    // Uses asServiceRole + _internal:true to bypass user-auth check in objectivePhase.
     try {
       const evalPlayers = players.filter(p => !p.is_eliminated);
       await Promise.all(evalPlayers.map(ep =>
@@ -1206,6 +1207,7 @@ Deno.serve(async (req) => {
           action: 'evaluateObjectives',
           campaign_id,
           acting_as_player_id: ep.id,
+          _internal: true,
         }).catch(e => console.warn(`[lockPlanningPhase] Objective eval failed for ${ep.id}:`, e?.message))
       ));
     } catch (evalErr) {

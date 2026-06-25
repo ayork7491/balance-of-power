@@ -104,11 +104,14 @@ export default function OperationsPhaseHeader({
       if (serverStatus?.operations_locked) {
         stagingStore.clearAll();
       } else {
-        // Restore from localStorage or seed from server (only on initial load)
+        // Restore from localStorage if available; otherwise seed from server state.
+        // After unlock, server preserves the staged arrays — use them if localStorage is empty.
         const localEcon = stagingStore.getEconomicStaging();
         const localDiplo = stagingStore.getDiplomaticStaging();
-        onEconomicLocalChange?.(localEcon ?? (serverStatus?.economic?.staged ?? []));
-        onDiplomaticLocalChange?.(localDiplo ?? (serverStatus?.diplomatic?.staged ?? []));
+        const serverEcon = serverStatus?.economic?.staged ?? [];
+        const serverDiplo = serverStatus?.diplomatic?.staged ?? [];
+        onEconomicLocalChange?.(localEcon ?? (serverEcon.length > 0 ? serverEcon : []));
+        onDiplomaticLocalChange?.(localDiplo ?? (serverDiplo.length > 0 ? serverDiplo : []));
       }
 
       if (serverStatus?.admin_lock_status) setAdminStatus(serverStatus.admin_lock_status);
@@ -178,8 +181,10 @@ export default function OperationsPhaseHeader({
         campaign_id: campaign.id,
         acting_as_player_id: actingAsPlayerId ?? undefined,
       });
+      // After unlock: reload server state. The server preserves staged arrays on the
+      // operations_stage PhaseDecision, so load() will rehydrate from server into localStorage.
       await load();
-      onLocked?.();
+      // Do NOT call onLocked here — unlock should not trigger a phase refresh that clears panels.
     } catch (e) {
       setError(e?.response?.data?.error ?? 'Failed to unlock operations phase.');
     } finally {

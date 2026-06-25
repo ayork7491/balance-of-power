@@ -403,6 +403,22 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Cannot attack your own territory' }, { status: 400 });
     }
 
+    // ── Peace treaty check at staging time ───────────────────────────────────
+    const targetOwnerForPact = targetState?.owner_player_id ?? null;
+    if (targetOwnerForPact) {
+      const stagePacts = await base44.asServiceRole.entities.DiplomaticAction.filter({
+        campaign_id, player_id: actingPlayer.id, action_type: 'non_aggression_pact',
+      });
+      const blockedByPact = stagePacts.some(pact =>
+        pact.status === 'active' &&
+        pact.target_player_id === targetOwnerForPact &&
+        (pact.expires_round == null || pact.expires_round >= round)
+      );
+      if (blockedByPact) {
+        return Response.json({ error: `You have an active non-aggression pact with the owner of ${target_territory_id}. Attacking is not permitted.` }, { status: 400 });
+      }
+    }
+
     // Load acting player's decision (user-scoped — privacy enforced)
     const decisions = await base44.entities.PhaseDecision.filter({
       campaign_id, player_id: actingPlayer.id, phase: 'attack', round,
@@ -681,6 +697,22 @@ Deno.serve(async (req) => {
       campaign_id, phase: 'attack', round,
     });
 
+    // ── Load active non-aggression pacts for peace treaty enforcement ────────
+    // DiplomaticAction records with action_type='non_aggression_pact' and status='active'
+    // prevent the granting player from attacking the target player.
+    const activePacts = await base44.asServiceRole.entities.DiplomaticAction.filter({
+      campaign_id, action_type: 'non_aggression_pact',
+    });
+    const activePactSet = new Set(); // "grantor_id:target_id" pairs that cannot attack
+    for (const pact of activePacts) {
+      if (pact.status !== 'active') continue;
+      if (pact.expires_round != null && pact.expires_round < round) continue;
+      if (pact.player_id && pact.target_player_id) {
+        // The player who granted the pact (player_id) cannot attack target_player_id
+        activePactSet.add(`${pact.player_id}:${pact.target_player_id}`);
+      }
+    }
+
     // Flatten all attacks across all players — preserve attack id for audit traceability
     const allAttacks = [];
     const rejectedAttacks = [];
@@ -710,6 +742,10 @@ Deno.serve(async (req) => {
 
       let rejectionReason = null;
 
+      // Determine defending player for peace treaty check
+      const defendingPlayerId = targetState?.owner_player_id ?? null;
+      const pactKey = defendingPlayerId ? `${atk.player_id}:${defendingPlayerId}` : null;
+
       if (atk.submission_id && seenSubmissionIds.has(atk.submission_id)) {
         rejectionReason = 'duplicate_submission';
       } else if (!originState || originState.owner_player_id !== atk.player_id) {
@@ -722,6 +758,8 @@ Deno.serve(async (req) => {
         rejectionReason = 'insufficient_troops';
       } else if ((atk.committed_troops ?? 0) < 1) {
         rejectionReason = 'zero_troops_committed';
+      } else if (pactKey && activePactSet.has(pactKey)) {
+        rejectionReason = 'blocked_by_peace_treaty';
       }
 
       if (rejectionReason) {
@@ -956,6 +994,20 @@ Deno.serve(async (req) => {
 
       // Primary attacker = first attacker entry (single attacker for siege)
       const primaryAttacker = attacksOnTarget[0];
+
+      // ── Idempotency: skip if an equivalent military battle card already exists ──
+      // Key: same campaign, round, target, and source (military_attack).
+      const existingMilitaryCards = await base44.asServiceRole.entities.BattleCard.filter({
+        campaign_id, round, target_territory_id: targetId, battle_card_source: 'military_attack',
+      });
+      if (existingMilitaryCards.length > 0) {
+        queueLog(campaign_id, round, phase, 'battle_card_duplicate_skipped', null, {
+          battle_type: battleType, target_territory_id: targetId,
+          reason: 'military_attack_card_already_exists',
+        }, false);
+        battleCards.push(existingMilitaryCards[0]);
+        continue;
+      }
 
       // Create BattleCard for siege / double_siege / capture_objectives
       const card = await base44.asServiceRole.entities.BattleCard.create({
