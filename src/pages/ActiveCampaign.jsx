@@ -243,6 +243,13 @@ function ActiveCampaignContent() {
 
   // ── Panel routing (Sprint 5B) ─────────────────────────────────────────────
 
+  // Whether the popup should be suppressed (attack origin selected but no target yet)
+  const suppressPopupForAttackOrigin = !!(
+    (phase === 'attack' || phase === 'operations') &&
+    attackOriginId &&
+    !attackPreselectedTargetId
+  );
+
   const clearSelection = () => {
     setSelectedTerritoryId(null);
     setAttackOriginId(null);
@@ -296,13 +303,6 @@ function ActiveCampaignContent() {
 
   // ── Map interaction callbacks ──────────────────────────────────────────────
 
-  // Whether the popup should be suppressed (attack origin selected but no target yet)
-  const suppressPopupForAttackOrigin = !!(
-    (phase === 'attack' || phase === 'operations') &&
-    attackOriginId &&
-    !attackPreselectedTargetId
-  );
-
   const handleAttackOriginSelect = useCallback((originId) => {
     setAttackOriginId(originId);
     // Do NOT set selectedTerritoryId here — this would open the TerritoryDetailPanel popup.
@@ -353,7 +353,6 @@ function ActiveCampaignContent() {
   }, [campaign?.locked_territory_ids]);
 
   // Use attackOriginId (set by map interaction, survives TerritoryDetailPanel close)
-  // so that red highlights persist even after the detail popup is dismissed.
   const attackableIds = useMemo(() => {
     if ((phase !== 'attack' && phase !== 'operations') || !effectivePlayer || !mapDef) return new Set();
     const originId = attackOriginId ?? selectedTerritoryId;
