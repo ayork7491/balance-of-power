@@ -264,7 +264,7 @@ function ActiveCampaignContent() {
       stateById={stateById}
       mapDef={mapDef}
       adjacencyMap={adjacencyMap}
-      selectedTerritoryId={selectedTerritoryId}
+      selectedTerritoryId={suppressPopupForAttackOrigin ? attackOriginId : selectedTerritoryId}
       attackPreselectedTargetId={attackPreselectedTargetId}
       onClearSelection={clearSelection}
       onPhaseChanged={handlePhaseChanged}
@@ -296,14 +296,30 @@ function ActiveCampaignContent() {
 
   // ── Map interaction callbacks ──────────────────────────────────────────────
 
+  // Whether the popup should be suppressed (attack origin selected but no target yet)
+  const suppressPopupForAttackOrigin = !!(
+    (phase === 'attack' || phase === 'operations') &&
+    attackOriginId &&
+    !attackPreselectedTargetId
+  );
+
   const handleAttackOriginSelect = useCallback((originId) => {
     setAttackOriginId(originId);
-    // Keep selectedTerritoryId pointing at origin so AttackPanel sees the origin territory
-    setSelectedTerritoryId(originId);
+    // Do NOT set selectedTerritoryId here — this would open the TerritoryDetailPanel popup.
+    // The AttackPanel reads attackOriginId directly via the selectedTerritoryId prop passed
+    // to CommandCenterPanel; we clear selectedTerritoryId to suppress the popup on first tap.
+    setSelectedTerritoryId(null);
   }, [setSelectedTerritoryId]);
 
-  const handleAttackTargetSelect = useCallback((_originId, targetId) => {
+  const handleAttackTargetSelect = useCallback((originId, targetId) => {
+    // Ensure origin is tracked (may be set already) and target is staged
+    setAttackOriginId(originId);
     setAttackPreselectedTargetId(targetId);
+  }, []);
+
+  const handleAttackOriginDeselect = useCallback(() => {
+    // Second tap on same origin — clear origin and allow popup to open via onSelect
+    setAttackOriginId(null);
   }, []);
 
   const handleFortifyOriginSelect = useCallback((originId) => {
@@ -421,6 +437,7 @@ function ActiveCampaignContent() {
             currentPhase={phase}
             actingPlayer={actionPlayer}
             onAttackOriginSelect={handleAttackOriginSelect}
+            onAttackOriginDeselect={handleAttackOriginDeselect}
             onAttackTargetSelect={handleAttackTargetSelect}
             onFortifyOriginSelect={handleFortifyOriginSelect}
             onFortifyDestinationSelect={handleFortifyDestinationSelect}
@@ -466,8 +483,9 @@ function ActiveCampaignContent() {
             />
           )}
 
-          {/* Territory detail panel — shown in all phases except during active attack staging */}
-          {!((phase === 'attack' || phase === 'operations') && attackOriginId && attackPreselectedTargetId)
+          {/* Territory detail panel — hidden when attack origin is selected (no target yet) and during active staging */}
+          {!suppressPopupForAttackOrigin
+            && !((phase === 'attack' || phase === 'operations') && attackOriginId && attackPreselectedTargetId)
             && selectedTerritory && (() => {
             // Draft phase: compute if it's the acting player's turn
             const setupOrder     = campaign?.setup_order ?? [];

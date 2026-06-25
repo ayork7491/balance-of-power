@@ -35,6 +35,7 @@ export function useMapInteraction({
   adjacencyMap: adjacencyMapProp,
   onSelect,
   onAttackOriginSelect,
+  onAttackOriginDeselect,
   onAttackTargetSelect,
   onFortifyOriginSelect,
   onFortifyDestinationSelect,
@@ -172,6 +173,7 @@ export function useMapInteraction({
             // Tapped same origin again → clear attack mode and open popup
             setAttackOriginId(null);
             setInteractionMode('view_only');
+            onAttackOriginDeselect?.();
             onSelect(territoryId);
           } else if (validTargets.includes(territoryId)) {
             // Valid adjacent enemy/neutral → stage attack target
@@ -262,6 +264,7 @@ export function useMapInteraction({
     getValidFortifyDestinations,
     onSelect,
     onAttackOriginSelect,
+    onAttackOriginDeselect,
     onAttackTargetSelect,
     onFortifyOriginSelect,
     onFortifyDestinationSelect,
