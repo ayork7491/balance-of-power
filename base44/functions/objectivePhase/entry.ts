@@ -956,7 +956,53 @@ Deno.serve(async (req) => {
   // ── ACTION: evaluateObjectives ────────────────────────────────────────────
   // Called at the start of Planning Phase to auto-complete eligible objectives.
   // Idempotent per card (skips already-completed cards).
-  // Only evaluates cards where auto_completable=true in DB (set by seedCatalog).
+  // Falls back to inline catalog definitions when DB records are stale/missing auto_completable.
+  // Inline catalog: card_id → { auto_completable, completion_condition, condition_params, placement_rule }
+  const INLINE_CATALOG_AUTO = {
+    // military
+    mil_build_barracks:   { auto_completable: true,  completion_condition: 'build_structure',         condition_params: { building_type: 'barracks' },   placement_rule: 'structure_territory' },
+    mil_capture_1:        { auto_completable: true,  completion_condition: 'capture_territories',     condition_params: { count: 1 },                    placement_rule: 'captured_territory' },
+    mil_capture_2:        { auto_completable: true,  completion_condition: 'capture_territories',     condition_params: { count: 2 },                    placement_rule: 'captured_territory' },
+    mil_win_2_battles:    { auto_completable: true,  completion_condition: 'win_battles',             condition_params: { count: 2 },                    placement_rule: 'primary_contributing_territory' },
+    mil_win_siege:        { auto_completable: true,  completion_condition: 'win_battle_type',         condition_params: { battle_type: 'siege' },         placement_rule: 'captured_territory' },
+    mil_win_bloodbath:    { auto_completable: true,  completion_condition: 'win_battle_type',         condition_params: { battle_type: 'bloodbath' },     placement_rule: 'primary_contributing_territory' },
+    // economic
+    eco_build_marketplace:{ auto_completable: true,  completion_condition: 'build_structure',         condition_params: { building_type: 'marketplace' }, placement_rule: 'structure_territory' },
+    eco_complete_2_builds:{ auto_completable: true,  completion_condition: 'complete_construction_projects', condition_params: { count: 2 },             placement_rule: 'structure_territory' },
+    eco_control_3_hubs:   { auto_completable: true,  completion_condition: 'control_resource_hubs',  condition_params: { count: 3 },                    placement_rule: 'chosen_territory' },
+    eco_control_3_iron:   { auto_completable: true,  completion_condition: 'control_resource_territories', condition_params: { resource: 'iron', count: 3 }, placement_rule: 'chosen_territory' },
+    eco_control_3_timber: { auto_completable: true,  completion_condition: 'control_resource_territories', condition_params: { resource: 'timber', count: 3 }, placement_rule: 'chosen_territory' },
+    eco_control_3_stone:  { auto_completable: true,  completion_condition: 'control_resource_territories', condition_params: { resource: 'stone', count: 3 }, placement_rule: 'chosen_territory' },
+    // diplomatic
+    dip_build_embassy:    { auto_completable: true,  completion_condition: 'build_structure',         condition_params: { building_type: 'embassy' },     placement_rule: 'structure_territory' },
+    dip_broker_trade:     { auto_completable: true,  completion_condition: 'submit_diplomatic_action', condition_params: { action_types: ['merchant_convoy','non_aggression_pact'] }, placement_rule: 'affected_region' },
+    dip_two_regions:      { auto_completable: true,  completion_condition: 'hold_influence_in_regions', condition_params: { count: 2 },                 placement_rule: 'chosen_territory' },
+    dip_no_territory_region: { auto_completable: true, completion_condition: 'influence_without_territory', condition_params: {},                        placement_rule: 'affected_region' },
+    dip_rival_region:     { auto_completable: true,  completion_condition: 'influence_in_controlled_region', condition_params: {},                       placement_rule: 'affected_region' },
+    dip_3_diplomatic_structures: { auto_completable: true, completion_condition: 'control_pillar_structures', condition_params: { pillar: 'diplomatic', count: 3 }, placement_rule: 'chosen_territory' },
+    dip_most_regions:     { auto_completable: true,  completion_condition: 'influence_in_most_regions', condition_params: {},                            placement_rule: 'chosen_territory' },
+    // territorial
+    ter_occupy_x:         { auto_completable: true,  completion_condition: 'occupy_territories',      condition_params: { count: 8 },                    placement_rule: 'chosen_territory' },
+    ter_occupy_region:    { auto_completable: true,  completion_condition: 'occupy_full_region',      condition_params: {},                              placement_rule: 'affected_region' },
+    ter_occupy_continent: { auto_completable: true,  completion_condition: 'occupy_full_continent',   condition_params: {},                              placement_rule: 'chosen_territory' },
+    ter_new_region:       { auto_completable: true,  completion_condition: 'capture_in_new_region',   condition_params: {},                              placement_rule: 'captured_territory' },
+    ter_4_regions:        { auto_completable: true,  completion_condition: 'occupy_regions',          condition_params: { count: 4 },                    placement_rule: 'chosen_territory' },
+    ter_every_continent:  { auto_completable: true,  completion_condition: 'territory_on_every_continent', condition_params: {},                         placement_rule: 'chosen_territory' },
+    ter_grow_by_2:        { auto_completable: true,  completion_condition: 'increase_territory_count', condition_params: { count: 2 },                   placement_rule: 'captured_territory' },
+    ter_hold_all:         { auto_completable: true,  completion_condition: 'maintain_all_territories', condition_params: {},                             placement_rule: 'chosen_territory' },
+    ter_unoccupied:       { auto_completable: true,  completion_condition: 'capture_unoccupied',      condition_params: {},                              placement_rule: 'captured_territory' },
+    // infrastructure
+    inf_build_military:   { auto_completable: true,  completion_condition: 'complete_pillar_build',   condition_params: { pillar: 'military' },           placement_rule: 'structure_territory' },
+    inf_build_economic:   { auto_completable: true,  completion_condition: 'complete_pillar_build',   condition_params: { pillar: 'economic' },           placement_rule: 'structure_territory' },
+    inf_build_diplomatic: { auto_completable: true,  completion_condition: 'complete_pillar_build',   condition_params: { pillar: 'diplomatic' },         placement_rule: 'structure_territory' },
+    inf_control_5_structures: { auto_completable: true, completion_condition: 'control_active_buildings', condition_params: { count: 5 },                placement_rule: 'chosen_territory' },
+    inf_3_regions:        { auto_completable: true,  completion_condition: 'build_in_regions',        condition_params: { count: 3 },                    placement_rule: 'chosen_territory' },
+    inf_multi_structure:  { auto_completable: true,  completion_condition: 'multi_structure_territory', condition_params: { count: 2 },                  placement_rule: 'structure_territory' },
+    inf_maintain_all:     { auto_completable: true,  completion_condition: 'maintain_all_buildings',  condition_params: {},                              placement_rule: 'chosen_territory' },
+    inf_build_railway:    { auto_completable: true,  completion_condition: 'establish_supply_route_length', condition_params: { length: 3 },              placement_rule: 'chosen_territory' },
+    inf_upgrade_structure:{ auto_completable: true,  completion_condition: 'build_in_occupied_territory', condition_params: {},                          placement_rule: 'structure_territory' },
+  };
+
   if (action === 'evaluateObjectives') {
     const ledger = await getLedger(base44, campaign_id, actingPlayer.id);
     const cards = ledger?.objective_cards_json ?? emptyCards();
@@ -987,7 +1033,20 @@ Deno.serve(async (req) => {
     let updatedCards = { ...cards };
 
     for (const cardId of held) {
-      const cardDef = allCardDefs.find(c => c.card_id === cardId);
+      const dbDef = allCardDefs.find(c => c.card_id === cardId);
+      // Merge DB definition with inline catalog fallback so stale DB records still evaluate.
+      const inlineFallback = INLINE_CATALOG_AUTO[cardId] ?? null;
+      const cardDef = dbDef ? {
+        ...dbDef,
+        // If DB record lacks auto_completable or completion_condition, use inline catalog.
+        auto_completable: dbDef.auto_completable ?? inlineFallback?.auto_completable ?? false,
+        completion_condition: dbDef.completion_condition ?? inlineFallback?.completion_condition ?? null,
+        condition_params: (dbDef.condition_params && Object.keys(dbDef.condition_params).length > 0)
+          ? dbDef.condition_params
+          : (inlineFallback?.condition_params ?? {}),
+        placement_rule: dbDef.placement_rule ?? inlineFallback?.placement_rule ?? 'chosen_territory',
+      } : (inlineFallback ? { card_id: cardId, tier: 1, ...inlineFallback } : null);
+
       if (!cardDef) { skippedThisEval.push({ card_id: cardId, reason: 'no_definition' }); continue; }
       if (!cardDef.auto_completable) { skippedThisEval.push({ card_id: cardId, reason: 'not_auto_completable', condition: cardDef.completion_condition }); continue; }
       const alreadyDone = (updatedCards.completed ?? []).some(e => e.card_id === cardId);
@@ -1056,8 +1115,17 @@ Deno.serve(async (req) => {
       const completedForPlayer = [];
 
       for (const cardId of held) {
-        const cardDef = allCardDefs.find(c => c.card_id === cardId);
-        if (!cardDef || !autoCards.has(cardId)) continue;
+        const dbDef = allCardDefs.find(c => c.card_id === cardId);
+        const inlineFallback = INLINE_CATALOG_AUTO[cardId] ?? null;
+        const cardDef = dbDef ? {
+          ...dbDef,
+          auto_completable: dbDef.auto_completable ?? inlineFallback?.auto_completable ?? false,
+          completion_condition: dbDef.completion_condition ?? inlineFallback?.completion_condition ?? null,
+          condition_params: (dbDef.condition_params && Object.keys(dbDef.condition_params).length > 0) ? dbDef.condition_params : (inlineFallback?.condition_params ?? {}),
+          placement_rule: dbDef.placement_rule ?? inlineFallback?.placement_rule ?? 'chosen_territory',
+        } : (inlineFallback ? { card_id: cardId, tier: 1, ...inlineFallback } : null);
+        if (!cardDef || (!cardDef.auto_completable && !autoCards.has(cardId))) continue;
+        if (!cardDef.auto_completable) continue;
         const alreadyDone = (updatedCards.completed ?? []).some(e => e.card_id === cardId);
         if (alreadyDone) continue;
 

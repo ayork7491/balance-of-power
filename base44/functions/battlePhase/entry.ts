@@ -829,8 +829,26 @@ async function applyNonMilitaryConsequences(base44, campaign_id, round, card, re
   else if (card.battle_type === 'supply_caravan_escort') {
     const shipment = meta.shipment_contents ?? {};
     const destination = meta.shipment_destination;
+    const originDebited = meta.origin_debited === true;
+
+    // Idempotency guard: once shipment_resolved is set, skip all resource movement.
+    if (meta.shipment_resolved === true) {
+      summary.push('caravan_already_resolved_skipped');
+      return summary;
+    }
+
+    // Safety: if origin was not debited at card creation (legacy cards before this fix),
+    // do not deliver or steal — that would create resources from nothing.
+    if (!originDebited) {
+      await base44.asServiceRole.entities.BattleCard.update(card.id, {
+        source_operation_metadata: { ...meta, shipment_resolved: true, resolution_result: 'legacy_skip' },
+      });
+      summary.push('caravan_origin_not_debited_legacy_skip');
+      return summary;
+    }
+
     if (defenderWon) {
-      // Shipment delivered — add to destination territory storage
+      // Escort succeeded — deliver shipment to destination
       if (destination && Object.keys(shipment).length > 0) {
         const destState = await base44.asServiceRole.entities.TerritoryState.filter({
           campaign_id, territory_id: destination,
@@ -845,8 +863,11 @@ async function applyNonMilitaryConsequences(base44, campaign_id, round, card, re
           summary.push('caravan_delivered');
         }
       }
+      await base44.asServiceRole.entities.BattleCard.update(card.id, {
+        source_operation_metadata: { ...meta, shipment_resolved: true, resolution_result: 'delivered' },
+      });
     } else if (attackerWon) {
-      // 20% stolen, 80% destroyed
+      // Escort failed — interceptor steals 20%, remainder destroyed (origin already debited)
       if (Object.keys(shipment).length > 0) {
         const stolenResources = {};
         for (const [res, amt] of Object.entries(shipment)) {
@@ -870,6 +891,15 @@ async function applyNonMilitaryConsequences(base44, campaign_id, round, card, re
         }
         summary.push('caravan_intercepted_20pct_stolen');
       }
+      await base44.asServiceRole.entities.BattleCard.update(card.id, {
+        source_operation_metadata: { ...meta, shipment_resolved: true, resolution_result: 'intercepted' },
+      });
+    } else {
+      // No winner — destroy shipment
+      await base44.asServiceRole.entities.BattleCard.update(card.id, {
+        source_operation_metadata: { ...meta, shipment_resolved: true, resolution_result: 'destroyed' },
+      });
+      summary.push('caravan_destroyed_no_winner');
     }
   }
 

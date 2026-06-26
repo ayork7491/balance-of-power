@@ -791,28 +791,58 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── Peace treaty — create Non-Aggression Pact effect if included ──────
-    const peaceDuration = (offerAssets.peace_treaty?.duration ?? 0) + (requestAssets.peace_treaty?.duration ?? 0);
-    if (peaceDuration > 0) {
-      await base44.asServiceRole.entities.DiplomaticAction.create({
-        campaign_id,
-        round,
-        player_id: proposerId,
+    // ── Peace treaty — create Non-Aggression Pact effects if included ─────
+    // Direction matters: the GRANTING player is restricted from attacking the protected player.
+    //   offerAssets.peace_treaty  → proposer grants peace to acceptor (proposer is restricted)
+    //   requestAssets.peace_treaty → acceptor grants peace to proposer (acceptor is restricted)
+    // We create one DiplomaticAction per direction so attackPhase can check correctly.
+    const offerPeaceDuration = offerAssets.peace_treaty?.duration ?? 0;
+    const requestPeaceDuration = requestAssets.peace_treaty?.duration ?? 0;
+
+    const pactOps = [];
+    if (offerPeaceDuration > 0) {
+      // Proposer offered peace → proposer is restricted from attacking acceptor
+      pactOps.push(base44.asServiceRole.entities.DiplomaticAction.create({
+        campaign_id, round,
+        player_id: proposerId,             // the restricted/granting player
         action_type: 'non_aggression_pact',
         region_id: 'trade',
         influence_spent: 0,
         status: 'active',
-        expires_round: round + peaceDuration,
-        target_player_id: acceptorId,
+        expires_round: round + offerPeaceDuration,
+        target_player_id: acceptorId,      // the protected player
         effect_metadata: {
           issuer_player_id: proposerId,
+          protected_player_id: acceptorId,
+          restricted_player_id: proposerId,
+          duration: offerPeaceDuration,
+          created_by_trade: true,
+          direction: 'proposer_grants_to_acceptor',
+        },
+      }));
+    }
+    if (requestPeaceDuration > 0) {
+      // Acceptor fulfills requested peace → acceptor is restricted from attacking proposer
+      pactOps.push(base44.asServiceRole.entities.DiplomaticAction.create({
+        campaign_id, round,
+        player_id: acceptorId,             // the restricted/granting player
+        action_type: 'non_aggression_pact',
+        region_id: 'trade',
+        influence_spent: 0,
+        status: 'active',
+        expires_round: round + requestPeaceDuration,
+        target_player_id: proposerId,      // the protected player
+        effect_metadata: {
+          issuer_player_id: acceptorId,
           protected_player_id: proposerId,
           restricted_player_id: acceptorId,
-          duration: peaceDuration,
+          duration: requestPeaceDuration,
           created_by_trade: true,
+          direction: 'acceptor_grants_to_proposer',
         },
-      });
+      }));
     }
+    if (pactOps.length > 0) await Promise.all(pactOps);
 
     // Mark proposal as accepted, storing resolve submission_id for idempotency
     await base44.asServiceRole.entities.DiplomaticAction.update(proposal.id, {

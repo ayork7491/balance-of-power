@@ -1009,6 +1009,29 @@ Deno.serve(async (req) => {
             const tabletopSize = Math.round(totalTroops / scaleFactor);
             // Schedule for NEXT round's Conflict phase so it appears correctly after phase advance
             const escortRound = round + 1;
+
+            // ── DEBIT origin resources immediately (shipment is now "in transit") ──
+            // This is idempotent because alreadyExists guards above prevent double creation.
+            const originStateForDebit = allStatesForEscort.find(s => s.territory_id === origin);
+            if (originStateForDebit) {
+              const currentStorage = { gold:0, iron:0, timber:0, stone:0, food:0, ...(originStateForDebit.resource_storage ?? {}) };
+              let debited = false;
+              for (const r of RESOURCES) {
+                const amt = contents[r] ?? 0;
+                if (amt > 0) {
+                  currentStorage[r] = Math.max(0, (currentStorage[r] ?? 0) - amt);
+                  debited = true;
+                }
+              }
+              if (debited) {
+                await base44.asServiceRole.entities.TerritoryState.update(originStateForDebit.id, { resource_storage: currentStorage });
+                queueLog(campaign_id, round, phase, 'caravan_origin_debited', dec.player_id, {
+                  origin, destination, contents, caravan_id: caravan.id,
+                  note: 'Resources removed from origin — shipment in transit pending escort battle.',
+                }, false);
+              }
+            }
+
             await base44.asServiceRole.entities.BattleCard.create({
               campaign_id,
               round: escortRound,
@@ -1036,6 +1059,7 @@ Deno.serve(async (req) => {
                 caravan_id: caravan.id,
                 generated_from_round: round,
                 resolves_in_round: escortRound,
+                origin_debited: true,  // audit flag: origin was already debited at card creation
               },
             });
           }
