@@ -1199,17 +1199,42 @@ Deno.serve(async (req) => {
     }
 
     // ── Evaluate objectives for all active players at Planning lock ──────────
-    // Uses asServiceRole + _internal:true to bypass user-auth check in objectivePhase.
+    // IMPORTANT: This runs AFTER diplomatic commit (step 3) so held[] includes
+    // the newly kept card before evaluation. Uses _internal:true to bypass auth.
     try {
       const evalPlayers = players.filter(p => !p.is_eliminated);
-      await Promise.all(evalPlayers.map(ep =>
+      const evalResults = await Promise.allSettled(evalPlayers.map(ep =>
         base44.asServiceRole.functions.invoke('objectivePhase', {
           action: 'evaluateObjectives',
           campaign_id,
           acting_as_player_id: ep.id,
           _internal: true,
-        }).catch(e => console.warn(`[lockPlanningPhase] Objective eval failed for ${ep.id}:`, e?.message))
+        })
       ));
+      // Log evaluation audit for each player
+      for (let i = 0; i < evalPlayers.length; i++) {
+        const ep = evalPlayers[i];
+        const r = evalResults[i];
+        if (r.status === 'fulfilled') {
+          const evalData = r.value?.data ?? r.value ?? {};
+          console.log(`[lockPlanningPhase] Objective eval for ${ep.display_name} (${ep.id}):`,
+            JSON.stringify({
+              evaluated: evalData.evaluated,
+              completed: evalData.completed,
+              skipped: evalData.skipped,
+            })
+          );
+          results[`objective_eval_${ep.id}`] = {
+            player: ep.display_name,
+            evaluated: evalData.evaluated ?? 0,
+            completed: evalData.completed ?? [],
+            skipped: evalData.skipped ?? [],
+          };
+        } else {
+          console.warn(`[lockPlanningPhase] Objective eval failed for ${ep.display_name}:`, r.reason?.message ?? r.reason);
+          results[`objective_eval_${ep.id}`] = { player: ep.display_name, error: r.reason?.message ?? 'failed' };
+        }
+      }
     } catch (evalErr) {
       console.warn('[lockPlanningPhase] Objective evaluation failed (non-fatal):', evalErr?.message);
     }

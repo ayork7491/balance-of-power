@@ -403,19 +403,26 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Cannot attack your own territory' }, { status: 400 });
     }
 
-    // ── Peace treaty check at staging time ───────────────────────────────────
+    // ── Peace treaty check at staging time (bilateral) ───────────────────────
+    // A traded peace treaty creates two records — one per direction.
+    // We check ALL active pacts to see if either player is blocked from attacking the other.
     const targetOwnerForPact = targetState?.owner_player_id ?? null;
     if (targetOwnerForPact) {
-      const stagePacts = await base44.asServiceRole.entities.DiplomaticAction.filter({
-        campaign_id, player_id: actingPlayer.id, action_type: 'non_aggression_pact',
+      const allActivePacts = await base44.asServiceRole.entities.DiplomaticAction.filter({
+        campaign_id, action_type: 'non_aggression_pact', status: 'active',
       });
-      const blockedByPact = stagePacts.some(pact =>
-        pact.status === 'active' &&
-        pact.target_player_id === targetOwnerForPact &&
-        (pact.expires_round == null || pact.expires_round >= round)
-      );
+      const blockedByPact = allActivePacts.some(pact => {
+        if (pact.expires_round != null && pact.expires_round < round) return false;
+        const meta = pact.effect_metadata ?? {};
+        const restricted = meta.restricted_player_id ?? pact.player_id;
+        const protected_ = meta.protected_player_id ?? pact.target_player_id;
+        // Block if actingPlayer is restricted from targeting targetOwner,
+        // OR if targetOwner is restricted from attacking actingPlayer (bilateral)
+        return (restricted === actingPlayer.id && protected_ === targetOwnerForPact) ||
+               (restricted === targetOwnerForPact && protected_ === actingPlayer.id);
+      });
       if (blockedByPact) {
-        return Response.json({ error: `You have an active non-aggression pact with the owner of ${target_territory_id}. Attacking is not permitted.` }, { status: 400 });
+        return Response.json({ error: `An active peace treaty prevents attacks between you and the owner of ${target_territory_id}.`, blocked_by: 'peace_treaty' }, { status: 400 });
       }
     }
 
@@ -698,18 +705,22 @@ Deno.serve(async (req) => {
     });
 
     // ── Load active non-aggression pacts for peace treaty enforcement ────────
-    // DiplomaticAction records with action_type='non_aggression_pact' and status='active'
-    // prevent the granting player from attacking the target player.
+    // Bilateral: a traded peace treaty creates two records (one per direction).
+    // We block any attack between the two players regardless of direction.
     const activePacts = await base44.asServiceRole.entities.DiplomaticAction.filter({
       campaign_id, action_type: 'non_aggression_pact',
     });
-    const activePactSet = new Set(); // "grantor_id:target_id" pairs that cannot attack
+    // Set of "playerA:playerB" canonical pairs (sorted) that are at peace
+    const peacePairs = new Set();
     for (const pact of activePacts) {
       if (pact.status !== 'active') continue;
       if (pact.expires_round != null && pact.expires_round < round) continue;
-      if (pact.player_id && pact.target_player_id) {
-        // The player who granted the pact (player_id) cannot attack target_player_id
-        activePactSet.add(`${pact.player_id}:${pact.target_player_id}`);
+      const meta = pact.effect_metadata ?? {};
+      const restricted = meta.restricted_player_id ?? pact.player_id;
+      const protected_ = meta.protected_player_id ?? pact.target_player_id;
+      if (restricted && protected_) {
+        // Canonical pair key (sorted) so both directions resolve to the same key
+        peacePairs.add([restricted, protected_].sort().join(':'));
       }
     }
 
@@ -744,7 +755,9 @@ Deno.serve(async (req) => {
 
       // Determine defending player for peace treaty check
       const defendingPlayerId = targetState?.owner_player_id ?? null;
-      const pactKey = defendingPlayerId ? `${atk.player_id}:${defendingPlayerId}` : null;
+      const peacePairKey = (defendingPlayerId && atk.player_id)
+        ? [atk.player_id, defendingPlayerId].sort().join(':')
+        : null;
 
       if (atk.submission_id && seenSubmissionIds.has(atk.submission_id)) {
         rejectionReason = 'duplicate_submission';
@@ -758,7 +771,7 @@ Deno.serve(async (req) => {
         rejectionReason = 'insufficient_troops';
       } else if ((atk.committed_troops ?? 0) < 1) {
         rejectionReason = 'zero_troops_committed';
-      } else if (pactKey && activePactSet.has(pactKey)) {
+      } else if (peacePairKey && peacePairs.has(peacePairKey)) {
         rejectionReason = 'blocked_by_peace_treaty';
       }
 

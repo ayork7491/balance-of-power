@@ -145,6 +145,27 @@ function buildAdjacency(mapId) {
   return adj;
 }
 
+// ─── Peace treaty helper ──────────────────────────────────────────────────────
+// Returns true if an active non_aggression_pact blocks playerA from acting against playerB.
+// Bilateral: checks both directions (A→B and B→A).
+async function isPeaceBlocked(base44, campaignId, round, playerAId, playerBId) {
+  if (!playerAId || !playerBId || playerAId === playerBId) return false;
+  const pacts = await base44.asServiceRole.entities.DiplomaticAction.filter({
+    campaign_id: campaignId,
+    action_type: 'non_aggression_pact',
+    status: 'active',
+  });
+  return pacts.some(p => {
+    if ((p.expires_round ?? 0) < round) return false;
+    const meta = p.effect_metadata ?? {};
+    const restricted = meta.restricted_player_id ?? p.player_id;
+    const protected_ = meta.protected_player_id ?? p.target_player_id;
+    // Block if either direction covers (playerA restricted from playerB) OR (playerB restricted from playerA)
+    return (restricted === playerAId && protected_ === playerBId) ||
+           (restricted === playerBId && protected_ === playerAId);
+  });
+}
+
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
@@ -822,6 +843,13 @@ Deno.serve(async (req) => {
           attackers = [{ player_id: actingPlayer.id, origin_territory_id: target_territory_id, committed_troops: diplomatTroops }];
           cardDefenderPlayerId = defenderPlayerId;
           cardDefenderTroops = defenderTroops;
+        }
+
+        // Peace treaty check: block if actingPlayer has an active pact with defenderPlayerId
+        if (defenderPlayerId && await isPeaceBlocked(base44, campaign_id, round, actingPlayer.id, defenderPlayerId)) {
+          dipResults.push({ action_type, region_id, result: 'blocked_by_peace_treaty', target_territory_id, defender_player_id: defenderPlayerId });
+          console.log(`[lockOperationsPhase] ${action_type} blocked by peace treaty between ${actingPlayer.id} and ${defenderPlayerId}`);
+          continue;
         }
 
         // Idempotency: skip if card already exists this round from same source
